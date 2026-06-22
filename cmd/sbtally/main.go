@@ -48,6 +48,7 @@ func runDaemon(args []string) {
 	clashAPI := fs.String("clash-api", "127.0.0.1:9090", "Clash API host:port")
 	listen := fs.String("listen", "127.0.0.1:7777", "stats HTTP listen addr")
 	dbPath := fs.String("db", defaultDBPath(), "SQLite path")
+	flush := fs.Duration("flush", 10*time.Second, "DB flush interval")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -62,6 +63,7 @@ func runDaemon(args []string) {
 	hub := daemon.NewLiveHub()
 	src := source.NewClashSource(*clashAPI, os.Getenv("SBTALLY_SECRET"))
 	d := daemon.New(src, st, hub)
+	d.FlushInterval = *flush
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
