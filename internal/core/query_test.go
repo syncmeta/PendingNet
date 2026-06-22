@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -82,5 +83,21 @@ func TestSeries(t *testing.T) {
 	}
 	if len(pts) != 2 || pts[0].Bucket != 0 || pts[1].Bucket != 3600 {
 		t.Fatalf("got %+v want two buckets ordered", pts)
+	}
+}
+
+func TestEmptyAppsMarshalsAsArray(t *testing.T) {
+	s, err := OpenStore(filepath.Join(t.TempDir(), "e.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	apps, err := s.Apps(0, 1, 0) // empty range
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(apps)
+	if string(b) != "[]" {
+		t.Fatalf("got %q want []", b)
 	}
 }
