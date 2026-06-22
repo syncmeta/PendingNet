@@ -30,9 +30,25 @@ mode — not the App Store / SFM build, whose network extension can't resolve pr
 Connections that open and close between two ~1s Clash snapshots are not observed and their
 (tiny) byte counts are missed. This is acceptable for traffic accounting.
 
+## Dashboard (Phase 2)
+
+A native macOS SwiftUI app (menu-bar + window: Live / Apps / Domains tabs, a time-range
+picker, and a menu-bar readout of live ↑/↓ totals). It reads the daemon at
+`http://127.0.0.1:7777`, so start the daemon first.
+
+    cd app && xcodegen generate
+    open SBTally.xcodeproj      # then Run (⌘R) in Xcode
+
+Shared logic (models, byte format, SSE parser, API client) lives in the `app/SBTallyCore`
+Swift package and is unit-tested headlessly:
+
+    cd app/SBTallyCore && swift test
+
 ## Status
 
-Phase 1 (this) ships the Go collector daemon, JSON/SSE API, and CLI reports — usable on its own.
-Later phases add the SwiftUI dashboard, the sing-box config generator + control panel
-(VPS / protocol / routing-mode / TUN / system-proxy switching, per-app routing), and the
-privileged helper. See `docs/superpowers/specs/` and `docs/superpowers/plans/`.
+- **Phase 1** — Go collector daemon, JSON/SSE API, CLI reports. Done.
+- **Phase 2** — SwiftUI dashboard. Done.
+- **Next** — sing-box config generator + control panel (VPS / protocol / routing-mode / TUN /
+  system-proxy switching, per-app routing) and the privileged helper.
+
+See `docs/superpowers/specs/` and `docs/superpowers/plans/`.
