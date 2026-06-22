@@ -190,16 +190,16 @@ type LiveAppGroup struct { App string; UpRate, DownRate int64; Conns int; TopHos
 
 ### 9.1 出站模型与选择器
 
-用户只有自建 VPS。模型:**每个 VPS = 一组带标签的出站**(reality/hy2/以及任意第三个,统称"协议";"mix" 即该 VPS 上的另一个出站,不写死协议)。
+用户只有自建 VPS。模型:**每个 VPS = 一组带标签的出站**——reality、hy2,外加 **mix**(= 对该 VPS 的 reality+hy2 做 `urltest` 自动选优,由生成器**自动合成**,无需用户提供)。
 
 - 顶层 `selector` **`proxy`** = 选 VPS:其 `outbounds` 指向各 VPS 的子选择器。
-- 每 VPS 一个子 `selector`(如 `vpsA`)= 选协议:`outbounds` 列该 VPS 的出站。
+- 每 VPS 一个子 `selector`(如 `vpsA`)= 选协议:`outbounds` = [reality, hy2, **mix**(urltest)]。
 
 切 VPS = 设 `proxy`;切协议 = 设对应 VPS 子选择器。两个独立下拉,每 VPS 记忆各自协议。皆 Clash API 即时。
 
 ### 9.2 出站从哪来
 
-导入用户现有 sing-box 配置(可多份/拖文件夹)→ 生成器**提取 `outbounds`** → 用户标注归属 VPS/协议 → 生成主配置。亦支持手动增改。**无机场/订阅。**
+**导入用户现有 sing-box 配置**(可多份/拖文件夹)→ 生成器**提取 `outbounds`** → 用户标注归属 VPS + 协议(reality/hy2)→ 生成主配置,并为每个 VPS 自动合成 mix urltest。**无机场/订阅;不做填凭据表单。**
 
 ### 9.3 路由(参考成熟方案,非白/黑名单二选一)
 
@@ -270,9 +270,20 @@ type LiveAppGroup struct { App string; UpRate, DownRate int64; Conns int; TopHos
 
 iOS;机场订阅;逐连接拦截审批(广告拦截除外);多机聚合;Web UI;Prometheus/OTel;App 公证分发(本机自建);除可选 loopback 令牌外的鉴权。
 
-## 16. 待定
+## 16. 已定默认 / 待定
 
-- 最终名字(`sbtally` 占位)。
-- 规则集来源默认(官方 vs lyc8503 增强版)。
-- TUN 协议栈(默认 gVisor;在意吞吐可换 system)。
-- "mix" 的实际协议(默认按"任意第三个出站"处理,无需预先知道)。
+- 名字:`sbtally`(占位,可改)。
+- 规则集来源:默认官方 sing-geoip/sing-geosite(可换 lyc8503 增强版)。
+- TUN 协议栈:默认 gVisor(在意吞吐可换 system)。
+- mix = 每 VPS 的 reality+hy2 `urltest` 自动选优(已定)。
+- 出站来源 = 导入现有 config(已定)。
+- 「规则」模式默认 = 智能分流(绕过大陆 + 广告拦截)(已定)。
+
+## 17. 实现阶段(先统计仪表盘)
+
+1. **Go 统计核心** — 累加器 / 存储 / 查询 + 数据源(Clash WS)+ 统计守护 + CLI + 统计 JSON/SSE。先让数据链路在本机跑通、可无头验证。
+2. **SwiftUI 仪表盘** — 实时 / 应用 / 域名 / 应用详情。
+3. **配置生成器 + Clash API 客户端** — 出站 / 嵌套选择器 / mix urltest / clash_mode / 规则集 / DNS;切 VPS/协议/模式。
+4. **特权助手 + 控制面板 UI + 按应用分流** — TUN / 系统代理 / 配置应用。
+
+先交付 1+2(统计仪表盘可用),再做 3+4(控制面板)。
