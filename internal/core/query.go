@@ -13,7 +13,7 @@ func (s *Store) Apps(since, until int64, top int) ([]AppStat, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []AppStat
+	out := []AppStat{}
 	for rows.Next() {
 		var a AppStat
 		if err := rows.Scan(&a.App, &a.Upload, &a.Download, &a.Total); err != nil {
@@ -35,7 +35,7 @@ func (s *Store) Domains(since, until int64, top int) ([]DomainStat, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []DomainStat
+	out := []DomainStat{}
 	for rows.Next() {
 		var d DomainStat
 		if err := rows.Scan(&d.Host, &d.Upload, &d.Download, &d.Total); err != nil {
@@ -53,7 +53,7 @@ func (s *Store) AppDetail(app string, since, until int64) (AppDetail, error) {
 		return AppDetail{}, err
 	}
 	defer rows.Close()
-	d := AppDetail{App: app}
+	d := AppDetail{App: app, Domains: []DomainStat{}}
 	for rows.Next() {
 		var ds DomainStat
 		if err := rows.Scan(&ds.Host, &ds.Upload, &ds.Download, &ds.Total); err != nil {
@@ -77,7 +77,7 @@ func (s *Store) Series(app string, since, until int64) ([]Point, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Point
+	out := []Point{}
 	for rows.Next() {
 		var p Point
 		if err := rows.Scan(&p.Bucket, &p.Upload, &p.Download); err != nil {
