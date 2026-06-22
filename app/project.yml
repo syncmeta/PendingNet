@@ -10,25 +10,15 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     GENERATE_INFOPLIST_FILE: "YES"
     PRODUCT_NAME: SBTally
+packages:
+  SBTallyCore:
+    path: SBTallyCore
 targets:
   SBTally:
     type: application
     platform: macOS
     sources:
       - path: SBTally
-  SBTallyTests:
-    type: bundle.unit-test
-    platform: macOS
-    sources:
-      - path: SBTallyTests
     dependencies:
-      - target: SBTally
-schemes:
-  SBTally:
-    build:
-      targets:
-        SBTally: all
-        SBTallyTests: [test]
-    test:
-      targets:
-        - SBTallyTests
+      - package: SBTallyCore
+        product: SBTallyCore
