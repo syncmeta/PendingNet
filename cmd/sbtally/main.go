@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"sbtally/internal/clashapi"
 	"sbtally/internal/cli"
 	"sbtally/internal/core"
 	"sbtally/internal/daemon"
@@ -60,15 +61,18 @@ func runDaemon(args []string) {
 	}
 	defer st.Close()
 
+	secret := os.Getenv("SBTALLY_SECRET")
 	hub := daemon.NewLiveHub()
-	src := source.NewClashSource(*clashAPI, os.Getenv("SBTALLY_SECRET"))
+	src := source.NewClashSource(*clashAPI, secret)
 	d := daemon.New(src, st, hub)
 	d.FlushInterval = *flush
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := &http.Server{Addr: *listen, Handler: daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })}
+	mux := daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })
+	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secret))
+	srv := &http.Server{Addr: *listen, Handler: mux}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
 
