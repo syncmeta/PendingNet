@@ -11,14 +11,20 @@ import (
 // routing mode) backed by the Clash API. These take effect immediately with no
 // restart or privilege.
 func RegisterControl(mux *http.ServeMux, ctrl *clashapi.Client) {
-	mux.HandleFunc("/api/control/proxies", func(w http.ResponseWriter, r *http.Request) {
+	// One call for the UI to render everything: current mode + selector states.
+	mux.HandleFunc("/api/control/state", func(w http.ResponseWriter, r *http.Request) {
 		ps, err := ctrl.Proxies(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadGateway)
 			return
 		}
+		mode, err := ctrl.Mode(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(ps)
+		_ = json.NewEncoder(w).Encode(map[string]any{"mode": mode, "proxies": ps})
 	})
 
 	mux.HandleFunc("/api/control/select", func(w http.ResponseWriter, r *http.Request) {

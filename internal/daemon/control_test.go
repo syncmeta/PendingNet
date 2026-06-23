@@ -34,6 +34,8 @@ func TestControlSelectModeAndProxies(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/proxies":
 			_, _ = w.Write([]byte(`{"proxies":{"proxy":{"type":"Selector","now":"vpsA","all":["vpsA","vpsB"]}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/configs":
+			_, _ = w.Write([]byte(`{"mode":"Rule"}`))
 		}
 	}))
 	defer clash.Close()
@@ -63,15 +65,18 @@ func TestControlSelectModeAndProxies(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/control/proxies", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/control/state", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("proxies status %d", rec.Code)
+		t.Fatalf("state status %d", rec.Code)
 	}
-	var ps map[string]clashapi.Proxy
-	if err := json.Unmarshal(rec.Body.Bytes(), &ps); err != nil {
+	var state struct {
+		Mode    string                    `json:"mode"`
+		Proxies map[string]clashapi.Proxy `json:"proxies"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if ps["proxy"].Now != "vpsA" || len(ps["proxy"].All) != 2 {
-		t.Fatalf("proxies %+v", ps)
+	if state.Mode != "Rule" || state.Proxies["proxy"].Now != "vpsA" {
+		t.Fatalf("state %+v", state)
 	}
 }
