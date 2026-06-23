@@ -59,6 +59,25 @@ func TestSelectProxy(t *testing.T) {
 	}
 }
 
+func TestMode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/configs" {
+			t.Errorf("got %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"mode":"Rule","port":0}`))
+	}))
+	defer srv.Close()
+
+	c := New(strings.TrimPrefix(srv.URL, "http://"), "")
+	m, err := c.Mode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m != "Rule" {
+		t.Fatalf("mode %q", m)
+	}
+}
+
 func TestProxies(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"proxies":{"proxy":{"type":"Selector","now":"vpsA","all":["vpsA","vpsB"]}}}`))

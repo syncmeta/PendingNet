@@ -74,6 +74,21 @@ func (c *Client) SelectProxy(ctx context.Context, selector, name string) error {
 	return nil
 }
 
+func (c *Client) Mode(ctx context.Context) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/configs", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var cfg struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return "", err
+	}
+	return cfg.Mode, nil
+}
+
 func (c *Client) Proxies(ctx context.Context) (map[string]Proxy, error) {
 	resp, err := c.do(ctx, http.MethodGet, "/proxies", nil)
 	if err != nil {
