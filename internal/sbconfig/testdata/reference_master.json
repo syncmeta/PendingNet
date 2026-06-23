@@ -1,0 +1,79 @@
+{
+  "log": { "level": "warn" },
+  "dns": {
+    "servers": [
+      { "type": "https", "tag": "dns-proxy", "server": "1.1.1.1", "detour": "proxy" },
+      { "type": "https", "tag": "dns-direct", "server": "223.5.5.5", "detour": "direct" }
+    ],
+    "rules": [
+      { "rule_set": "geosite-cn", "server": "dns-direct" }
+    ],
+    "final": "dns-proxy",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": ["172.18.0.1/30", "fdfe:dcba:9876::1/126"],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "gvisor"
+    },
+    { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 2080 }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vpsA-reality",
+      "server": "203.0.113.1",
+      "server_port": 443,
+      "uuid": "00000000-0000-0000-0000-000000000000",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "example.com",
+        "reality": { "enabled": true, "public_key": "3JAVCLou3-DZH1hz7bBhbhoxVL1DTcPJlzE7ks1qk2s", "short_id": "01ab" },
+        "utls": { "enabled": true, "fingerprint": "chrome" }
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "vpsA-hy2",
+      "server": "203.0.113.1",
+      "server_port": 8443,
+      "password": "secret",
+      "tls": { "enabled": true, "server_name": "example.com" }
+    },
+    { "type": "urltest", "tag": "vpsA-mix", "outbounds": ["vpsA-reality", "vpsA-hy2"] },
+    { "type": "selector", "tag": "vpsA", "outbounds": ["vpsA-reality", "vpsA-hy2", "vpsA-mix"] },
+    { "type": "selector", "tag": "proxy", "outbounds": ["vpsA"] },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "find_process": true,
+    "default_domain_resolver": "dns-direct",
+    "final": "proxy",
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "clash_mode": "Direct", "outbound": "direct" },
+      { "clash_mode": "Global", "outbound": "proxy" },
+      { "rule_set": "geosite-ads", "action": "reject" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "rule_set": ["geoip-cn", "geosite-cn"], "outbound": "direct" },
+      { "rule_set": "geosite-noncn", "outbound": "proxy" }
+    ],
+    "rule_set": [
+      { "type": "remote", "tag": "geosite-cn", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs", "download_detour": "proxy" },
+      { "type": "remote", "tag": "geoip-cn", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs", "download_detour": "proxy" },
+      { "type": "remote", "tag": "geosite-noncn", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs", "download_detour": "proxy" },
+      { "type": "remote", "tag": "geosite-ads", "format": "binary", "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs", "download_detour": "proxy" }
+    ]
+  },
+  "experimental": {
+    "clash_api": { "external_controller": "127.0.0.1:9090" },
+    "cache_file": { "enabled": true }
+  }
+}
