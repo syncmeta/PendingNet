@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"sbtally/internal/cli"
 	"sbtally/internal/core"
 	"sbtally/internal/daemon"
+	"sbtally/internal/sbconfig"
 	"sbtally/internal/source"
 )
 
@@ -26,7 +28,7 @@ func defaultDBPath() string {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: sbtally <daemon|apps|domains|app> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: sbtally <daemon|apps|domains|app|config> [flags]")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -38,6 +40,8 @@ func main() {
 		runQuery(os.Args[2:], "domains")
 	case "app":
 		runAppDetail(os.Args[2:])
+	case "config":
+		runConfig(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
@@ -148,6 +152,64 @@ func runAppDetail(args []string) {
 		fatal(err)
 	}
 	fmt.Print(cli.RenderAppDetail(v))
+}
+
+type multiFlag []string
+
+func (m *multiFlag) String() string  { return strings.Join(*m, ",") }
+func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
+
+func runConfig(args []string) {
+	if len(args) == 0 {
+		fatal(fmt.Errorf("usage: sbtally config <import <file> | generate --vps name=path ...>"))
+	}
+	switch args[0] {
+	case "import":
+		if len(args) < 2 {
+			fatal(fmt.Errorf("usage: sbtally config import <file>"))
+		}
+		s, err := cli.ImportSummary(args[1])
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Print(s)
+	case "generate":
+		runConfigGenerate(args[1:])
+	default:
+		fatal(fmt.Errorf("unknown config subcommand %q", args[0]))
+	}
+}
+
+func runConfigGenerate(args []string) {
+	fs := flag.NewFlagSet("config generate", flag.ExitOnError)
+	var vps multiFlag
+	fs.Var(&vps, "vps", "VPS as name=path to an existing sing-box config (repeatable)")
+	clashAddr := fs.String("clash-addr", "127.0.0.1:9090", "clash_api external_controller")
+	clashSecret := fs.String("clash-secret", "", "clash_api secret")
+	mixedPort := fs.Int("mixed-port", 2080, "mixed inbound port")
+	tunStack := fs.String("tun-stack", "gvisor", "tun stack (gvisor|system)")
+	noTun := fs.Bool("no-tun", false, "omit the tun inbound")
+	out := fs.String("out", "", "output file (default stdout)")
+	_ = fs.Parse(args)
+
+	cfg, err := cli.GenerateConfig(vps, sbconfig.Options{
+		ClashAPIAddr: *clashAddr,
+		ClashSecret:  *clashSecret,
+		MixedPort:    *mixedPort,
+		TunStack:     *tunStack,
+		EnableTun:    !*noTun,
+	})
+	if err != nil {
+		fatal(err)
+	}
+	if *out != "" {
+		if err := os.WriteFile(*out, cfg, 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", *out)
+	} else {
+		_, _ = os.Stdout.Write(cfg)
+	}
 }
 
 func fatal(err error) {
