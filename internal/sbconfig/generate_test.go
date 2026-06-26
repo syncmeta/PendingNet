@@ -8,6 +8,49 @@ import (
 	"testing"
 )
 
+func TestGenerateNamespacesCollidingTags(t *testing.T) {
+	ref, err := os.ReadFile("testdata/reference_master.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs, err := ExtractOutbounds(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same outbounds under two VPS — tags would collide without namespacing.
+	cfg, err := Generate([]VPS{
+		{Name: "n1", Outbounds: obs},
+		{Name: "n2", Outbounds: obs},
+	}, Options{EnableTun: true, ClashAPIAddr: "127.0.0.1:9090"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(cfg, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, o := range parsed.Outbounds {
+		if seen[o.Tag] {
+			t.Fatalf("duplicate outbound tag %q", o.Tag)
+		}
+		seen[o.Tag] = true
+	}
+	if p, err := exec.LookPath("sing-box"); err == nil {
+		f := filepath.Join(t.TempDir(), "g.json")
+		if err := os.WriteFile(f, cfg, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command(p, "check", "-c", f).CombinedOutput(); err != nil {
+			t.Fatalf("sing-box check failed: %v\n%s", err, out)
+		}
+	}
+}
+
 func TestGenerateStructureAndSingBoxCheck(t *testing.T) {
 	ref, err := os.ReadFile("testdata/reference_master.json")
 	if err != nil {

@@ -1,6 +1,9 @@
 package sbconfig
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // VPS is a named group of imported proxy outbounds (e.g. its reality + hy2).
 type VPS struct {
@@ -33,6 +36,27 @@ func str(s, def string) string {
 	return s
 }
 
+// nsTag namespaces an imported outbound tag under its VPS so tags stay unique
+// across VPS (real configs often reuse generic tags like "reality-tcp"/"hy2").
+// Already-namespaced tags are left alone.
+func nsTag(vpsName, tag string) string {
+	if strings.HasPrefix(tag, vpsName+"-") {
+		return tag
+	}
+	return vpsName + "-" + tag
+}
+
+// retagOutbound re-emits an imported outbound with a new tag, preserving every
+// other field (server, keys, …) verbatim.
+func retagOutbound(raw json.RawMessage, tag string) any {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	m["tag"] = tag
+	return m
+}
+
 // Generate builds a sing-box master config from the VPS outbounds and options.
 // Day-to-day switching (VPS / protocol / mode) happens at runtime via the Clash
 // API against the selectors and clash_mode rules this emits.
@@ -43,8 +67,9 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	for _, v := range vpsList {
 		memberTags := []string{}
 		for _, ob := range v.Outbounds {
-			outbounds = append(outbounds, ob.Raw) // re-emit verbatim
-			memberTags = append(memberTags, ob.Tag)
+			tag := nsTag(v.Name, ob.Tag)
+			outbounds = append(outbounds, retagOutbound(ob.Raw, tag)) // re-emit, unique tag
+			memberTags = append(memberTags, tag)
 		}
 		// mix = urltest auto-select over this VPS's protocols (reality + hy2).
 		mixTag := v.Name + "-mix"
@@ -127,7 +152,7 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 		"dns": map[string]any{
 			"servers": []any{
 				map[string]any{"type": "https", "tag": "dns-proxy", "server": "1.1.1.1", "detour": "proxy"},
-				map[string]any{"type": "https", "tag": "dns-direct", "server": "223.5.5.5", "detour": "direct"},
+				map[string]any{"type": "https", "tag": "dns-direct", "server": "223.5.5.5"},
 			},
 			"rules":    []any{map[string]any{"rule_set": "geosite-cn", "server": "dns-direct"}},
 			"final":    "dns-proxy",
