@@ -44,11 +44,25 @@ Swift package and is unit-tested headlessly:
 
     cd app/SBTallyCore && swift test
 
+## Generating the master config
+
+Turn your existing sing-box config(s) into an sbtally master config (nested
+VPS/protocol selectors, mix = reality+hy2 urltest, smart routing, find_process,
+clash_api):
+
+    sbtally config import path/to/config.json          # list its outbounds
+    sbtally config generate --vps vpsA=vpsA.json --vps vpsB=vpsB.json --out master.json
+
+The generated config is validated with `sing-box check`.
+
 ## Status
 
-- **Phase 1** — Go collector daemon, JSON/SSE API, CLI reports. Done.
-- **Phase 2** — SwiftUI dashboard. Done.
-- **Next** — sing-box config generator + control panel (VPS / protocol / routing-mode / TUN /
-  system-proxy switching, per-app routing) and the privileged helper.
+- **Phase 1** — collector daemon, JSON/SSE API, CLI reports. Done.
+- **Phase 2** — SwiftUI dashboard (Live / Apps / Domains). Done.
+- **Phase 3** — config import + master generator (sing-box-check validated), Clash API client. Done.
+- **Phase 4** — control API + panel (VPS / protocol / mode switching). Done.
+- **Remaining (needs a real sing-box / root)** — privileged helper (TUN, system proxy,
+  config apply + restart), per-app routing editor, launchd deployment + SFM migration,
+  and the final end-to-end verification.
 
 See `docs/superpowers/specs/` and `docs/superpowers/plans/`.
