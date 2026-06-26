@@ -9,11 +9,13 @@ final class AppState: ObservableObject {
     @Published var summary: Summary?
     @Published var live: [LiveAppGroup] = []
     @Published var lastError: String?
+    @Published var mode: String = "Rule"
+    @Published var proxies: [String: Proxy] = [:]
 
-    let provider: StatsProvider
+    let provider: StatsProvider & ControlProvider
     private var liveTask: Task<Void, Never>?
 
-    init(provider: StatsProvider) { self.provider = provider }
+    init(provider: StatsProvider & ControlProvider) { self.provider = provider }
 
     func refresh() async {
         do {
@@ -40,4 +42,32 @@ final class AppState: ObservableObject {
     }
 
     func stopLive() { liveTask?.cancel() }
+
+    func loadControl() async {
+        do {
+            let s = try await provider.controlState()
+            self.mode = s.mode
+            self.proxies = s.proxies
+        } catch {
+            self.lastError = String(describing: error)
+        }
+    }
+
+    func select(selector: String, name: String) async {
+        do {
+            try await provider.select(selector: selector, name: name)
+            await loadControl()
+        } catch {
+            self.lastError = String(describing: error)
+        }
+    }
+
+    func setMode(_ m: String) async {
+        do {
+            try await provider.setMode(m)
+            self.mode = m
+        } catch {
+            self.lastError = String(describing: error)
+        }
+    }
 }
