@@ -8,6 +8,7 @@ struct DashboardView: View {
             LiveView().tabItem { Label("Live", systemImage: "dot.radiowaves.left.and.right") }
             AppsView().tabItem { Label("Apps", systemImage: "app.badge") }
             DomainsView().tabItem { Label("Domains", systemImage: "globe") }
+            ControlView().tabItem { Label("Control", systemImage: "slider.horizontal.3") }
         }
         .toolbar {
             ToolbarItem(placement: .automatic) {
