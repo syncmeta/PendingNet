@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- User LaunchAgent: runs the sbtally stats collector. Install to
+     ~/Library/LaunchAgents/ and load (no sudo). __SECRET__ is substituted by
+     install.sh with the clash_api secret from your master config. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.sbtally.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/sbtally</string>
+        <string>daemon</string>
+        <string>--clash-api</string>
+        <string>127.0.0.1:9090</string>
+        <string>--listen</string>
+        <string>127.0.0.1:7777</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SBTALLY_SECRET</key>
+        <string>__SECRET__</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/sbtally-daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/sbtally-daemon.log</string>
+</dict>
+</plist>

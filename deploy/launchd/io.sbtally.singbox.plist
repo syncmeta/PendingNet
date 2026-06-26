@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Root LaunchDaemon: runs sing-box (needs root for the TUN interface + routes).
+     Install to /Library/LaunchDaemons/ and load with sudo launchctl. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.sbtally.singbox</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__SINGBOX__</string>
+        <string>run</string>
+        <string>-c</string>
+        <string>/usr/local/etc/sbtally/master.json</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/sbtally-singbox.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/sbtally-singbox.log</string>
+</dict>
+</plist>
