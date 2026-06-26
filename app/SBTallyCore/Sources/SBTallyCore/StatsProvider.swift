@@ -8,3 +8,9 @@ public protocol StatsProvider {
     func series(name: String?, since: String) async throws -> [Point]
     func live() -> AsyncStream<[LiveAppGroup]>
 }
+
+public protocol ControlProvider {
+    func controlState() async throws -> ControlState
+    func select(selector: String, name: String) async throws
+    func setMode(_ mode: String) async throws
+}

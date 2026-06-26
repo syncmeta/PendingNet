@@ -4,11 +4,13 @@ import SBTallyCore
 final class StubURLProtocol: URLProtocol {
     static var body = Data()
     static var lastURL: URL?
+    static var lastMethod: String?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.lastURL = request.url
+        Self.lastMethod = request.httpMethod
         let resp = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Self.body)
@@ -43,5 +45,28 @@ final class APIStatsProviderTests: XCTestCase {
         let d = try await provider().appDetail("Google Chrome", since: "24h")
         XCTAssertEqual(d.app, "Google Chrome")
         XCTAssertEqual(StubURLProtocol.lastURL?.absoluteString.contains("Google%20Chrome"), true)
+    }
+
+    func testControlState() async throws {
+        StubURLProtocol.body = Data(#"{"mode":"Rule","proxies":{"proxy":{"type":"Selector","now":"vpsA","all":["vpsA","vpsB"]}}}"#.utf8)
+        let s = try await provider().controlState()
+        XCTAssertEqual(s.mode, "Rule")
+        XCTAssertEqual(s.proxies["proxy"]?.now, "vpsA")
+        XCTAssertEqual(s.proxies["proxy"]?.all?.count, 2)
+        XCTAssertEqual(StubURLProtocol.lastURL?.path, "/api/control/state")
+    }
+
+    func testSelectPostsToEndpoint() async throws {
+        StubURLProtocol.body = Data()
+        try await provider().select(selector: "proxy", name: "vpsB")
+        XCTAssertEqual(StubURLProtocol.lastMethod, "POST")
+        XCTAssertEqual(StubURLProtocol.lastURL?.path, "/api/control/select")
+    }
+
+    func testSetModePostsToEndpoint() async throws {
+        StubURLProtocol.body = Data()
+        try await provider().setMode("Global")
+        XCTAssertEqual(StubURLProtocol.lastMethod, "POST")
+        XCTAssertEqual(StubURLProtocol.lastURL?.path, "/api/control/mode")
     }
 }

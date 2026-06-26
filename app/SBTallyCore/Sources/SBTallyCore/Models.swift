@@ -36,3 +36,14 @@ public struct LiveAppGroup: Codable, Identifiable, Hashable {
     public let topHost: String
     public var id: String { app }
 }
+
+public struct Proxy: Codable, Hashable {
+    public let type: String
+    public let now: String?
+    public let all: [String]?
+}
+
+public struct ControlState: Codable {
+    public let mode: String
+    public let proxies: [String: Proxy]
+}

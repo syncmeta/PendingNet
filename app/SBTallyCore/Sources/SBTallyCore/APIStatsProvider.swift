@@ -1,6 +1,6 @@
 import Foundation
 
-public struct APIStatsProvider: StatsProvider {
+public struct APIStatsProvider: StatsProvider, ControlProvider {
     public var baseURL: URL
     public var session: URLSession
 
@@ -41,6 +41,28 @@ public struct APIStatsProvider: StatsProvider {
         var q = [URLQueryItem(name: "since", value: since)]
         if let name { q.append(.init(name: "name", value: name)) }
         return try await get("/api/series", q)
+    }
+
+    private func post(_ path: String, _ body: [String: String]) async throws {
+        guard let url = makeURL(path) else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (_, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    public func controlState() async throws -> ControlState {
+        try await get("/api/control/state", [])
+    }
+    public func select(selector: String, name: String) async throws {
+        try await post("/api/control/select", ["selector": selector, "name": name])
+    }
+    public func setMode(_ mode: String) async throws {
+        try await post("/api/control/mode", ["mode": mode])
     }
 
     public func live() -> AsyncStream<[LiveAppGroup]> {
