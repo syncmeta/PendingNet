@@ -51,11 +51,30 @@ mkdir -p "$HOME/Library/LaunchAgents"
 SECRET="$SECRET" perl -pe 's/__SECRET__/$ENV{SECRET}/g' \
     "$PLIST_DIR/io.sbtally.daemon.plist" > "$HOME/Library/LaunchAgents/io.sbtally.daemon.plist"
 
-echo "==> (Re)loading services"
-sudo launchctl bootout system/io.sbtally.singbox 2>/dev/null || true
-sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist
+echo "==> Loading sbtally daemon (user agent)"
 launchctl bootout "gui/$UID_NUM/io.sbtally.daemon" 2>/dev/null || true
 launchctl bootstrap "gui/$UID_NUM" "$HOME/Library/LaunchAgents/io.sbtally.daemon.plist"
+
+# Two-phase cutover: with SBTALLY_NO_START=1 everything above runs while SFM is
+# still up (safe — nothing touches the TUN). Then quit SFM and run the single
+# command below to start the sing-box TUN daemon.
+if [[ "${SBTALLY_NO_START:-0}" == "1" ]]; then
+    cat <<EOF
+
+==> Staged (SBTALLY_NO_START=1). sing-box TUN NOT started.
+    Now: quit SFM, then run the switch:
+
+      sudo launchctl bootout system/io.sbtally.singbox 2>/dev/null; \\
+      sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist
+
+    Rollback if connectivity doesn't return in ~30s: re-open SFM.
+EOF
+    exit 0
+fi
+
+echo "==> Starting sing-box (TUN, root). Quit SFM first if you haven't."
+sudo launchctl bootout system/io.sbtally.singbox 2>/dev/null || true
+sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist
 
 cat <<EOF
 
