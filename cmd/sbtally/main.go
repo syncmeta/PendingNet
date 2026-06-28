@@ -187,8 +187,9 @@ func runConfigGenerate(args []string) {
 	clashAddr := fs.String("clash-addr", "127.0.0.1:9090", "clash_api external_controller")
 	clashSecret := fs.String("clash-secret", "", "clash_api secret")
 	mixedPort := fs.Int("mixed-port", 2080, "mixed inbound port")
-	tunStack := fs.String("tun-stack", "gvisor", "tun stack (gvisor|system)")
+	tunStack := fs.String("tun-stack", "system", "tun stack (system|gvisor)")
 	noTun := fs.Bool("no-tun", false, "omit the tun inbound")
+	logLevel := fs.String("log-level", "warn", "sing-box log level (warn|info|debug)")
 	out := fs.String("out", "", "output file (default stdout)")
 	_ = fs.Parse(args)
 
@@ -198,6 +199,7 @@ func runConfigGenerate(args []string) {
 		MixedPort:    *mixedPort,
 		TunStack:     *tunStack,
 		EnableTun:    !*noTun,
+		LogLevel:     *logLevel,
 	})
 	if err != nil {
 		fatal(err)

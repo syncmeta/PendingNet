@@ -26,6 +26,7 @@ type Options struct {
 	EnableTun      bool
 	GeositeBaseURL string // default official sing-geosite rule-set
 	GeoipBaseURL   string // default official sing-geoip rule-set
+	LogLevel       string // default "warn"
 	AppRules       []AppRule
 }
 
@@ -126,12 +127,15 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 
 	inbounds := []any{}
 	if opts.EnableTun {
+		// Settings matched to a known-good macOS SFM TUN config: system stack,
+		// IPv4-only address, mtu 1500, and NO strict_route (strict_route breaks
+		// connectivity on macOS).
 		inbounds = append(inbounds, map[string]any{
 			"type": "tun", "tag": "tun-in",
-			"address":      []string{"172.18.0.1/30", "fdfe:dcba:9876::1/126"},
-			"auto_route":   true,
-			"strict_route": true,
-			"stack":        str(opts.TunStack, "gvisor"),
+			"address":    []string{"172.19.0.1/30"},
+			"mtu":        1500,
+			"auto_route": true,
+			"stack":      str(opts.TunStack, "system"),
 		})
 	}
 	mixedPort := opts.MixedPort
@@ -148,7 +152,7 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	}
 
 	cfg := map[string]any{
-		"log": map[string]any{"level": "warn"},
+		"log": map[string]any{"level": str(opts.LogLevel, "warn")},
 		"dns": map[string]any{
 			"servers": []any{
 				map[string]any{"type": "https", "tag": "dns-proxy", "server": "1.1.1.1", "detour": "proxy"},
