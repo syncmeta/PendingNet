@@ -42,7 +42,8 @@ sudo mkdir -p /usr/local/etc/sbtally
 sudo install -m 0644 "$MASTER" /usr/local/etc/sbtally/master.json
 
 echo "==> Rule-sets: ownership + geosite-gfw"
-sudo chown "$(id -un)":staff /usr/local/etc/sbtally /usr/local/etc/sbtally/*.srs 2>/dev/null || true
+sudo chown "$(id -un)":staff /usr/local/etc/sbtally
+find /usr/local/etc/sbtally -maxdepth 1 -name '*.srs' -exec sudo chown "$(id -un)":staff {} +
 if [[ ! -f /usr/local/etc/sbtally/geosite-gfw.srs ]]; then
     curl -sfm 30 -o /tmp/geosite-gfw.srs \
       https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs \
