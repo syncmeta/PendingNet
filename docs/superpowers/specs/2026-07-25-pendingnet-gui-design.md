@@ -47,6 +47,12 @@ sing-box clash_api 支持自定义模式名。master.json 内置三组 clash_mod
 
 切换通过 Clash API `PATCH /configs {"mode": ...}`，瞬时生效，选择由 cache.db 持久化。
 `geosite-gfw.srs` 与其他规则集一样本地化存放于 /usr/local/etc/sbtally/。
+
+**规则集自动更新**（用户要求，不能一个本地文件用到老）：sbtally daemon 每 24h
+经本地代理端口（127.0.0.1:2080，保证任何规则模式下可达）下载各 .srs 的新版，
+校验后原子替换本地文件；sing-box 对 local 规则集热加载，无需重启。下载失败静默
+沿用旧文件（启动离线安全不变）。规则集目录属主改为用户，daemon 免 root 可写。
+GUI 显示各规则集最后更新时间，并提供"立即更新"。
 生成器（internal/sbconfig）相应改为输出三模式规则 + 本地规则集路径
 （吸收现在 update-config.sh 里的 python 补丁，脚本随之简化）。
 
