@@ -68,6 +68,13 @@ type RuleSetUpdater struct {
 
 	mu       sync.Mutex
 	statuses map[string]time.Time // file -> mod time of last successful update
+
+	// updateMu serializes whole UpdateAll runs so a manual POST
+	// /api/rulesets/update racing the 24h ticker (or two rapid POSTs) can
+	// never run two updateOne calls against the same destination file
+	// concurrently, which could otherwise interleave WriteFile/Rename and
+	// leave a torn file even though each individual rename is atomic.
+	updateMu sync.Mutex
 }
 
 // NewRuleSetUpdater builds an updater rooted at dir. proxyAddr overrides the
@@ -123,6 +130,9 @@ func (u *RuleSetUpdater) urlFor(spec ruleSetSpec) string {
 // on disk. It returns a map of file name -> error (nil entry means success).
 // A download failure leaves the existing file untouched.
 func (u *RuleSetUpdater) UpdateAll(ctx context.Context) map[string]error {
+	u.updateMu.Lock()
+	defer u.updateMu.Unlock()
+
 	client, err := u.client()
 	results := make(map[string]error, len(ruleSetSpecs))
 	if err != nil {
