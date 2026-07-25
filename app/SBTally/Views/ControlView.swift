@@ -79,6 +79,16 @@ struct ControlView: View {
                 if let err = engine.lastError {
                     Text(err).font(.caption).foregroundStyle(.red)
                 }
+                if engine.startFailed && !engine.logTail.isEmpty {
+                    ScrollView {
+                        Text(engine.logTail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 120)
+                }
             }
 
             Section("路由模式") {

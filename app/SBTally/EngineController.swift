@@ -8,6 +8,10 @@ final class EngineController: ObservableObject {
     @Published var takeover = "tun"
     @Published var helperReady = false
     @Published var lastError: String?
+    @Published var logTail: String = ""
+    /// Set after a `start()` attempt whose post-refresh status shows the
+    /// engine still isn't running — signals the GUI should surface `logTail`.
+    @Published var startFailed = false
 
     private let service = SMAppService.daemon(plistName: "net.pending.PendingNet.helper.plist")
 
@@ -91,6 +95,7 @@ final class EngineController: ObservableObject {
         guard let result else { return }
         running = result.0
         takeover = result.1
+        logTail = result.2
     }
 
     private func call(_ f: @escaping (HelperProtocol, @escaping (String?) -> Void) -> Void) async {
@@ -101,8 +106,14 @@ final class EngineController: ObservableObject {
         await refresh()
     }
 
-    func start() async { await call { p, r in p.startEngine(reply: r) } }
-    func stop() async { await call { p, r in p.stopEngine(reply: r) } }
+    func start() async {
+        await call { p, r in p.startEngine(reply: r) }
+        startFailed = !running
+    }
+    func stop() async {
+        startFailed = false
+        await call { p, r in p.stopEngine(reply: r) }
+    }
     func setTakeover(_ m: String) async { await call { p, r in p.setTakeover(m, reply: r) } }
 
     deinit {

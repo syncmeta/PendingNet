@@ -25,7 +25,9 @@ struct SBTallyApp: App {
                 .environmentObject(state)
                 .environmentObject(engine)
         } label: {
-            Image(systemName: "network")
+            Image(systemName: engine.running ? "network" : "network.slash")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(engine.running ? .primary : .secondary)
         }
         .menuBarExtraStyle(.window)
     }
