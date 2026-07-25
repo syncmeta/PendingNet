@@ -1,9 +1,9 @@
-# Cutover: SFM → standalone sing-box + sbtally
+# Cutover: SFM → PendingNet (standalone sing-box + sbtally)
 
-This is the real-machine step. It swaps SFM for a standalone sing-box CLI (so
-per-app process attribution works) plus the sbtally stats daemon, both under
-launchd. **It is verified here, at cutover — not in CI.** Do it when you're ready
-to switch your proxy over.
+This is the real-machine step. It swaps SFM for PendingNet — a standalone sing-box
+CLI (so per-app process attribution works) plus the sbtally stats daemon, both under
+launchd. The PendingNet.app GUI controls both via the Clash API. **It is verified
+here, at cutover — not in CI.** Do it when you're ready to switch your proxy over.
 
 ## What you get after cutover
 
@@ -14,6 +14,14 @@ to switch your proxy over.
 
 Deferred to the optional privileged helper (not required for the above):
 runtime **TUN on/off** and **system-proxy** toggles, and live per-app-rule edits.
+
+## Dual-variant configs
+
+During config generation, you produce both `master-tun.json` (TUN mode) and
+`master-notun.json` (system-proxy fallback). The installer places both under
+`/usr/local/etc/sbtally/` and writes the active mode to `/usr/local/etc/sbtally/mode`.
+PendingNet.app and the Clash API read this mode file to switch between configs.
+Toggling mode in the PendingNet.app Control tab updates this file and reloads sing-box.
 
 ## Steps
 
@@ -51,6 +59,10 @@ After cutover, confirm the things only a real sing-box can prove:
       and **protocol** takes effect (check `curl -s 127.0.0.1:9090/proxies`).
 - [ ] Switching **mode** (规则/全局/直连) changes routing (e.g. a CN site goes
       direct in 规则, proxied in 全局).
+- [ ] **Takeover mode** toggles between TUN and system-proxy (verify in
+      `/usr/local/etc/sbtally/mode`).
+- [ ] **Rule-sets** are present: geosite-cn, geoip-cn, geosite-geolocation-noncn,
+      geosite-category-ads-all, geosite-gfw (`.srs` files in `/usr/local/etc/sbtally/`).
 - [ ] Connectivity is healthy on each VPS/protocol.
 
 If per-app names are blank, check `/var/log/sbtally-singbox.log` — process

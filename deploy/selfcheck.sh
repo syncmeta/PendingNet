@@ -35,6 +35,15 @@ else
     bad "clash API not answering"
 fi
 
+say "-- 3b. mode & rulesets"
+MODE=$(cat /usr/local/etc/sbtally/mode 2>/dev/null || echo tun)
+say "  takeover mode: $MODE"
+CM=$(curl -sm 3 -H "Authorization: Bearer $SECRET" 127.0.0.1:9090/configs | python3 -c 'import json,sys;print(json.load(sys.stdin).get("mode",""))' 2>/dev/null)
+if [[ -n "$CM" ]]; then ok "clash rule mode: $CM"; else bad "cannot read clash mode"; fi
+for f in geosite-cn geoip-cn geosite-geolocation-noncn geosite-category-ads-all geosite-gfw; do
+    [[ -s "/usr/local/etc/sbtally/$f.srs" ]] && ok "$f.srs present" || bad "$f.srs missing"
+done
+
 say "-- 4. connectivity"
 if curl -sm 6 -o /dev/null http://connect.rom.miui.com/generate_204; then ok "CN direct reachable"; else bad "CN direct unreachable"; fi
 if curl -sm 10 -o /dev/null -w '%{http_code}' https://www.google.com/generate_204 | grep -q 204; then
