@@ -125,7 +125,7 @@ Run: `go test ./internal/sbconfig/ -run ThreeModes -v` → FAIL（缺字段/缺�
 	}
 ```
 
-（实现时用 `sort.Strings` 固定顺序，保证输出可复现。gfw 远程 URL：`geosite/geosite-gfw.srs`。noncn 远程文件名保持 `geosite-geolocation-!cn.srs`，local 文件名用约定的 `geosite-geolocation-noncn.srs`。）
+（实现时用 `sort.Strings` 固定顺序，保证输出可复现。gfw 远程 URL 用 MetaCubeX（官方 SagerNet 源无 gfw 文件，已实测 404）：`https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs`。noncn 远程文件名保持 `geosite-geolocation-!cn.srs`，local 文件名用约定的 `geosite-geolocation-noncn.srs`。）
 
 4. clashAPI 增加 `"default_mode": str(opts.DefaultMode, "Whitelist")`。
 
@@ -226,7 +226,7 @@ func (u *RuleSetUpdater) RunEvery(ctx context.Context, d time.Duration)
 func RegisterRuleSets(mux *http.ServeMux, u *RuleSetUpdater) // GET /api/rulesets, POST /api/rulesets/update
 ```
 
-- URL 表复用 Task 1 的五个文件名 ↔ 官方 URL（noncn 本地名 geosite-geolocation-noncn.srs ↔ 远程 `geosite-geolocation-!cn.srs`）。
+- URL 表：四个 SagerNet 官方 URL（noncn 本地名 geosite-geolocation-noncn.srs ↔ 远程 `geosite-geolocation-!cn.srs`）+ gfw 用 MetaCubeX：`https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs`（SagerNet 无此文件）。
 
 - [ ] **Step 1: 失败测试**（httptest 假源 + 临时目录，注入 BaseURL——struct 加非导出 `geositeBase/geoipBase` 字段测试覆写）
 
@@ -640,9 +640,9 @@ echo "==> Rule-sets: ownership + geosite-gfw"
 sudo chown "$(id -un)":staff /usr/local/etc/sbtally /usr/local/etc/sbtally/*.srs 2>/dev/null || true
 if [[ ! -f /usr/local/etc/sbtally/geosite-gfw.srs ]]; then
     curl -sfm 30 -o /tmp/geosite-gfw.srs \
-      https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-gfw.srs \
+      https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs \
       || curl -sfm 30 -x http://127.0.0.1:2080 -o /tmp/geosite-gfw.srs \
-      https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-gfw.srs
+      https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs
     install -m 0644 /tmp/geosite-gfw.srs /usr/local/etc/sbtally/
 fi
 sudo rm -rf /Applications/SBTally.app
