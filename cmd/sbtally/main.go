@@ -160,7 +160,7 @@ func runAppDetail(args []string) {
 
 type multiFlag []string
 
-func (m *multiFlag) String() string  { return strings.Join(*m, ",") }
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 
 func runConfig(args []string) {

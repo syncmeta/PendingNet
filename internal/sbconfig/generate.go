@@ -125,11 +125,11 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	)
 
 	files := map[string]string{
-		"geosite-cn":     "geosite-cn.srs",
-		"geoip-cn":       "geoip-cn.srs",
-		"geosite-noncn":  "geosite-geolocation-noncn.srs",
-		"geosite-ads":    "geosite-category-ads-all.srs",
-		"geosite-gfw":    "geosite-gfw.srs",
+		"geosite-cn":    "geosite-cn.srs",
+		"geoip-cn":      "geoip-cn.srs",
+		"geosite-noncn": "geosite-geolocation-noncn.srs",
+		"geosite-ads":   "geosite-category-ads-all.srs",
+		"geosite-gfw":   "geosite-gfw.srs",
 	}
 	ruleSet := []any{}
 	if opts.RuleSetDir != "" {
