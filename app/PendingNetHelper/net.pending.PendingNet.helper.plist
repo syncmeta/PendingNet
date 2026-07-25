@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>Label</key><string>net.pending.PendingNet.helper</string>
+    <key>BundleProgram</key><string>Contents/MacOS/PendingNetHelper</string>
+    <key>MachServices</key><dict><key>net.pending.PendingNet.helper</key><true/></dict>
+    <key>AssociatedBundleIdentifiers</key><array><string>net.pending.PendingNet</string></array>
+</dict></plist>

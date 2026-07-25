@@ -1,9 +1,9 @@
-# Cutover: SFM → standalone sing-box + sbtally
+# Cutover: SFM → PendingNet (standalone sing-box + sbtally)
 
-This is the real-machine step. It swaps SFM for a standalone sing-box CLI (so
-per-app process attribution works) plus the sbtally stats daemon, both under
-launchd. **It is verified here, at cutover — not in CI.** Do it when you're ready
-to switch your proxy over.
+This is the real-machine step. It swaps SFM for PendingNet — a standalone sing-box
+CLI (so per-app process attribution works) plus the sbtally stats daemon, both under
+launchd. The PendingNet.app GUI controls both via the Clash API. **It is verified
+here, at cutover — not in CI.** Do it when you're ready to switch your proxy over.
 
 ## What you get after cutover
 
@@ -14,6 +14,15 @@ to switch your proxy over.
 
 Deferred to the optional privileged helper (not required for the above):
 runtime **TUN on/off** and **system-proxy** toggles, and live per-app-rule edits.
+
+## Dual-variant configs and mode switching
+
+The initial cutover installs a single `master.json` (TUN mode). Later, when you run
+`deploy/update-config.sh` (the normal config-update path), it generates both
+`master-tun.json` and `master-notun.json` and installs both to `/usr/local/etc/sbtally/`.
+Once both variants exist, toggling **takeover mode** in the PendingNet.app Control tab
+uses the privileged helper to write `/usr/local/etc/sbtally/mode` and reload sing-box
+with the selected variant. The mode file defaults to "tun" when absent (fresh state).
 
 ## Steps
 
@@ -51,6 +60,10 @@ After cutover, confirm the things only a real sing-box can prove:
       and **protocol** takes effect (check `curl -s 127.0.0.1:9090/proxies`).
 - [ ] Switching **mode** (规则/全局/直连) changes routing (e.g. a CN site goes
       direct in 规则, proxied in 全局).
+- [ ] **Rule-sets** are present: geosite-cn, geoip-cn, geosite-geolocation-noncn,
+      geosite-category-ads-all, geosite-gfw (`.srs` files in `/usr/local/etc/sbtally/`).
+- [ ] After running `deploy/update-config.sh`, **takeover mode** toggle in PendingNet.app
+      switches between TUN and system-proxy (writes `/usr/local/etc/sbtally/mode`).
 - [ ] Connectivity is healthy on each VPS/protocol.
 
 If per-app names are blank, check `/var/log/sbtally-singbox.log` — process

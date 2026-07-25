@@ -54,6 +54,7 @@ func runDaemon(args []string) {
 	listen := fs.String("listen", "127.0.0.1:7777", "stats HTTP listen addr")
 	dbPath := fs.String("db", defaultDBPath(), "SQLite path")
 	flush := fs.Duration("flush", 10*time.Second, "DB flush interval")
+	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -76,6 +77,9 @@ func runDaemon(args []string) {
 
 	mux := daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })
 	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secret))
+	rsu := daemon.NewRuleSetUpdater(*rulesetDir, "")
+	daemon.RegisterRuleSets(mux, rsu)
+	go rsu.RunEvery(ctx, 24*time.Hour)
 	srv := &http.Server{Addr: *listen, Handler: mux}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
@@ -156,7 +160,7 @@ func runAppDetail(args []string) {
 
 type multiFlag []string
 
-func (m *multiFlag) String() string  { return strings.Join(*m, ",") }
+func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 
 func runConfig(args []string) {
@@ -191,16 +195,51 @@ func runConfigGenerate(args []string) {
 	noTun := fs.Bool("no-tun", false, "omit the tun inbound")
 	logLevel := fs.String("log-level", "warn", "sing-box log level (warn|info|debug)")
 	out := fs.String("out", "", "output file (default stdout)")
+	rulesetDir := fs.String("ruleset-dir", "", "emit local rule-sets from this dir")
+	outDir := fs.String("out-dir", "", "write master-tun.json and master-notun.json here")
 	_ = fs.Parse(args)
 
-	cfg, err := cli.GenerateConfig(vps, sbconfig.Options{
+	opts := sbconfig.Options{
 		ClashAPIAddr: *clashAddr,
 		ClashSecret:  *clashSecret,
 		MixedPort:    *mixedPort,
 		TunStack:     *tunStack,
 		EnableTun:    !*noTun,
 		LogLevel:     *logLevel,
-	})
+		RuleSetDir:   *rulesetDir,
+	}
+
+	// If out-dir is provided, generate both variants
+	if *outDir != "" {
+		// Generate with TUN enabled
+		optsTun := opts
+		optsTun.EnableTun = true
+		cfg, err := cli.GenerateConfig(vps, optsTun)
+		if err != nil {
+			fatal(err)
+		}
+		tunPath := filepath.Join(*outDir, "master-tun.json")
+		if err := os.WriteFile(tunPath, cfg, 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", tunPath)
+
+		// Generate without TUN
+		optsNoTun := opts
+		optsNoTun.EnableTun = false
+		cfg, err = cli.GenerateConfig(vps, optsNoTun)
+		if err != nil {
+			fatal(err)
+		}
+		notunPath := filepath.Join(*outDir, "master-notun.json")
+		if err := os.WriteFile(notunPath, cfg, 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", notunPath)
+		return
+	}
+
+	cfg, err := cli.GenerateConfig(vps, opts)
 	if err != nil {
 		fatal(err)
 	}

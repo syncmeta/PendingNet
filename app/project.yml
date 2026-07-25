@@ -1,24 +1,46 @@
-name: SBTally
+name: PendingNet
 options:
-  bundleIdPrefix: dev.sbtally
+  bundleIdPrefix: net.pending
   deploymentTarget:
     macOS: "14.0"
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
     GENERATE_INFOPLIST_FILE: "YES"
-    PRODUCT_NAME: SBTally
 packages:
   SBTallyCore:
     path: SBTallyCore
 targets:
-  SBTally:
+  PendingNetHelper:
+    type: tool
+    platform: macOS
+    sources:
+      - path: PendingNetHelper
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.helper
+        PRODUCT_NAME: PendingNetHelper
+  PendingNet:
     type: application
     platform: macOS
     sources:
       - path: SBTally
+      - path: PendingNetHelper/HelperProtocol.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet
+        PRODUCT_NAME: PendingNet
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
+      - target: PendingNetHelper
+        embed: false
+    postBuildScripts:
+      - name: Embed helper + daemon plist
+        script: |
+          APP="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
+          mkdir -p "$APP/Contents/Library/LaunchDaemons" "$APP/Contents/MacOS"
+          cp "$BUILT_PRODUCTS_DIR/PendingNetHelper" "$APP/Contents/MacOS/"
+          cp "$SRCROOT/PendingNetHelper/net.pending.PendingNet.helper.plist" "$APP/Contents/Library/LaunchDaemons/"

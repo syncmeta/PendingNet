@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,5 +127,50 @@ func TestGenerateStructureAndSingBoxCheck(t *testing.T) {
 	}
 	if out, err := exec.Command(path, "check", "-c", f).CombinedOutput(); err != nil {
 		t.Fatalf("sing-box check failed on generated config: %v\n%s", err, out)
+	}
+}
+
+func TestGenerateThreeModesLocalRuleSets(t *testing.T) {
+	out, err := Generate([]VPS{{Name: "v1", Outbounds: []Outbound{{Tag: "hy2", Raw: json.RawMessage(`{"type":"hysteria2","tag":"hy2"}`)}}}},
+		Options{EnableTun: true, RuleSetDir: "/usr/local/etc/sbtally"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c map[string]any
+	if err := json.Unmarshal(out, &c); err != nil {
+		t.Fatal(err)
+	}
+	route := c["route"].(map[string]any)
+	s := string(out)
+	for _, want := range []string{
+		`"clash_mode": "Global"`, `"clash_mode": "Whitelist"`, `"clash_mode": "Blacklist"`,
+		`"geosite-gfw"`, `"/usr/local/etc/sbtally/geosite-gfw.srs"`,
+		`"default_mode": "Whitelist"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	for _, rs := range route["rule_set"].([]any) {
+		m := rs.(map[string]any)
+		if m["type"] != "local" {
+			t.Errorf("rule_set %v not local", m["tag"])
+		}
+	}
+	if strings.Contains(s, `"download_detour"`) {
+		t.Error("remote rule-set leaked")
+	}
+}
+
+func TestGenerateRemoteGeoSiteGFWURL(t *testing.T) {
+	out, err := Generate([]VPS{{Name: "v1", Outbounds: []Outbound{{Tag: "hy2", Raw: json.RawMessage(`{"type":"hysteria2","tag":"hy2"}`)}}}},
+		Options{EnableTun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	metaCubeXURL := "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs"
+	if !strings.Contains(s, metaCubeXURL) {
+		t.Errorf("missing MetaCubeX gfw URL: %s", metaCubeXURL)
 	}
 }

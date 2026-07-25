@@ -5,22 +5,29 @@ import SBTallyCore
 struct SBTallyApp: App {
     @StateObject private var state = AppState(
         provider: APIStatsProvider(baseURL: URL(string: "http://127.0.0.1:7777")!))
+    @StateObject private var engine = EngineController()
 
     var body: some Scene {
-        Window("sbtally", id: "main") {
+        Window("PendingNet", id: "main") {
             DashboardView()
                 .environmentObject(state)
+                .environmentObject(engine)
                 .frame(minWidth: 680, minHeight: 440)
                 .task {
                     await state.refresh()
                     state.startLive()
+                    await engine.refresh()
                 }
         }
 
         MenuBarExtra {
-            MenuBarView().environmentObject(state)
+            MenuBarView()
+                .environmentObject(state)
+                .environmentObject(engine)
         } label: {
-            Image(systemName: "chart.bar.xaxis")
+            Image(systemName: engine.running ? "network" : "network.slash")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(engine.running ? .primary : .secondary)
         }
         .menuBarExtraStyle(.window)
     }

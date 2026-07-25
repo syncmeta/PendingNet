@@ -41,6 +41,18 @@ echo "==> Installing master config -> /usr/local/etc/sbtally/master.json"
 sudo mkdir -p /usr/local/etc/sbtally
 sudo install -m 0644 "$MASTER" /usr/local/etc/sbtally/master.json
 
+echo "==> Rule-sets: ownership + geosite-gfw"
+sudo chown "$(id -un)":staff /usr/local/etc/sbtally
+find /usr/local/etc/sbtally -maxdepth 1 -name '*.srs' -exec sudo chown "$(id -un)":staff {} +
+if [[ ! -f /usr/local/etc/sbtally/geosite-gfw.srs ]]; then
+    curl -sfm 30 -o /tmp/geosite-gfw.srs \
+      https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs \
+      || curl -sfm 30 -x http://127.0.0.1:2080 -o /tmp/geosite-gfw.srs \
+      https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs
+    install -m 0644 /tmp/geosite-gfw.srs /usr/local/etc/sbtally/
+fi
+sudo rm -rf /Applications/SBTally.app
+
 echo "==> Installing sing-box LaunchDaemon (root), sing-box at $SINGBOX"
 SINGBOX="$SINGBOX" perl -pe 's/__SINGBOX__/$ENV{SINGBOX}/g' \
     "$PLIST_DIR/io.sbtally.singbox.plist" | sudo tee /Library/LaunchDaemons/io.sbtally.singbox.plist >/dev/null
