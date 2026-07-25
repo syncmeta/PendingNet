@@ -31,6 +31,6 @@ struct DashboardView: View {
         .onChange(of: state.since) {
             Task { await state.refresh() }
         }
-        .navigationTitle("sbtally")
+        .navigationTitle("PendingNet")
     }
 }
