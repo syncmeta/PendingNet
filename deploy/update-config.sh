@@ -13,32 +13,23 @@ set -euo pipefail
 SECRET_FILE="$HOME/.sbtally-clash-secret"
 [[ -f "$SECRET_FILE" ]] || { echo "missing $SECRET_FILE" >&2; exit 1; }
 ETC=/usr/local/etc/sbtally
-TMP=$(mktemp /tmp/sbtally-master.XXXXXX.json)
+TMPDIR_GEN=$(mktemp -d)
 
 echo "==> Generating"
-sbtally config generate "$@" --clash-secret "$(cat "$SECRET_FILE")" --out "$TMP"
-
-echo "==> Switching rule-sets to local files in $ETC"
-python3 - "$TMP" <<'EOF'
-import json, sys
-p = sys.argv[1]
-c = json.load(open(p))
-paths = {'geosite-cn': 'geosite-cn.srs', 'geoip-cn': 'geoip-cn.srs',
-         'geosite-noncn': 'geosite-geolocation-noncn.srs',
-         'geosite-ads': 'geosite-category-ads-all.srs'}
-c['route']['rule_set'] = [{'tag': t, 'type': 'local', 'format': 'binary',
-                           'path': f'/usr/local/etc/sbtally/{f}'}
-                          for t, f in paths.items()]
-json.dump(c, open(p, 'w'), indent=2, ensure_ascii=False)
-EOF
+sbtally config generate "$@" --clash-secret "$(cat "$SECRET_FILE")" \
+    --ruleset-dir /usr/local/etc/sbtally --out-dir "$TMPDIR_GEN"
 
 echo "==> Validating"
-sing-box check -c "$TMP"
+sing-box check -c "$TMPDIR_GEN/master-tun.json"
+sing-box check -c "$TMPDIR_GEN/master-notun.json"
 
 echo "==> Installing (sudo) + restarting sing-box"
-sudo install -m 0644 "$TMP" "$ETC/master.json"
+sudo install -m 0644 "$TMPDIR_GEN"/master-*.json "$ETC/"
+MODE=$(cat "$ETC/mode" 2>/dev/null || echo tun)
+[[ "$MODE" == tun ]] && ACTIVE=master-tun.json || ACTIVE=master-notun.json
+sudo install -m 0644 "$ETC/$ACTIVE" "$ETC/master.json"
 sudo launchctl kickstart -k system/io.sbtally.singbox
-rm -f "$TMP"
+rm -rf "$TMPDIR_GEN"
 
 sleep 3
 if pgrep -x sing-box >/dev/null; then

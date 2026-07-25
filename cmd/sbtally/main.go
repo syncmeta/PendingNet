@@ -191,16 +191,51 @@ func runConfigGenerate(args []string) {
 	noTun := fs.Bool("no-tun", false, "omit the tun inbound")
 	logLevel := fs.String("log-level", "warn", "sing-box log level (warn|info|debug)")
 	out := fs.String("out", "", "output file (default stdout)")
+	rulesetDir := fs.String("ruleset-dir", "", "emit local rule-sets from this dir")
+	outDir := fs.String("out-dir", "", "write master-tun.json and master-notun.json here")
 	_ = fs.Parse(args)
 
-	cfg, err := cli.GenerateConfig(vps, sbconfig.Options{
+	opts := sbconfig.Options{
 		ClashAPIAddr: *clashAddr,
 		ClashSecret:  *clashSecret,
 		MixedPort:    *mixedPort,
 		TunStack:     *tunStack,
 		EnableTun:    !*noTun,
 		LogLevel:     *logLevel,
-	})
+		RuleSetDir:   *rulesetDir,
+	}
+
+	// If out-dir is provided, generate both variants
+	if *outDir != "" {
+		// Generate with TUN enabled
+		optsTun := opts
+		optsTun.EnableTun = true
+		cfg, err := cli.GenerateConfig(vps, optsTun)
+		if err != nil {
+			fatal(err)
+		}
+		tunPath := filepath.Join(*outDir, "master-tun.json")
+		if err := os.WriteFile(tunPath, cfg, 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", tunPath)
+
+		// Generate without TUN
+		optsNoTun := opts
+		optsNoTun.EnableTun = false
+		cfg, err = cli.GenerateConfig(vps, optsNoTun)
+		if err != nil {
+			fatal(err)
+		}
+		notunPath := filepath.Join(*outDir, "master-notun.json")
+		if err := os.WriteFile(notunPath, cfg, 0o644); err != nil {
+			fatal(err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", notunPath)
+		return
+	}
+
+	cfg, err := cli.GenerateConfig(vps, opts)
 	if err != nil {
 		fatal(err)
 	}
