@@ -7,8 +7,14 @@ func sh(_ args: [String]) -> (Int32, String) {
     let p = Process(); p.executableURL = URL(fileURLWithPath: args[0])
     p.arguments = Array(args.dropFirst())
     let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
-    try? p.run(); p.waitUntilExit()
+    try? p.run()
+    // Drain the pipe BEFORE waiting on exit: readDataToEndOfFile() blocks until EOF
+    // (i.e. until the child closes its stdout/stderr, which happens at exit), so this
+    // ordering avoids a deadlock where the child blocks writing to a full pipe buffer
+    // (>~64KB, e.g. unbounded `launchctl print` output) while the parent blocks in
+    // waitUntilExit() without ever draining the pipe.
     let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    p.waitUntilExit()
     return (p.terminationStatus, out)
 }
 func launchctl(_ sub: [String]) -> String? {
