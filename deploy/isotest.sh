@@ -19,7 +19,7 @@ ok()  { PASS=$((PASS+1)); echo "  [OK]   $*"; }
 bad() { FAIL=$((FAIL+1)); echo "  [FAIL] $*"; }
 api() { curl -sm 5 -H "Authorization: Bearer $SECRET" "$@"; }
 
-mkdir -p "$DIR"
+rm -rf "$DIR"; mkdir -p "$DIR"   # fresh dir: no stale cache.db from prior runs
 
 echo "== 1. generate notun variant on alternate ports =="
 go run ./cmd/sbtally config generate \
@@ -31,7 +31,7 @@ go run ./cmd/sbtally config generate \
 sing-box check -c "$DIR/master-notun.json" && ok "sing-box check passed" || { bad "check failed"; exit 1; }
 
 echo "== 2. start it (no TUN, no system proxy, unprivileged) =="
-sing-box run -c "$DIR/master-notun.json" >"$DIR/log" 2>&1 &
+( cd "$DIR" && exec sing-box run -c "$DIR/master-notun.json" >"$DIR/log" 2>&1 ) &   # cwd=$DIR so cache.db stays here
 ENGINE=$!
 trap 'kill $ENGINE 2>/dev/null; echo "== stopped isolated engine =="' EXIT
 for _ in $(seq 20); do api "$API/version" >/dev/null 2>&1 && break; sleep 1; done
