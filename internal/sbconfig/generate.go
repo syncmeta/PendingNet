@@ -156,7 +156,8 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 			remote("geoip-cn", geoip, "geoip-cn.srs"),
 			remote("geosite-noncn", geosite, "geosite-geolocation-!cn.srs"),
 			remote("geosite-ads", geosite, "geosite-category-ads-all.srs"),
-			remote("geosite-gfw", geosite, "geosite-gfw.srs"),
+			map[string]any{"type": "remote", "tag": "geosite-gfw", "format": "binary",
+				"url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs", "download_detour": "proxy"},
 		)
 	}
 

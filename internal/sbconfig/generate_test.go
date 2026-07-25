@@ -161,3 +161,16 @@ func TestGenerateThreeModesLocalRuleSets(t *testing.T) {
 		t.Error("remote rule-set leaked")
 	}
 }
+
+func TestGenerateRemoteGeoSiteGFWURL(t *testing.T) {
+	out, err := Generate([]VPS{{Name: "v1", Outbounds: []Outbound{{Tag: "hy2", Raw: json.RawMessage(`{"type":"hysteria2","tag":"hy2"}`)}}}},
+		Options{EnableTun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	metaCubeXURL := "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs"
+	if !strings.Contains(s, metaCubeXURL) {
+		t.Errorf("missing MetaCubeX gfw URL: %s", metaCubeXURL)
+	}
+}
