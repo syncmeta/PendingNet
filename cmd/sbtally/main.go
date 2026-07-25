@@ -54,6 +54,7 @@ func runDaemon(args []string) {
 	listen := fs.String("listen", "127.0.0.1:7777", "stats HTTP listen addr")
 	dbPath := fs.String("db", defaultDBPath(), "SQLite path")
 	flush := fs.Duration("flush", 10*time.Second, "DB flush interval")
+	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -76,6 +77,9 @@ func runDaemon(args []string) {
 
 	mux := daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })
 	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secret))
+	rsu := daemon.NewRuleSetUpdater(*rulesetDir, "")
+	daemon.RegisterRuleSets(mux, rsu)
+	go rsu.RunEvery(ctx, 24*time.Hour)
 	srv := &http.Server{Addr: *listen, Handler: mux}
 	go func() { _ = srv.ListenAndServe() }()
 	defer srv.Close()
