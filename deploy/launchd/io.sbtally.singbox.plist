@@ -13,6 +13,8 @@
         <string>-c</string>
         <string>/usr/local/etc/sbtally/master.json</string>
     </array>
+    <key>WorkingDirectory</key>
+    <string>/usr/local/etc/sbtally</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
