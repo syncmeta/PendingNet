@@ -2,6 +2,7 @@ package sbconfig
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -28,6 +29,8 @@ type Options struct {
 	GeoipBaseURL   string // default official sing-geoip rule-set
 	LogLevel       string // default "warn"
 	AppRules       []AppRule
+	RuleSetDir     string // non-empty: emit local rule-sets from this dir (offline-safe startup)
+	DefaultMode    string // clash_api default_mode, default "Whitelist"
 }
 
 func str(s, def string) string {
@@ -98,8 +101,6 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 		map[string]any{"rule_set": "geosite-cn", "action": "resolve", "server": "dns-local", "strategy": "prefer_ipv4"},
 		map[string]any{"action": "resolve", "strategy": "prefer_ipv4"},
 		map[string]any{"protocol": "dns", "action": "hijack-dns"},
-		map[string]any{"clash_mode": "Direct", "outbound": "direct"},
-		map[string]any{"clash_mode": "Global", "outbound": "proxy"},
 	}
 	for _, ar := range opts.AppRules {
 		r := map[string]any{"process_name": []string{ar.Process}}
@@ -113,21 +114,50 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	rules = append(rules,
 		map[string]any{"rule_set": "geosite-ads", "action": "reject"},
 		map[string]any{"ip_is_private": true, "outbound": "direct"},
-		map[string]any{"rule_set": []string{"geoip-cn", "geosite-cn"}, "outbound": "direct"},
-		map[string]any{"rule_set": "geosite-noncn", "outbound": "proxy"},
+		// Global: everything else → proxy.
+		map[string]any{"clash_mode": "Global", "outbound": "proxy"},
+		// Blacklist: only GFW-listed names → proxy, rest direct.
+		map[string]any{"clash_mode": "Blacklist", "rule_set": "geosite-gfw", "outbound": "proxy"},
+		map[string]any{"clash_mode": "Blacklist", "outbound": "direct"},
+		// Whitelist (default fall-through): CN direct, known-foreign proxy, final proxy.
+		map[string]any{"clash_mode": "Whitelist", "rule_set": []string{"geoip-cn", "geosite-cn"}, "outbound": "direct"},
+		map[string]any{"clash_mode": "Whitelist", "rule_set": "geosite-noncn", "outbound": "proxy"},
 	)
 
-	geosite := str(opts.GeositeBaseURL, "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set")
-	geoip := str(opts.GeoipBaseURL, "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set")
-	remote := func(tag, base, file string) map[string]any {
-		return map[string]any{"type": "remote", "tag": tag, "format": "binary",
-			"url": base + "/" + file, "download_detour": "proxy"}
+	files := map[string]string{
+		"geosite-cn":     "geosite-cn.srs",
+		"geoip-cn":       "geoip-cn.srs",
+		"geosite-noncn":  "geosite-geolocation-noncn.srs",
+		"geosite-ads":    "geosite-category-ads-all.srs",
+		"geosite-gfw":    "geosite-gfw.srs",
 	}
-	ruleSet := []any{
-		remote("geosite-cn", geosite, "geosite-cn.srs"),
-		remote("geoip-cn", geoip, "geoip-cn.srs"),
-		remote("geosite-noncn", geosite, "geosite-geolocation-!cn.srs"),
-		remote("geosite-ads", geosite, "geosite-category-ads-all.srs"),
+	ruleSet := []any{}
+	if opts.RuleSetDir != "" {
+		// local rule-sets: deterministic order
+		tags := make([]string, 0, len(files))
+		for tag := range files {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		for _, tag := range tags {
+			ruleSet = append(ruleSet, map[string]any{"type": "local", "tag": tag,
+				"format": "binary", "path": opts.RuleSetDir + "/" + files[tag]})
+		}
+	} else {
+		// remote rule-sets
+		geosite := str(opts.GeositeBaseURL, "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set")
+		geoip := str(opts.GeoipBaseURL, "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set")
+		remote := func(tag, base, file string) map[string]any {
+			return map[string]any{"type": "remote", "tag": tag, "format": "binary",
+				"url": base + "/" + file, "download_detour": "proxy"}
+		}
+		ruleSet = append(ruleSet,
+			remote("geosite-cn", geosite, "geosite-cn.srs"),
+			remote("geoip-cn", geoip, "geoip-cn.srs"),
+			remote("geosite-noncn", geosite, "geosite-geolocation-!cn.srs"),
+			remote("geosite-ads", geosite, "geosite-category-ads-all.srs"),
+			remote("geosite-gfw", geosite, "geosite-gfw.srs"),
+		)
 	}
 
 	inbounds := []any{}
@@ -155,6 +185,7 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	if opts.ClashSecret != "" {
 		clashAPI["secret"] = opts.ClashSecret
 	}
+	clashAPI["default_mode"] = str(opts.DefaultMode, "Whitelist")
 
 	cfg := map[string]any{
 		"log": map[string]any{"level": str(opts.LogLevel, "warn")},
