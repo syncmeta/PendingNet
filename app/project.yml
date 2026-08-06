@@ -109,8 +109,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet
         PRODUCT_NAME: PendingNet
-        MARKETING_VERSION: 0.3.10
-        CURRENT_PROJECT_VERSION: 310
+        MARKETING_VERSION: 0.3.11
+        CURRENT_PROJECT_VERSION: 311
         PENDINGNET_UPDATE_FEED_URL: https://updates.pendingname.com/pendingnet/appcast.xml
     dependencies:
       - package: SBTallyCore
