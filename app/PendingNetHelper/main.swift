@@ -1,7 +1,10 @@
 import Foundation
+import SBTallyCore
 
 let ETC = "/usr/local/etc/sbtally"
 let LABEL = "system/io.sbtally.singbox"
+let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
+let ACTIVE_SELECTOR = "\(ETC)/pendingnet-active-selector"
 
 func sh(_ args: [String]) -> (Int32, String) {
     let p = Process(); p.executableURL = URL(fileURLWithPath: args[0])
@@ -38,36 +41,236 @@ func setSystemProxy(_ on: Bool) {
         }
     }
 }
+func enableOwnedSystemProxy() {
+    setSystemProxy(true)
+    FileManager.default.createFile(atPath: SYSTEM_PROXY_OWNER, contents: Data(), attributes: [
+        .posixPermissions: 0o600,
+    ])
+}
+func disableOwnedSystemProxy() {
+    guard FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER) else { return }
+    setSystemProxy(false)
+    try? FileManager.default.removeItem(atPath: SYSTEM_PROXY_OWNER)
+}
 func currentMode() -> String {
     (try? String(contentsOfFile: "\(ETC)/mode", encoding: .utf8))?
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "tun"
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "local"
 }
 func engineRunning() -> Bool {
     let (code, out) = sh(["/bin/launchctl", "print", LABEL])
     return code == 0 && out.contains("state = running")
 }
 
+func singBoxBinary() -> String? {
+    ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
+        .first { FileManager.default.isExecutableFile(atPath: $0) }
+}
+
+func validateConfig(_ data: Data, name: String) throws {
+    guard let binary = singBoxBinary() else {
+        throw NSError(domain: "PendingNetHelper", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "找不到 sing-box 可执行文件"])
+    }
+    let temporary = URL(fileURLWithPath: ETC)
+        .appendingPathComponent(".pendingnet-check-\(UUID().uuidString)-\(name).json")
+    try data.write(to: temporary, options: .atomic)
+    defer { try? FileManager.default.removeItem(at: temporary) }
+    let (code, output) = sh([binary, "check", "-c", temporary.path])
+    guard code == 0 else {
+        throw NSError(domain: "PendingNetHelper", code: Int(code),
+                      userInfo: [NSLocalizedDescriptionKey: "sing-box 配置校验失败：\(output)"])
+    }
+}
+
+func writeConfig(_ data: Data, path: String) throws {
+    try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+}
+
+func createConfigBackup(_ configs: [String: Data]) throws {
+    let directory = "\(ETC)/backups/pendingnet-\(Int(Date().timeIntervalSince1970))"
+    try FileManager.default.createDirectory(
+        atPath: directory,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    for (path, data) in configs {
+        let destination = URL(fileURLWithPath: directory)
+            .appendingPathComponent(URL(fileURLWithPath: path).lastPathComponent)
+        try data.write(to: destination, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600], ofItemAtPath: destination.path)
+    }
+}
+
+func waitForEngine() -> Bool {
+    for _ in 0..<30 {
+        if engineRunning() { return true }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return false
+}
+
+/// Selects a sing-box outbound through its loopback-only Clash API. The
+/// helper reads the API secret from the active config and never exposes it to
+/// the app or a process argument.
+func selectProxy(configData: Data, selector: String, name: String) -> String? {
+    guard let root = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+          let experimental = root["experimental"] as? [String: Any],
+          let clashAPI = experimental["clash_api"] as? [String: Any],
+          let controller = clashAPI["external_controller"] as? String,
+          let url = URL(string: "http://\(controller)/proxies/\(selector)"),
+          url.scheme == "http",
+          url.host == "127.0.0.1" || url.host == "localhost" else {
+        return "本机 sing-box 控制接口配置无效"
+    }
+    let secret = clashAPI["secret"] as? String ?? ""
+    guard let body = try? JSONSerialization.data(withJSONObject: ["name": name]) else {
+        return "无法生成 VPS 选择请求"
+    }
+
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.connectionProxyDictionary = [:]
+    configuration.timeoutIntervalForRequest = 0.5
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+
+    for _ in 0..<30 {
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !secret.isEmpty {
+            request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        }
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var statusCode: Int?
+        var requestError: Error?
+        session.dataTask(with: request) { _, response, error in
+            statusCode = (response as? HTTPURLResponse)?.statusCode
+            requestError = error
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 1)
+        if statusCode == 204 || statusCode == 200 { return nil }
+        if statusCode == 401 { return "本机 sing-box 控制接口凭据不匹配" }
+        if requestError == nil, let statusCode {
+            return "本机 sing-box 拒绝选择 VPS（HTTP \(statusCode)）"
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    return "本机 sing-box 控制接口尚未就绪"
+}
+
+func activatePendingSelector(configData: Data) -> String? {
+    guard let selector = try? String(contentsOfFile: ACTIVE_SELECTOR, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+          !selector.isEmpty else { return nil }
+    return selectProxy(configData: configData, selector: "proxy", name: selector)
+}
+
 final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     func startEngine(reply: @escaping (String?) -> Void) {
         _ = launchctl(["bootout", LABEL])   // idempotent
         let err = launchctl(["bootstrap", "system", "/Library/LaunchDaemons/io.sbtally.singbox.plist"])
-        if err == nil && currentMode() == "sysproxy" { setSystemProxy(true) }
-        reply(err)
+        guard err == nil else { return reply(err) }
+        guard waitForEngine() else { return reply("sing-box 启动后未进入运行状态") }
+        let configData = try? readData(path: "\(ETC)/master.json")
+        if let configData, let selectionError = activatePendingSelector(configData: configData) {
+            return reply(selectionError)
+        }
+        if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
+        reply(nil)
     }
     func stopEngine(reply: @escaping (String?) -> Void) {
-        setSystemProxy(false)               // unconditional: never leave stale proxy
+        disableOwnedSystemProxy()
         reply(launchctl(["bootout", LABEL]))
     }
     func setTakeover(_ mode: String, reply: @escaping (String?) -> Void) {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
         let variant = mode == "tun" ? "master-tun.json" : "master-notun.json"
+        let wasRunning = engineRunning()
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: "\(ETC)/\(variant)"))
             try data.write(to: URL(fileURLWithPath: "\(ETC)/master.json"))
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
-        setSystemProxy(mode == "sysproxy")
+        if mode == "sysproxy" { enableOwnedSystemProxy() } else { disableOwnedSystemProxy() }
+        guard wasRunning else { return reply(nil) }
         reply(launchctl(["kickstart", "-k", LABEL]))
+    }
+    func applyServerConfiguration(
+        _ serverID: String,
+        name: String,
+        selectorTag: String,
+        proxyOutbounds: Data,
+        reply: @escaping (String?) -> Void
+    ) {
+        guard !serverID.isEmpty, !name.isEmpty else {
+            return reply("VPS 身份无效")
+        }
+        let tunPath = "\(ETC)/master-tun.json"
+        let noTunPath = "\(ETC)/master-notun.json"
+        let masterPath = "\(ETC)/master.json"
+        let paths = [tunPath, noTunPath, masterPath]
+        do {
+            var backups: [String: Data] = [:]
+            for path in paths {
+                backups[path] = try readData(path: path)
+            }
+            let runtime = PendingNetRuntimeServer(
+                serverID: serverID,
+                name: name,
+                selectorTag: selectorTag,
+                proxyOutbounds: proxyOutbounds
+            )
+            let newTun = try PendingNetLocalConfigComposer.merge(
+                baseConfig: try readData(path: tunPath), runtimeServer: runtime)
+            let newNoTun = try PendingNetLocalConfigComposer.merge(
+                baseConfig: try readData(path: noTunPath), runtimeServer: runtime)
+            try validateConfig(newTun, name: "tun")
+            try validateConfig(newNoTun, name: "notun")
+            try createConfigBackup(backups)
+
+            let active = currentMode() == "tun" ? newTun : newNoTun
+            let wasRunning = engineRunning()
+            let previousSelector = try? readData(path: ACTIVE_SELECTOR)
+            do {
+                try writeConfig(newTun, path: tunPath)
+                try writeConfig(newNoTun, path: noTunPath)
+                try writeConfig(active, path: masterPath)
+                try writeConfig(Data((selectorTag + "\n").utf8), path: ACTIVE_SELECTOR)
+                if wasRunning {
+                    if let error = launchctl(["kickstart", "-k", LABEL]) {
+                        throw NSError(domain: "PendingNetHelper", code: 2,
+                                      userInfo: [NSLocalizedDescriptionKey: error])
+                    }
+                    guard waitForEngine() else {
+                        throw NSError(domain: "PendingNetHelper", code: 3,
+                                      userInfo: [NSLocalizedDescriptionKey: "sing-box 重启后未进入运行状态"])
+                    }
+                    if let error = activatePendingSelector(configData: active) {
+                        throw NSError(domain: "PendingNetHelper", code: 4,
+                                      userInfo: [NSLocalizedDescriptionKey: error])
+                    }
+                }
+            } catch {
+                for path in paths {
+                    if let old = backups[path] { try? writeConfig(old, path: path) }
+                }
+                if let previousSelector {
+                    try? writeConfig(previousSelector, path: ACTIVE_SELECTOR)
+                } else {
+                    try? FileManager.default.removeItem(atPath: ACTIVE_SELECTOR)
+                }
+                if wasRunning { _ = launchctl(["kickstart", "-k", LABEL]) }
+                throw error
+            }
+            reply(nil)
+        } catch {
+            reply("应用 VPS 配置失败：\(error.localizedDescription)")
+        }
     }
     func status(reply: @escaping (Bool, String, String) -> Void) {
         let (_, tail) = sh(["/usr/bin/tail", "-n", "5", "/var/log/sbtally-singbox.log"])
@@ -79,6 +282,10 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         c.resume()
         return true
     }
+}
+
+func readData(path: String) throws -> Data {
+    try Data(contentsOf: URL(fileURLWithPath: path))
 }
 
 let delegate = Helper()
