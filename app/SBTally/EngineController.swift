@@ -1,11 +1,12 @@
 import Foundation
+import SBTallyCore
 import ServiceManagement
 import SwiftUI
 
 @MainActor
 final class EngineController: ObservableObject {
     @Published var running = false
-    @Published var takeover = "tun"
+    @Published var takeover = "local"
     @Published var helperReady = false
     @Published var lastError: String?
     @Published var logTail: String = ""
@@ -14,6 +15,9 @@ final class EngineController: ObservableObject {
     @Published var startFailed = false
 
     private let service = SMAppService.daemon(plistName: "net.pending.PendingNet.helper.plist")
+    private let userEngine = PendingNetUserEngine()
+
+    var localProxyPort: Int { userEngine.proxyPort }
 
     /// A single, cached XPC connection — reused across calls instead of
     /// creating (and leaking) a new one per toggle/refresh.
@@ -29,13 +33,15 @@ final class EngineController: ObservableObject {
         private var didResume = false
         private let continuation: CheckedContinuation<T, Never>
         init(_ continuation: CheckedContinuation<T, Never>) { self.continuation = continuation }
-        func resume(_ value: T) {
+        @discardableResult
+        func resume(_ value: T) -> Bool {
             lock.lock()
             let alreadyResumed = didResume
             didResume = true
             lock.unlock()
-            guard !alreadyResumed else { return }
+            guard !alreadyResumed else { return false }
             continuation.resume(returning: value)
+            return true
         }
     }
 
@@ -70,25 +76,67 @@ final class EngineController: ObservableObject {
         return await withCheckedContinuation { (k: CheckedContinuation<T, Never>) in
             let once = ResumeOnce(k)
             let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
-                Task { @MainActor in self?.lastError = error.localizedDescription; self?.helperReady = false }
-                once.resume(fallback)
+                if once.resume(fallback) {
+                    Task { @MainActor in
+                        self?.lastError = error.localizedDescription
+                        self?.helperReady = false
+                    }
+                }
             } as? HelperProtocol
             guard let proxy else {
                 once.resume(fallback)
                 return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                if once.resume(fallback) {
+                    await MainActor.run {
+                        self?.lastError = "特权助手没有响应，请重新授权"
+                        self?.helperReady = false
+                    }
+                }
             }
             body(proxy, { value in once.resume(value) })
         }
     }
 
     func registerHelper() {
-        do { try service.register(); helperReady = true }
-        catch { lastError = "助手授权失败：\(error.localizedDescription)" }
+        Task {
+            do {
+                // Ad-hoc development builds created before 0.3.5 had a
+                // version-specific code identity. Remove that stale Service
+                // Management registration before registering the current app.
+                switch service.status {
+                case .enabled, .requiresApproval:
+                    try await service.unregister()
+                case .notRegistered, .notFound:
+                    break
+                @unknown default:
+                    break
+                }
+                try service.register()
+                helperReady = service.status == .enabled
+                lastError = helperReady
+                    ? nil
+                    : "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目"
+            } catch {
+                helperReady = false
+                lastError = "助手授权失败：\(error.localizedDescription)"
+            }
+        }
     }
 
     func refresh() async {
         helperReady = service.status == .enabled
-        guard helperReady else { return }
+        if takeover == "local" {
+            running = userEngine.isRunning
+            logTail = userEngine.logTail()
+            return
+        }
+        guard helperReady else {
+            running = false
+            return
+        }
         let result: (Bool, String, String)? = await withHelper(nil) { p, reply in
             p.status { run, mode, tail in reply((run, mode, tail)) }
         }
@@ -107,14 +155,86 @@ final class EngineController: ObservableObject {
     }
 
     func start() async {
+        if takeover == "local" {
+            do {
+                try await userEngine.start()
+                running = true
+                lastError = nil
+                startFailed = false
+            } catch {
+                running = false
+                lastError = error.localizedDescription
+                logTail = userEngine.logTail()
+                startFailed = true
+            }
+            return
+        }
         await call { p, r in p.startEngine(reply: r) }
         startFailed = !running
     }
     func stop() async {
         startFailed = false
+        if takeover == "local" {
+            await userEngine.stop()
+            running = false
+            lastError = nil
+            return
+        }
         await call { p, r in p.stopEngine(reply: r) }
     }
-    func setTakeover(_ m: String) async { await call { p, r in p.setTakeover(m, reply: r) } }
+    func setTakeover(_ mode: String) async {
+        guard ["local", "sysproxy", "tun"].contains(mode), mode != takeover else { return }
+        if mode == "local" {
+            if running { await call { p, r in p.stopEngine(reply: r) } }
+            takeover = "local"
+            running = userEngine.isRunning
+            lastError = nil
+            return
+        }
+        guard helperReady else {
+            lastError = "系统代理和 TUN 需要已公证版本的后台服务；当前可直接使用“仅端口”。"
+            return
+        }
+        if takeover == "local", running { await userEngine.stop() }
+        takeover = mode
+        await call { p, r in p.setTakeover(mode, reply: r) }
+    }
+
+    func applyServerConfiguration(_ runtime: PendingNetRuntimeServer) async -> Bool {
+        if takeover == "local" {
+            do {
+                try await userEngine.apply(runtime)
+                running = userEngine.isRunning
+                lastError = nil
+                logTail = userEngine.logTail()
+                return true
+            } catch {
+                lastError = error.localizedDescription
+                logTail = userEngine.logTail()
+                return false
+            }
+        }
+        let err: String? = await withHelper("特权助手尚未就绪") { p, reply in
+            p.applyServerConfiguration(
+                runtime.serverID,
+                name: runtime.name,
+                selectorTag: runtime.selectorTag,
+                proxyOutbounds: runtime.proxyOutbounds,
+                reply: reply
+            )
+        }
+        if let err {
+            lastError = err
+            return false
+        }
+        lastError = nil
+        await refresh()
+        return true
+    }
+
+    func stopBeforeTermination() {
+        if takeover == "local" { userEngine.stopImmediately() }
+    }
 
     deinit {
         connection?.invalidate()

@@ -53,12 +53,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    func select(selector: String, name: String) async {
+    @discardableResult
+    func select(selector: String, name: String) async -> Bool {
         do {
             try await provider.select(selector: selector, name: name)
             await loadControl()
+            return true
         } catch {
             self.lastError = String(describing: error)
+            return false
         }
     }
 
