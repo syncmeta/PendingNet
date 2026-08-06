@@ -108,6 +108,14 @@ if codesign -d --entitlements - --xml "$app" 2>/dev/null | grep -q '[$](' ; then
   exit 2
 fi
 
+# dyld 断言：每个 @rpath 依赖都要能在包内解析出真实文件。上面那些查的全是签名和
+# entitlement，没有一道查 dyld 能不能把库找着 —— 单仓 2026-08-06 就是这么发出一个
+# **编译/链接/签名/公证/Gatekeeper/stapler 六道全绿、一双击就 SIGABRT** 的包
+# （XcodeGen 给多端 target 生成的是 iOS 约定的 rpath，而 macOS 的嵌入式框架在
+# Contents/Frameworks）。本仓当前 target 不受那个成因影响（0.3.11 产物已核通过），
+# 这道门是防将来加嵌入式框架或改 target 形态时无声退化。
+"$snap/src/scripts/verify-rpath-resolvable.sh" "$app" "$app_name"
+
 /usr/bin/ditto -c -k --keepParent "$app" "$archive"
 xcrun notarytool submit "$archive" --keychain-profile "$PENDING_NOTARY_PROFILE" --wait
 xcrun stapler staple "$app"
