@@ -5,12 +5,12 @@ product=${1:-}
 release_dir=${2:-}
 
 if [ -z "$product" ] || [ -z "$release_dir" ]; then
-  echo "usage: $0 <pendingnet|pendingcrew> <release-directory>" >&2
+  echo "usage: $0 <pendingnet|pendingcrew|pendingbot> <release-directory>" >&2
   exit 2
 fi
 
 case "$product" in
-  pendingnet|pendingcrew) ;;
+  pendingnet|pendingcrew|pendingbot) ;;
   *) echo "unsupported product: $product" >&2; exit 2 ;;
 esac
 

@@ -101,7 +101,7 @@ targets:
         SUFeedURL: $(PENDINGNET_UPDATE_FEED_URL)
         SUPublicEDKey: iVYT89UTxhljv5zkk6Si7C1TFOZJPUFmb/ysQufwHGY=
         SUEnableAutomaticChecks: true
-        SUAutomaticallyUpdate: true
+        SUAutomaticallyUpdate: false
         SURequireSignedFeed: true
         SUVerifyUpdateBeforeExtraction: true
         SUEnableSystemProfiling: false

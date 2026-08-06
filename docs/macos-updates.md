@@ -2,9 +2,11 @@
 
 PendingNet 0.3.9 起使用 Sparkle 2。更新链包含四层：HTTPS 传输、签名 appcast、EdDSA 更新包签名、Apple Developer ID + notarization。任何一层失败都不安装更新。
 
+三产品统一策略：自动检查开、自动安装关（`SUAutomaticallyUpdate: false`）——发现新版弹窗，装不装由人点。PendingBot / PendingCrew 的发布脚本在 PendingBot 仓 `scripts/release/`，其中 `publish-macos-update-r2.sh` 与本仓那份必须逐字节一致（对方构建脚本发布前校验 sha256）。
+
 ## 一次性准备
 
-1. 统一更新源使用 Cloudflare R2 bucket `pending-updates-prod` 与生产域名 `https://updates.pendingname.com`。PendingNet 固定使用 `pendingnet/`，PendingCrew 固定使用 `pendingcrew/`；两个产品共用发布规范，但各自持有独立 EdDSA 私钥。更新 feed 启用 `SURequireSignedFeed` 与 `SUVerifyUpdateBeforeExtraction`，不得手工修改生成后的 appcast。
+1. 统一更新源使用 Cloudflare R2 bucket `pending-updates-prod` 与生产域名 `https://updates.pendingname.com`。PendingNet 固定使用 `pendingnet/`，PendingCrew 固定使用 `pendingcrew/`，PendingBot 固定使用 `pendingbot/`；三个产品共用发布规范，各自持有独立 EdDSA 私钥。更新 feed 启用 `SURequireSignedFeed` 与 `SUVerifyUpdateBeforeExtraction`，不得手工修改生成后的 appcast。
 2. PendingNet 的 Sparkle 私钥保存在发布 Mac 的 Keychain，account 为 `net.pending.PendingNet`；仓库和服务器只保存 Info.plist 中的公钥。必须单独备份这项钥匙串密钥。
 3. 使用 `xcrun notarytool store-credentials` 创建专用 Keychain profile。Apple ID 的 app-specific password 不进入脚本或仓库。
 4. 记录发布参数：
