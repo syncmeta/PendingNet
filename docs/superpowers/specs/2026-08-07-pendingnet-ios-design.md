@@ -33,9 +33,17 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 
 ### 4.1 内核构建
 
-`scripts/build-libbox-xcframework.sh` 固定 sing-box 的 tag 与 commit SHA，执行 `gomobile bind -target ios,iossimulator`，产出 `app/Vendor/Libbox.xcframework`。
+构建流程直接照搬 `sing-box-for-apple-pd/scripts/testflight-dev.sh` 的 `--rebuild-libbox` 分支——该脚本已在本机跑通并完成过 TestFlight 发布，属于已验证路径，不需要重新试错。
 
-产物体积约百 MB，**不纳入 git**，由构建脚本配合锁定的 commit SHA 保证可复现；`.gitignore` 增加 `app/Vendor/`。`project.yml` 中 `PendingNetPacketTunnel` target 增加本地 framework 依赖。
+关键点（均与常见直觉不符，照抄即可，勿自行推导）：
+
+- 依赖的是 **SagerNet fork 的 gomobile**，不是官方 `golang.org/x/mobile`：
+  `go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12`、
+  `go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12`，随后 `gomobile init`。
+- 实际构建入口是 sing-box 仓库自带的 `go run ./cmd/internal/build_libbox -target apple -platform ios`，**不是手写 `gomobile bind`**。gomobile/gobind 只是它的前置依赖。
+- 产物落在 sing-box 仓库根目录或 `/private/tmp/sing-box-for-apple/`，需两处都探测。
+
+产出以 `ditto` 复制到 `app/Vendor/Libbox.xcframework`。**实测体积 358MB**，必然不纳入 git；`.gitignore` 增加 `app/Vendor/`。可复现性由脚本中锁定的 sing-box tag 保证。`project.yml` 中 `PendingNetPacketTunnel` target 增加本地 framework 依赖。
 
 ### 4.2 配置生成
 
@@ -60,20 +68,27 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 
 **扩展不联网。** `/v1/node` 刷新、规则集下载、配置生成与写盘全部由主 App 负责，扩展只读取 App Group 内的本地文件。这样扩展内不存在 HTTP 栈、不存在令牌刷新的时序问题，内存占用也显著更低。
 
-`NETunnelProviderManager` 的 `providerConfiguration` 只携带配置版本号，用于扩展判断是否需要重新加载。**任何密钥或连接材料都不写入 VPN profile**——VPN 配置由系统 preferences 数据库保存，不具备与 App Group 文件同等的数据保护属性。
+`NETunnelProviderManager` 的 `providerConfiguration` 只携带配置版本号。**任何密钥或连接材料都不写入 VPN profile**——VPN 配置由系统 preferences 数据库保存，不具备与 App Group 文件同等的数据保护属性。
 
-隧道启动流程：扩展从 App Group 读取 `config.json` → 构造 `NEPacketTunnelNetworkSettings` 并应用 → 取得 tun 文件描述符 → 通过 libbox 的 `PlatformInterface` 交给 `BoxService` → 启动。
+配置传递采用 SFI 已验证的两级方式：
+
+1. App 启动隧道时，把配置内容作为 `startTunnel` 的 `options["configContent"]` 字符串传入；
+2. 扩展收到后**立即持久化一份快照**到 App Group。当系统在 App 未运行时按 on-demand 规则自行拉起隧道，`startTunnel` 的 options 为空，此时回退读取该快照。
+
+单靠 App Group 文件读取会漏掉第 2 种场景，单靠 options 传递则无法应对系统自启——两级缺一不可。
+
+隧道启动流程：解析配置 → `LibboxSetup` → `LibboxNewCommandServer(platformInterface, ...)` 并 `start()` → `commandServer.startOrReloadService(configContent, options:)`。tun 的建立由 libbox 回调 `PlatformInterface.openTun` 完成：把 `LibboxTunOptions` 翻译成 `NEPacketTunnelNetworkSettings`（含地址、路由、MTU、DNS）并 `setTunnelNetworkSettings`，再回传 tun 文件描述符。
+
+参考实现：`sing-box-for-apple-pd` 的 `Library/Network/ExtensionProvider.swift` 与 `ExtensionPlatformInterface.swift`。这两处是平台样板代码，照抄即可，不必重新设计。
 
 ### 4.4 协议切换与状态回传
 
-扩展内运行 libbox command server。主 App 通过 `NETunnelProviderSession.sendProviderMessage` 转发指令：
+扩展内运行 libbox command server（`LibboxNewCommandServer`）。两条通道分工不同，不要混用：
 
-- 切换 selector 选中的协议；
-- 触发 urltest 测速。
+- **selector 切换与 urltest 测速**走 libbox command client 连接 command server。协议切换因此**不需要重启隧道**，连接不中断。
+- **`sendProviderMessage` 只用于换配置**：扩展收到后更新持久化快照并 `startOrReloadService`。SFI 的 `handleAppMessage` 就是这个用途。
 
-协议切换因此**不需要重启隧道**，连接不中断。
-
-状态回传 v1 只包含 `{state, lastError, currentOutbound, delay}`，以 JSON 编码经同一通道返回。
+状态回传 v1 只包含 `{state, lastError, currentOutbound, delay}`，以 JSON 编码返回。
 
 ### 4.5 规则分流
 
@@ -119,7 +134,9 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 - **DNS 查询必须设置超时并限制并发。** 上游黑洞时查询需被回收，不得无限堆积。
 - **开启 DNS 缓存**，减少重复查询产生的 goroutine。
 - tun stack 使用 gvisor；rule-set 使用二进制 `.srs`；关闭非必要的 cache 与日志缓冲。
-- 启动时调用 `LibboxSetMemoryLimit` 作为兜底。
+- 兜底机制用 libbox 自带的 OOM killer：`LibboxSetupOptions.oomKillerEnabled` / `oomMemoryLimit`，配合 `LibboxPromoteOOMDraft()`；诊断用 `triggerOOMReport:`。
+
+**注意兜底不等于解决。** SFI 在 iOS 上是无条件 `oomKillerEnabled = true` 的，而 4.6.1 的两份快照正是在 OOM killer 已开启的前提下产生的。也就是说 DNS 治理是必需项而非优化项——兜底只能在见顶时杀连接，不能阻止 goroutine 堆积本身。
 
 #### 4.6.3 验收
 
