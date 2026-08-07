@@ -1,3 +1,4 @@
+import NetworkExtension
 import SBTallyCore
 import SwiftUI
 import UniformTypeIdentifiers
@@ -5,6 +6,7 @@ import UniformTypeIdentifiers
 struct PendingNetIOSHomeView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
     @State private var showingImporter = false
+    @State private var showingLog = false
 
     var body: some View {
         NavigationStack {
@@ -16,6 +18,10 @@ struct PendingNetIOSHomeView: View {
                     )
                     serverCard
                     tunnelCard
+
+                    if let server = controller.server, let profile = controller.nodeProfile {
+                        tunnelSection(profile: profile, serverName: server.name)
+                    }
 
                     if let message = controller.message {
                         messageBanner(message, success: true)
@@ -29,6 +35,17 @@ struct PendingNetIOSHomeView: View {
             .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
             .toolbarBackground(PendingNetTheme.Palette.canvas, for: .navigationBar)
             .tint(PendingNetTheme.Palette.accent)
+            .toolbar {
+                // 诊断入口，刻意做得不起眼：只是个图标按钮，不占正文空间。
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingLog = true
+                    } label: {
+                        Image(systemName: "doc.text.magnifyingglass")
+                    }
+                    .accessibilityLabel("隧道日志")
+                }
+            }
         }
         .fileImporter(
             isPresented: $showingImporter,
@@ -43,7 +60,11 @@ struct PendingNetIOSHomeView: View {
                 controller.errorMessage = error.localizedDescription
             }
         }
+        .sheet(isPresented: $showingLog) {
+            PendingNetTunnelLogView()
+        }
         .task { await controller.refreshNodeProfile() }
+        .task { await controller.tunnel.load() }
     }
 
     private var serverCard: some View {
@@ -137,6 +158,78 @@ struct PendingNetIOSHomeView: View {
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func tunnelSection(
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) -> some View {
+        PendingSectionCard(
+            "隧道",
+            subtitle: "开关由本机 Packet Tunnel 扩展驱动，VPS 不参与开关状态。"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("PendingNet Tunnel", systemImage: "checkmark.shield")
+                        .font(PendingNetTheme.Fonts.bodyEmphasized)
+                        .foregroundStyle(PendingNetTheme.Palette.ink)
+                    Spacer()
+                    PendingStatusPill(text: statusText, kind: statusKind)
+                }
+
+                Button {
+                    Task {
+                        if isConnected {
+                            await controller.tunnel.stop()
+                        } else {
+                            do {
+                                try await controller.tunnel.start(
+                                    profile: profile,
+                                    serverName: serverName,
+                                    serverID: profile.serverID
+                                )
+                            } catch {
+                                controller.errorMessage = error.localizedDescription
+                            }
+                        }
+                    }
+                } label: {
+                    Text(isConnected ? "断开" : "连接")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PendingPrimaryButtonStyle())
+                .disabled(isBusy)
+            }
+        }
+    }
+
+    private var isConnected: Bool {
+        controller.tunnel.status == .connected || controller.tunnel.status == .connecting
+    }
+
+    private var isBusy: Bool {
+        controller.tunnel.status == .connecting || controller.tunnel.status == .disconnecting
+    }
+
+    private var statusKind: PendingStatusPill.Kind {
+        switch controller.tunnel.status {
+        case .connected: .success
+        case .invalid: .danger
+        default: .neutral
+        }
+    }
+
+    private var statusText: String {
+        switch controller.tunnel.status {
+        case .connected: "已连接"
+        case .connecting: "连接中"
+        case .disconnecting: "断开中"
+        case .disconnected: "未连接"
+        case .invalid: "未安装"
+        case .reasserting: "重连中"
+        @unknown default: "未知"
         }
     }
 
