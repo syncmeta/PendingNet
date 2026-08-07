@@ -236,9 +236,14 @@ struct ControlView: View {
                     .labelsHidden()
                     Text(engine.takeover == "local"
                          ? "应用自行运行本地代理，不需要后台服务授权。"
-                         : "系统代理和 TUN 需要已公证版本的后台服务。")
+                         : "系统代理和 TUN 由已授权的后台服务接管。")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+
+                    if engine.takeover == "local" && !engine.helperReady {
+                        Button("授权后台服务…") { engine.registerHelper() }
+                            .buttonStyle(PendingQuietButtonStyle())
+                    }
                 }
 
                 if let error = friendlyEngineError {

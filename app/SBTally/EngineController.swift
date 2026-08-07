@@ -15,6 +15,8 @@ final class EngineController: ObservableObject {
     @Published var startFailed = false
 
     private let service = SMAppService.daemon(plistName: "net.pending.PendingNet.helper.plist")
+    /// 用户在助手就绪前选中的接管方式。授权成功后自动接着切过去，省得再点一次。
+    private var pendingTakeover: String?
     private let userEngine = PendingNetUserEngine()
 
     var localProxyPort: Int { userEngine.proxyPort }
@@ -116,10 +118,18 @@ final class EngineController: ObservableObject {
                 }
                 try service.register()
                 helperReady = service.status == .enabled
-                lastError = helperReady
-                    ? nil
-                    : "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目"
+                if helperReady {
+                    lastError = nil
+                    if let pending = pendingTakeover {
+                        pendingTakeover = nil
+                        await setTakeover(pending)
+                    }
+                } else {
+                    pendingTakeover = nil
+                    lastError = "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目，然后再选一次接管方式"
+                }
             } catch {
+                pendingTakeover = nil
                 helperReady = false
                 lastError = "助手授权失败：\(error.localizedDescription)"
             }
@@ -191,8 +201,12 @@ final class EngineController: ObservableObject {
             lastError = nil
             return
         }
+        // 助手还没就绪时直接发起授权 —— 从前这里只报错，而「授权后台服务…」按钮
+        // 又只在 takeover != "local" 时才出现，于是从默认的「仅端口」根本走不到
+        // 授权入口，系统代理/TUN 永远切不过去。
         guard helperReady else {
-            lastError = "系统代理和 TUN 需要已公证版本的后台服务；当前可直接使用“仅端口”。"
+            pendingTakeover = mode
+            registerHelper()
             return
         }
         if takeover == "local", running { await userEngine.stop() }
