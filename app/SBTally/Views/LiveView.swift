@@ -6,10 +6,7 @@ struct LiveView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PendingPageHeader(
-                title: "实时流量",
-                subtitle: "查看当前正在通过 PendingNet 的连接。"
-            )
+            PendingPageHeader(title: "实时流量")
             .padding(.horizontal, PendingNetTheme.Metrics.gutter)
             .padding(.top, PendingNetTheme.Metrics.gutter)
 

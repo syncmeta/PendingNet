@@ -226,7 +226,7 @@ struct PendingQuietButtonStyle: ButtonStyle {
 struct PendingEmptyState: View {
     let icon: String
     let title: String
-    let detail: String
+    var detail: String? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -236,10 +236,12 @@ struct PendingEmptyState: View {
             Text(title)
                 .font(PendingNetTheme.Fonts.bodyEmphasized)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
-            Text(detail)
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
+            if let detail, !detail.isEmpty {
+                Text(detail)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(24)
     }

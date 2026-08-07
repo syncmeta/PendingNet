@@ -6,10 +6,7 @@ struct DomainsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PendingPageHeader(
-                title: "域名",
-                subtitle: "按访问域名查看所选时间范围内的流量。"
-            )
+            PendingPageHeader(title: "域名")
             .padding(.horizontal, PendingNetTheme.Metrics.gutter)
             .padding(.top, PendingNetTheme.Metrics.gutter)
 
