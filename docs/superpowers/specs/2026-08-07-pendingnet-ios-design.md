@@ -134,9 +134,13 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 - **DNS 查询必须设置超时并限制并发。** 上游黑洞时查询需被回收，不得无限堆积。
 - **开启 DNS 缓存**，减少重复查询产生的 goroutine。
 - tun stack 使用 gvisor；rule-set 使用二进制 `.srs`；关闭非必要的 cache 与日志缓冲。
-- 兜底机制用 libbox 自带的 OOM killer：`LibboxSetupOptions.oomKillerEnabled` / `oomMemoryLimit`，配合 `LibboxPromoteOOMDraft()`；诊断用 `triggerOOMReport:`。
+- 兜底机制用 libbox 自带的内存限制。**具体 API 随 sing-box 版本而变，必须以实际 vendored 头文件为准：**
+  - 本项目锁定的 **v1.13.13**：`LibboxSetMemoryLimit(BOOL)`（头文件 885 行）。该版本**没有** `oomKillerEnabled` / `oomMemoryLimit` / `LibboxPromoteOOMDraft`。
+  - 更新的 sing-box（如 SFI fork 的 `main`）反过来：有 OOM killer 系列，没有 `LibboxSetMemoryLimit`。
 
-**注意兜底不等于解决。** SFI 在 iOS 上是无条件 `oomKillerEnabled = true` 的，而 4.6.1 的两份快照正是在 OOM killer 已开启的前提下产生的。也就是说 DNS 治理是必需项而非优化项——兜底只能在见顶时杀连接，不能阻止 goroutine 堆积本身。
+  本文档早期版本曾断言 `LibboxSetMemoryLimit` 不存在——那是对着较新的 fork 头文件得出的结论，对我们锁定的版本并不成立。任何时候都以 `app/Vendor/Libbox.xcframework/ios-arm64/Libbox.framework/Versions/A/Headers/Libbox.objc.h` 为唯一权威。
+
+**注意兜底不等于解决，而且这两种兜底都不解决我们的问题。** `LibboxSetMemoryLimit` 是**堆**层面的开关，而 4.6.1 实测的压力来自 **goroutine 栈**（堆仅 7.4/14.6MB，栈占 19–21MB）。OOM killer 同理，只能在见顶时杀连接。因此 4.6.2 的 DNS 治理是必需项而非优化项——它是唯一直接作用于根因的手段。
 
 #### 4.6.3 验收
 
