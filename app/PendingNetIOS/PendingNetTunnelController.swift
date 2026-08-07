@@ -13,11 +13,24 @@ import SBTallyCore
 /// 这个次序是故意的：本控制器不做重复的落盘，避免绕开这个保护。
 @MainActor
 final class PendingNetTunnelController: ObservableObject {
-    @Published private(set) var status: NEVPNStatus = .invalid
+    @Published private(set) var status: NEVPNStatus = .invalid {
+        didSet { syncCommandChannel() }
+    }
     @Published var routeMode: PendingNetRouteMode = .global
+
+    /// 当前 VPS 的 selector tag。由 `runtimeServer(name:)` 确定性生成，
+    /// App 侧自己算得出来，不需要向扩展查询。
+    @Published private(set) var selectorTag: String?
+    /// selector 的可选成员，顺序由内核给出。
+    @Published private(set) var outboundMembers: [String] = []
+    /// selector 当前选中的出站。
+    @Published private(set) var currentOutbound: String?
+    /// 各成员最近一次 urltest 的延迟（毫秒）。0 表示还没有测速结果。
+    @Published private(set) var outboundDelays: [String: Int] = [:]
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
+    private var commandClient: PendingNetCommandClient?
 
     private let tunnelBundleID = "net.pending.PendingNet.ios.PacketTunnel"
     private let routeModeKey = "pendingnet.ios.route-mode.v1"
@@ -27,10 +40,18 @@ final class PendingNetTunnelController: ObservableObject {
            let mode = PendingNetRouteMode(rawValue: raw) {
             routeMode = mode
         }
+        // 回调由 PendingNetCommandClient 保证投递在主线程。
+        commandClient = PendingNetCommandClient { [weak self] snapshot in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.apply(snapshot)
+            }
+        }
     }
 
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
+        commandClient?.stop()
     }
 
     /// 查找系统里已安装的 PendingNet 隧道 profile（如果有）并订阅其状态。
@@ -67,6 +88,60 @@ final class PendingNetTunnelController: ObservableObject {
         UserDefaults.standard.set(mode.rawValue, forKey: routeModeKey)
     }
 
+    // MARK: - 协议手选与测速
+
+    /// 记下当前 VPS 的 selector tag。tag 只取决于 serverID，两侧算出来的
+    /// 结果一致，所以 App 不必向扩展查询「隧道里那个 selector 叫什么」。
+    func bindSelector(profile: PendingNetNodeProfile, serverName: String) {
+        let tag = (try? profile.runtimeServer(name: serverName))?.selectorTag
+        guard tag != selectorTag else { return }
+        selectorTag = tag
+        syncCommandChannel()
+    }
+
+    /// 切换 selector 的当前出站。走 command client，隧道不重启、已有连接不断。
+    func selectOutbound(_ tag: String) async throws {
+        guard status == .connected, let selectorTag else {
+            throw PendingNetCommandError.notConnected
+        }
+        try await PendingNetCommandClient.selectOutbound(
+            groupTag: selectorTag,
+            outboundTag: tag
+        )
+        // 乐观更新：分组推送最快也要等下一个推送间隔才到，下一帧就会被
+        // 内核的真实状态覆盖（或纠正）。
+        currentOutbound = tag
+    }
+
+    /// 触发一次分组测速。结果不在这里返回——内核测完之后，延迟随分组推送
+    /// 落到 `outboundDelays`。
+    func runURLTest() async throws {
+        guard status == .connected, let selectorTag else {
+            throw PendingNetCommandError.notConnected
+        }
+        try await PendingNetCommandClient.urlTest(groupTag: selectorTag)
+    }
+
+    private func apply(_ snapshot: PendingNetCommandClient.Snapshot) {
+        outboundMembers = snapshot.members
+        currentOutbound = snapshot.selected
+        outboundDelays = snapshot.delays
+    }
+
+    /// 控制通道的生命周期完全跟随隧道状态：只有 `.connected` 且知道
+    /// selector tag 时才订阅，其余情况一律拆掉并清空状态——否则 UI 会
+    /// 留着上一次连接的延迟数字，看上去像还连着。
+    private func syncCommandChannel() {
+        guard status == .connected, let selectorTag else {
+            commandClient?.stop()
+            outboundMembers = []
+            currentOutbound = nil
+            outboundDelays = [:]
+            return
+        }
+        commandClient?.start(groupTag: selectorTag)
+    }
+
     /// 生成配置并启动隧道。
     ///
     /// 启动前先确认 Keychain 里有设备令牌：没有令牌意味着配对已失效，
@@ -80,6 +155,9 @@ final class PendingNetTunnelController: ObservableObject {
         guard try PendingNetCredentialStore.load(serverID: serverID) != nil else {
             throw PendingNetPairingError.serverRejected("此设备没有找到 VPS 访问凭据，请重新配对")
         }
+        // 控制通道要在隧道连上的那一刻就知道该订阅哪个 selector，不能等
+        // 界面那边的绑定先跑。
+        bindSelector(profile: profile, serverName: serverName)
         let content = try makeConfigContent(profile: profile, serverName: serverName)
         let manager = try await installedManager()
         try manager.connection.startVPNTunnel(options: [

@@ -76,6 +76,12 @@ targets:
         product: SBTallyCore
       - target: PendingNetPacketTunnel
         embed: true
+      # 主 App 也要链接 Libbox：协议手选与测速走 libbox command client
+      # 连扩展里的 command server（不重启隧道），客户端代码跑在 App 进程里。
+      - framework: Vendor/Libbox.xcframework
+        embed: false
+      - sdk: libresolv.tbd
+      - sdk: UIKit.framework
   PendingNetHelper:
     type: tool
     platform: macOS
