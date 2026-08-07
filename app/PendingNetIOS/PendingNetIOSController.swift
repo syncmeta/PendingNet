@@ -21,6 +21,7 @@ final class PendingNetIOSController: ObservableObject {
     @Published var errorMessage: String?
 
     let tunnel = PendingNetTunnelController()
+    let ruleSetStore = PendingNetRuleSetStore()
 
     private let defaults = UserDefaults.standard
     private let defaultsKey = "pendingnet.ios.paired-server.v1"
@@ -30,12 +31,15 @@ final class PendingNetIOSController: ObservableObject {
         if let data = defaults.data(forKey: defaultsKey) {
             server = try? JSONDecoder().decode(IOSPairedServer.self, from: data)
         }
-        // `tunnel` 是独立的 ObservableObject，它自己的 @Published 变化不会
-        // 自动冒泡到这里——SwiftUI 视图只订阅了 `controller` 的
-        // objectWillChange。转发一下，否则隧道状态变化（比如系统层面的
-        // 连接/断开通知）不会触发 UI 刷新，除非 controller 自己的某个
-        // @Published 恰好同时变了。
+        // `tunnel` / `ruleSetStore` 都是独立的 ObservableObject，它们自己的
+        // @Published 变化不会自动冒泡到这里——SwiftUI 视图只订阅了
+        // `controller` 的 objectWillChange。转发一下，否则隧道状态变化
+        // （比如系统层面的连接/断开通知）或规则集下载完成不会触发 UI
+        // 刷新，除非 controller 自己的某个 @Published 恰好同时变了。
         tunnel.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        ruleSetStore.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
     }

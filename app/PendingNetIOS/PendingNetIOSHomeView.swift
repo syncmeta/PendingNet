@@ -10,6 +10,7 @@ struct PendingNetIOSHomeView: View {
     @State private var showingLog = false
     @State private var testingOutbounds = false
     @State private var switchingOutbound: String?
+    @State private var switchingRouteMode = false
 
     var body: some View {
         NavigationStack {
@@ -225,11 +226,129 @@ struct PendingNetIOSHomeView: View {
                 .buttonStyle(PendingPrimaryButtonStyle())
                 .disabled(isBusy)
 
+                routeModePicker(profile: profile, serverName: serverName)
+
                 if controller.tunnel.isTunnelLive,
                    !controller.tunnel.outboundMembers.isEmpty {
                     outboundPicker(profile: profile)
                 }
             }
+        }
+    }
+
+    /// 三档分流模式。切换只做两件事：落 `routeMode`（`.bypassCN` 之前先
+    /// 确保规则集在），隧道在位再 `reload` 把新配置真正推给扩展。两者都
+    /// 不重启隧道进程本身——`.bypassCN`/`.direct` 的差别只在 sing-box 的
+    /// route/dns 段，`reload` 走的是已经建立的 `sendProviderMessage`
+    /// 通道。未连接时只落地 `routeMode`，下一次 `start` 会带着它生效。
+    @ViewBuilder
+    private func routeModePicker(
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) -> some View {
+        Divider().overlay(PendingNetTheme.Palette.hairline)
+
+        HStack {
+            Text("分流模式")
+                .font(PendingNetTheme.Fonts.bodyEmphasized)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+            Spacer()
+            if switchingRouteMode {
+                ProgressView().controlSize(.small)
+            }
+        }
+
+        Picker("分流模式", selection: Binding(
+            get: { controller.tunnel.routeMode },
+            set: { mode in
+                Task { await switchRouteMode(to: mode, profile: profile, serverName: serverName) }
+            }
+        )) {
+            ForEach(PendingNetRouteMode.allCases, id: \.self) { mode in
+                Text(routeModeTitle(mode)).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .disabled(switchingRouteMode)
+
+        Text(routeModeDetail(controller.tunnel.routeMode))
+            .font(PendingNetTheme.Fonts.caption)
+            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+    }
+
+    /// 切换分流模式的完整流程，含降级。
+    ///
+    /// `.bypassCN` 需要规则集：拿不到就不切——保持在原模式（多数情况下是
+    /// 已经在用的全局代理），并提示用户，绝不能让隧道因为规则集缺失/损坏
+    /// 而起不来。真正应用新模式（落地 `routeMode` + 已连接时 `reload`）统一
+    /// 走 `applyRouteMode`，成功与「降级回退」共用同一条路径。
+    private func switchRouteMode(
+        to mode: PendingNetRouteMode,
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) async {
+        guard mode != controller.tunnel.routeMode else { return }
+        let previous = controller.tunnel.routeMode
+        switchingRouteMode = true
+        defer { switchingRouteMode = false }
+        controller.errorMessage = nil
+        controller.message = nil
+
+        if mode == .bypassCN {
+            do {
+                try await controller.ruleSetStore.ensureAvailable()
+            } catch {
+                controller.errorMessage = "规则集不可用，已保持全局代理：\(error.localizedDescription)"
+                // 降级：确保隧道（如果在位）确实跑在全局代理上，而不是停在
+                // 「用户点了绕过大陆，但没人知道最终生效的是哪个模式」这种
+                // 界面选中项和隧道实际配置对不上的状态。
+                if previous != .global {
+                    _ = await applyRouteMode(.global, previous: previous, profile: profile, serverName: serverName)
+                }
+                return
+            }
+        }
+
+        if await applyRouteMode(mode, previous: previous, profile: profile, serverName: serverName) {
+            controller.message = "已切换到「\(routeModeTitle(mode))」"
+        }
+    }
+
+    /// 落地 `routeMode` 并在隧道在位时 `reload`。`reload` 现在会一直等到
+    /// 扩展真正确认收到新配置才返回——不再是「消息发出去就算数」，所以这里
+    /// 失败即代表新配置没有生效，必须把 `routeMode` 退回原值，不能让持久化
+    /// 状态和隧道里实际跑着的配置对不上。
+    private func applyRouteMode(
+        _ mode: PendingNetRouteMode,
+        previous: PendingNetRouteMode,
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) async -> Bool {
+        controller.tunnel.setRouteMode(mode)
+        guard controller.tunnel.isTunnelLive else { return true }
+        do {
+            try await controller.tunnel.reload(profile: profile, serverName: serverName)
+            return true
+        } catch {
+            controller.tunnel.setRouteMode(previous)
+            controller.errorMessage = "切换分流模式失败，已回退：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    private func routeModeTitle(_ mode: PendingNetRouteMode) -> String {
+        switch mode {
+        case .global: "全局代理"
+        case .bypassCN: "绕过大陆"
+        case .direct: "全局直连"
+        }
+    }
+
+    private func routeModeDetail(_ mode: PendingNetRouteMode) -> String {
+        switch mode {
+        case .global: "所有流量都走 VPS。"
+        case .bypassCN: "国内域名与 IP 直连，其余走 VPS；需要先下载规则集。"
+        case .direct: "应急模式：VPN 保持开启，但流量不经 VPS，全部直连。"
         }
     }
 
@@ -345,8 +464,13 @@ struct PendingNetIOSHomeView: View {
         return delay <= 300 ? .success : .neutral
     }
 
+    /// 与 `outboundPicker` 用的 `isTunnelLive` 保持一致（`.connected` 或
+    /// `.reasserting`）。之前这里只认 `.connected`/`.connecting`，导致
+    /// `.reasserting`（Wi-Fi/蜂窝切换重新握手）时按钮显示「连接」，但协议
+    /// 选择器却因为 `isTunnelLive` 已经在显示——同一个隧道状态，按钮和
+    /// 选择器给用户两个矛盾的答案。
     private var isConnected: Bool {
-        controller.tunnel.status == .connected || controller.tunnel.status == .connecting
+        controller.tunnel.isTunnelLive || controller.tunnel.status == .connecting
     }
 
     private var isBusy: Bool {

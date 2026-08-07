@@ -205,13 +205,71 @@ final class PendingNetTunnelController: ObservableObject {
 
     /// Task 10 切换分流模式时调用：隧道已连接才有意义，未连接直接跳过——
     /// 新的分流模式会在下一次 `start` 里随配置一起生效。
+    ///
+    /// 一直等到扩展真正回了 `sendProviderMessage` 的 completion 才返回。
+    /// 早先的版本消息一发出去就返回，`try await` 不抛错只代表「发送成功」，
+    /// 不代表扩展接受了新配置——调用方没法据此判断分流模式是否真的切换了。
+    /// completion 里回一个非空响应即代表扩展拒绝，这里把它转成错误抛出去，
+    /// 而不是像之前那样只 `NSLog` 一声就当没发生过。
+    ///
+    /// `sendProviderMessage` 没有任何文档承诺 completion 一定会在有限时间
+    /// 内调用（扩展卡住或被系统杀掉都可能让它永远不到），所以额外设了一个
+    /// 宽松的超时，只代表「不再等它」，不代表扩展真的失败了。
     func reload(profile: PendingNetNodeProfile, serverName: String) async throws {
         let content = try makeConfigContent(profile: profile, serverName: serverName)
-        guard let session = manager?.connection as? NETunnelProviderSession,
-              session.status == .connected else { return }
-        try session.sendProviderMessage(Data(content.utf8)) { response in
-            if let response, let text = String(data: response, encoding: .utf8), !text.isEmpty {
-                NSLog("[PendingNet] reload failed: %@", text)
+        // 用 `isTunnelLive`（`.connected` 或 `.reasserting`）而不是单纯
+        // `.connected`：调用方（Task 10 的分流模式切换）是照 `isTunnelLive`
+        // 判断「隧道在位」再决定要不要 reload 的，两边判据不一致的后果是
+        // reasserting 期间这里静默 return（不抛错），调用方却把它当成功——
+        // 用户会看到「已切换」，但扩展根本没收到新配置。控制通道本身在
+        // reasserting 期间是可用的（`selectOutbound`/`runURLTest` 用的也是
+        // 同一个前提），`sendProviderMessage` 没有理由是例外。
+        guard isTunnelLive, let session = manager?.connection as? NETunnelProviderSession else {
+            return
+        }
+
+        let gate = ReloadResumeGate()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            gate.arm(continuation)
+            do {
+                try session.sendProviderMessage(Data(content.utf8)) { response in
+                    if let response, let text = String(data: response, encoding: .utf8), !text.isEmpty {
+                        NSLog("[PendingNet] reload rejected: %@", text)
+                        gate.resume(.failure(PendingNetCommandError.reloadRejected(text)))
+                    } else {
+                        gate.resume(.success(()))
+                    }
+                }
+            } catch {
+                gate.resume(.failure(error))
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
+                gate.resume(.failure(PendingNetCommandError.timedOut))
+            }
+        }
+    }
+
+    /// 只放行第一次 resume；`sendProviderMessage` 的 completion 与超时块
+    /// 都可能先到，`PendingNetCommandClient.ResumeGate` 是同一个模式。
+    private final class ReloadResumeGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Error>?
+
+        func arm(_ continuation: CheckedContinuation<Void, Error>) {
+            lock.lock()
+            self.continuation = continuation
+            lock.unlock()
+        }
+
+        func resume(_ result: Result<Void, Error>) {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            guard let pending else { return }
+            switch result {
+            case .success: pending.resume()
+            case .failure(let error): pending.resume(throwing: error)
             }
         }
     }

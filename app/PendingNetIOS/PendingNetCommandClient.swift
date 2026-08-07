@@ -7,6 +7,7 @@ enum PendingNetCommandError: LocalizedError, Equatable {
     case unavailable
     case notConnected
     case timedOut
+    case reloadRejected(String)
 
     var errorDescription: String? {
         switch self {
@@ -14,6 +15,7 @@ enum PendingNetCommandError: LocalizedError, Equatable {
         case .unavailable: "无法创建隧道控制通道"
         case .notConnected: "隧道未连接，无法切换协议或测速"
         case .timedOut: "隧道控制通道无响应，请稍后重试"
+        case .reloadRejected(let reason): "扩展拒绝了新配置：\(reason)"
         }
     }
 }
