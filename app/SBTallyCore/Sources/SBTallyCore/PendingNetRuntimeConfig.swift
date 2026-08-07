@@ -31,6 +31,34 @@ public struct PendingNetRuntimeServer: Sendable, Equatable {
     }
 }
 
+extension PendingNetRuntimeServer {
+    /// Validates the selector tag and parses this VPS's managed proxy outbounds.
+    /// Shared by every platform composer so the tag-safety and outbound-shape
+    /// checks can't silently drift between them.
+    func managedProxyOutbounds() throws -> (outbounds: [[String: Any]], tags: [String]) {
+        guard selectorTag.hasPrefix("pendingnet-"),
+              selectorTag.count <= 64,
+              selectorTag.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
+              let managed = try JSONSerialization.jsonObject(with: proxyOutbounds) as? [[String: Any]],
+              !managed.isEmpty else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        let prefix = selectorTag + "-"
+        var tags: [String] = []
+        for outbound in managed {
+            guard let type = outbound["type"] as? String,
+                  type == "vless" || type == "hysteria2",
+                  let tag = outbound["tag"] as? String,
+                  tag.hasPrefix(prefix),
+                  !tags.contains(tag) else {
+                throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+            }
+            tags.append(tag)
+        }
+        return (managed, tags)
+    }
+}
+
 public extension PendingNetNodeProfile {
     /// Produces only sing-box proxy outbounds. DNS, routes, TUN, selectors and
     /// all other client policy are intentionally composed by each platform.
@@ -107,30 +135,13 @@ public enum PendingNetLocalConfigComposer {
         baseConfig: Data,
         runtimeServer: PendingNetRuntimeServer
     ) throws -> Data {
-        guard runtimeServer.selectorTag.hasPrefix("pendingnet-"),
-              runtimeServer.selectorTag.count <= 64,
-              runtimeServer.selectorTag.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
-              var root = try JSONSerialization.jsonObject(with: baseConfig) as? [String: Any],
-              var existing = root["outbounds"] as? [[String: Any]],
-              let managed = try JSONSerialization.jsonObject(with: runtimeServer.proxyOutbounds)
-                as? [[String: Any]],
-              !managed.isEmpty else {
+        guard var root = try JSONSerialization.jsonObject(with: baseConfig) as? [String: Any],
+              var existing = root["outbounds"] as? [[String: Any]] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
+        let (managed, protocolTags) = try runtimeServer.managedProxyOutbounds()
 
         let prefix = runtimeServer.selectorTag + "-"
-        var protocolTags: [String] = []
-        for outbound in managed {
-            guard let type = outbound["type"] as? String,
-                  type == "vless" || type == "hysteria2",
-                  let tag = outbound["tag"] as? String,
-                  tag.hasPrefix(prefix),
-                  !protocolTags.contains(tag) else {
-                throw PendingNetRuntimeConfigError.invalidLocalConfiguration
-            }
-            protocolTags.append(tag)
-        }
-
         let mixTag = runtimeServer.selectorTag + "-mix"
         existing.removeAll { outbound in
             guard let tag = outbound["tag"] as? String else { return false }
