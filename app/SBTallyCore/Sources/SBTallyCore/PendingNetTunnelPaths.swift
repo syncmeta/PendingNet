@@ -27,14 +27,36 @@ public enum PendingNetTunnelPaths {
         base.appendingPathComponent("cache.db")
     }
 
-    /// 扩展进程 stderr 的落点。
+    /// 扩展进程自身 stderr（fd 2）的落点，由扩展在 `startTunnel` 里用
+    /// `freopen` 自行重定向。
     ///
-    /// sing-box 的 log 默认写 stderr，而本版本 libbox 的
-    /// `LibboxPlatformInterface` 没有 `writeLog` —— 不重定向的话，内核日志
-    /// 只存在于扩展进程内的环形缓冲里，除了连上 command client 别无出口，
-    /// 真机排障等于摸黑。放在 App Group 里，主 App 才读得到。
+    /// **这里没有 sing-box 的内核日志。** libbox 一旦拿到 platform interface
+    /// 就把 `defaultLogWriter` 设成 `io.Discard`，日志改走 `PlatformLogWriter`
+    /// 进 command server 的环形缓冲，从不经过 stderr；`LibboxRedirectStderr`
+    /// 也不重定向 fd 2（它只接管 Go 崩溃栈，见 `crashLogURL`）。内核日志的
+    /// 唯一出口是 command client 订阅 `LibboxCommandLog`。
+    ///
+    /// 这个文件里只有扩展自己 `writeMessage` 写的诊断行（以及扩展进程里
+    /// 其他任何往 stderr 写的东西）。放在 App Group 里，主 App 才读得到。
     public static func stderrLogURL(in base: URL) -> URL {
         base.appendingPathComponent("stderr.log")
+    }
+
+    /// Go 运行时崩溃栈的落点（`LibboxRedirectStderr` → `debug.SetCrashOutput`）。
+    ///
+    /// 必须与 `stderrLogURL` 分开：`RedirectStderr` 内部是 `os.Create`，
+    /// 指向同一个文件会把已经在追加写的诊断日志截断掉。
+    public static func crashLogURL(in base: URL) -> URL {
+        base.appendingPathComponent("go-crash.log")
+    }
+
+    /// 扩展 `startTunnel` 失败时留下的错误原文。
+    ///
+    /// `NEVPNConnection` 不向 App 传递扩展抛出的错误——App 只看得到 status
+    /// 翻到 `.disconnected`。没有这个文件，「隧道起不来」在 App 里没有任何
+    /// 可诊断的信息。启动成功时由扩展删除。
+    public static func lastErrorURL(in base: URL) -> URL {
+        base.appendingPathComponent("last-error.txt")
     }
 
     public static func ruleSetDirectory(in base: URL) -> URL {
