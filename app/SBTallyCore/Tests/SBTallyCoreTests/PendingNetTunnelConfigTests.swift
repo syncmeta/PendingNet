@@ -401,3 +401,43 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         }
     }
 }
+
+final class PendingNetTunnelPathsTests: XCTestCase {
+    func testLayoutIsStableRelativeToContainer() throws {
+        let base = URL(fileURLWithPath: "/tmp/group-container")
+        XCTAssertEqual(PendingNetTunnelPaths.appGroupID, "group.net.pending.PendingNet")
+        XCTAssertEqual(PendingNetTunnelPaths.configURL(in: base).path, "/tmp/group-container/config.json")
+        XCTAssertEqual(
+            PendingNetTunnelPaths.snapshotURL(in: base).path,
+            "/tmp/group-container/start-options.json"
+        )
+        XCTAssertEqual(PendingNetTunnelPaths.cacheURL(in: base).path, "/tmp/group-container/cache.db")
+        XCTAssertEqual(
+            PendingNetTunnelPaths.ruleSetDirectory(in: base).path,
+            "/tmp/group-container/rulesets"
+        )
+    }
+
+    func testPrepareCreatesRuleSetDirectory() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-paths-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        try PendingNetTunnelPaths.prepare(base: base)
+
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: PendingNetTunnelPaths.ruleSetDirectory(in: base).path,
+            isDirectory: &isDirectory
+        ))
+        XCTAssertTrue(isDirectory.boolValue)
+    }
+
+    func testPrepareIsIdempotent() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-paths-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try PendingNetTunnelPaths.prepare(base: base)
+        XCTAssertNoThrow(try PendingNetTunnelPaths.prepare(base: base))
+    }
+}
