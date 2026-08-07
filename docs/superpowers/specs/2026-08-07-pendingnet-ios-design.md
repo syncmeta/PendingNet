@@ -44,6 +44,7 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 - `inbounds`：单个 `tun` inbound，stack 使用 gvisor；地址与 MTU 由该函数固定，不可由服务端影响。
 - `outbounds`：复用 `PendingNetNodeProfile.runtimeServer(name:)` 产出的协议 outbounds，其上挂 `urltest` 与 `selector`，另加 `direct`、`block`。
 - `route`：按分流模式组装规则，`rule_set` 一律为 `type: local`，指向 App Group 内的 `.srs` 文件。
+- `dns`：显式配置的 DoH/UDP server，带超时与缓存，**不使用 `local` transport**。理由见 4.6。
 - `experimental`：`cache_file` 指向 App Group 容器；command server 监听供 App 侧控制。
 
 **配置归属边界与 macOS 完全一致，不放宽**：`/v1/node` 只贡献协议 outbounds，`tun`、`route`、`rule_set`、DNS 策略一律由客户端生成。服务端无法通过节点资料影响客户端的路由行为。
@@ -88,14 +89,47 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 
 iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止。这是本设计最可能失败的环节，必须作为显式验收项处理，而非事后调优。
 
-对策：
+#### 4.6.1 实测依据
 
-- 启动时调用 `LibboxSetMemoryLimit`；
-- tun stack 使用 gvisor；
-- rule-set 使用二进制 `.srs`，不使用 JSON；
-- 关闭非必要的 cache 与日志缓冲。
+两份来自 sing-box 1.13.13 iOS 扩展（go1.26.3, ios/arm64）的现场 pprof 快照，均抓取于贴顶时刻：
 
-验收要求：真机开启隧道并持续承载流量 10 分钟后，扩展的常驻内存需稳定低于 40MB，为系统波动留出余量。超过该值即视为验收不通过，需要在进入下一步前处理。
+| | A (2026-07-07) | B (2026-07-16) |
+|---|---|---|
+| memoryUsage / availableMemory | 45MB / 4.9MB | 45MB / 4.0MB |
+| 堆存活（heapAlloc） | 7.4MB | 14.6MB |
+| goroutine 栈（stackInuse） | 21MB | 19MB |
+| goroutine 数 | 430 | 2160 |
+| OS 线程数 | 283 | 29 |
+
+结论：**堆不是瓶颈，goroutine 栈才是**，占用接近总量的一半。两次的 goroutine 都堆积在 DNS：
+
+- A：266 个 goroutine 阻塞在 `dns/transport/local.darwinLookupSystemDNS` 的 cgo 调用中。cgo 阻塞调用每个占住一个 OS 线程，因而线程数达到 283。
+- B：2083 个 goroutine（96%）阻塞在 `dns.(*Client).Exchange`。线程仅 29，为纯 Go 侧 park；2160 × 8KB ≈ 17MB，与 stackInuse 19MB 吻合。查询发出后既未返回也未超时回收。
+
+两项被实测否定的既有假设：
+
+- **规则集不是负担。** `srs.Read` 全链路仅占 1.2MB，二进制 `.srs` 的成本比预期低一个量级。
+- **裁剪 build tags 无效。** 堆中 grpc、protobuf、tailscale、quic-go 均在场，说明该 build 未经裁剪且能正常运行。裁剪省下的是代码段与少量堆，无法缓解 20MB 的栈占用。
+
+#### 4.6.2 对策
+
+按实测根因，对策集中在 DNS 侧：
+
+- **不使用 `local` DNS transport。** 显式配置 DoH 或 UDP DNS server，避免走 Apple 系统解析的 cgo 路径，从根上消除 A 类线程膨胀。
+- **DNS 查询必须设置超时并限制并发。** 上游黑洞时查询需被回收，不得无限堆积。
+- **开启 DNS 缓存**，减少重复查询产生的 goroutine。
+- tun stack 使用 gvisor；rule-set 使用二进制 `.srs`；关闭非必要的 cache 与日志缓冲。
+- 启动时调用 `LibboxSetMemoryLimit` 作为兜底。
+
+#### 4.6.3 验收
+
+真机开启隧道并持续承载流量 10 分钟后：
+
+- 常驻内存稳定低于 40MB；
+- **`numGoroutine` 稳定且不随时间单调增长**；
+- `stackInuse` 低于 12MB。
+
+后两项是先行指标——内存见顶前 goroutine 数已经先涨，只盯 memoryUsage 会错过窗口。任一项不达标即视为验收不通过，需在进入下一步前处理。扩展需暴露一个诊断入口，能在真机上导出与上述同构的 pprof 快照。
 
 ## 5. 错误处理
 
@@ -121,6 +155,8 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 - Apple 开发者后台的 App ID 启用 Network Extension capability（`packet-tunnel-provider`）；
 - App Group `group.net.pending.PendingNet` 与 Keychain Access Group 注册并写入两个 target 的 entitlements；
 - 真机 provisioning profile。
+
+均为后台自助配置，**无需向 Apple 提交额外申请**；同类 Packet Tunnel 应用已用同一开发者账号完成 TestFlight 外部测试发布，审核不构成风险。此前将 entitlement 审批列为未知风险的判断已由实践排除。
 
 ## 8. 实施顺序
 
