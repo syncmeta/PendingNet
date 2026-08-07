@@ -22,7 +22,19 @@ command -v go >/dev/null || die "go is required"
 command -v xcodebuild >/dev/null || die "Xcode command line tools are required"
 
 export PATH="$(go env GOPATH)/bin:$PATH"
-if ! command -v gomobile >/dev/null || ! command -v gobind >/dev/null; then
+
+# 校验的是身份，不只是存在性：官方 golang.org/x/mobile 的 gomobile/gobind 也会满足
+# "command -v" 检查，但会用错误的工具链构建出坏的产物（见文件顶部关键点 1）。
+is_sagernet_fork() {
+  command -v "$1" >/dev/null 2>&1 && go version -m "$(command -v "$1")" 2>/dev/null | grep -q 'sagernet/gomobile'
+}
+
+needs_install=0
+for tool in gomobile gobind; do
+  is_sagernet_fork "$tool" || needs_install=1
+done
+
+if [[ "$needs_install" -eq 1 ]]; then
   go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.12
   go install github.com/sagernet/gomobile/cmd/gobind@v0.1.12
   gomobile init
@@ -45,6 +57,11 @@ done
 [[ -n "$CANDIDATE" ]] || die "Libbox.xcframework was not produced"
 
 mkdir -p "$REPO_ROOT/app/Vendor"
+# 原地写入前先落到临时目录再原子替换：ditto 中途失败不能先删掉旧的好产物，
+# 否则会留下一个"看起来存在"但半成品的 300MB xcframework。
+STAGING="$REPO_ROOT/app/Vendor/.Libbox.xcframework.tmp"
+rm -rf "$STAGING"
+ditto "$CANDIDATE" "$STAGING"
 rm -rf "$DEST"
-ditto "$CANDIDATE" "$DEST"
+mv "$STAGING" "$DEST"
 echo "built $DEST from sing-box $SING_BOX_REF"
