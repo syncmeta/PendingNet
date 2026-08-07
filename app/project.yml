@@ -35,11 +35,14 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.net.pending.PendingNet
+          - group.com.pendingname.pendingnet
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.ios.PacketTunnel
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet.extension
         PRODUCT_NAME: PendingNetPacketTunnel
+        # 仅 iOS target 使用自动签名；macOS 侧沿用既有的 Developer ID + 公证流程，不受影响。
+        DEVELOPMENT_TEAM: M42BKJN82S
+        CODE_SIGN_STYLE: Automatic
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
@@ -62,11 +65,13 @@ targets:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
         com.apple.security.application-groups:
-          - group.net.pending.PendingNet
+          - group.com.pendingname.pendingnet
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.ios
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet
         PRODUCT_NAME: PendingNet
+        DEVELOPMENT_TEAM: M42BKJN82S
+        CODE_SIGN_STYLE: Automatic
         INFOPLIST_KEY_CFBundleDisplayName: PendingNet
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"

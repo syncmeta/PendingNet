@@ -5,7 +5,7 @@ import Foundation
 /// 两侧必须引用同一份定义：扩展读的就是 App 写的那几个文件，
 /// 各写各的路径常量会在真机上表现为「配置明明写了但扩展读不到」。
 public enum PendingNetTunnelPaths {
-    public static let appGroupID = "group.net.pending.PendingNet"
+    public static let appGroupID = "group.com.pendingname.pendingnet"
 
     public static func container(
         fileManager: FileManager = .default

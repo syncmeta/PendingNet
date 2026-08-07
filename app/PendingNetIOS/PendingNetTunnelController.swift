@@ -43,7 +43,7 @@ final class PendingNetTunnelController: ObservableObject {
     private var commandClient: PendingNetCommandClient?
     private var isForeground = true
 
-    private let tunnelBundleID = "net.pending.PendingNet.ios.PacketTunnel"
+    private let tunnelBundleID = "com.pendingname.pendingnet.extension"
     private let routeModeKey = "pendingnet.ios.route-mode.v1"
     private let ruleSetStore: PendingNetRuleSetStore
 

@@ -8,7 +8,7 @@
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.net.pending.PendingNet</string>
+		<string>group.com.pendingname.pendingnet</string>
 	</array>
 </dict>
 </plist>
