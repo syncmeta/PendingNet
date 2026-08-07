@@ -34,6 +34,8 @@ targets:
       properties:
         com.apple.developer.networking.networkextension:
           - packet-tunnel-provider
+        com.apple.security.application-groups:
+          - group.net.pending.PendingNet
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.ios.PacketTunnel
@@ -41,12 +43,21 @@ targets:
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
+      - framework: Vendor/Libbox.xcframework
+        embed: false
   PendingNetIOS:
     type: application
     platform: iOS
     sources:
       - path: PendingNetIOS
       - path: PendingUI
+    entitlements:
+      path: PendingNetIOS/PendingNetIOS.entitlements
+      properties:
+        com.apple.developer.networking.networkextension:
+          - packet-tunnel-provider
+        com.apple.security.application-groups:
+          - group.net.pending.PendingNet
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.ios
