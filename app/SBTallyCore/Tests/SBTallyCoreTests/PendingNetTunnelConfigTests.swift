@@ -133,4 +133,63 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - Shared managedProxyOutbounds() validator
+
+    /// Both PendingNetTunnelConfig.make and PendingNetLocalConfigComposer.merge
+    /// funnel through PendingNetRuntimeServer.managedProxyOutbounds(). These
+    /// cases lock down its guards so the two call sites can't drift again.
+
+    func testManagedProxyOutboundsRejectsEmptyOutbounds() throws {
+        let server = PendingNetRuntimeServer(
+            serverID: "pn_test_server",
+            name: "Test VPS",
+            selectorTag: "pendingnet-abcdef",
+            proxyOutbounds: Data("[]".utf8)
+        )
+        XCTAssertThrowsError(try server.managedProxyOutbounds()) { error in
+            XCTAssertEqual(error as? PendingNetRuntimeConfigError, .invalidLocalConfiguration)
+        }
+    }
+
+    func testManagedProxyOutboundsRejectsWrongOutboundType() throws {
+        let server = PendingNetRuntimeServer(
+            serverID: "pn_test_server",
+            name: "Test VPS",
+            selectorTag: "pendingnet-abcdef",
+            proxyOutbounds: Data(#"[{"type":"shadowsocks","tag":"pendingnet-abcdef-reality"}]"#.utf8)
+        )
+        XCTAssertThrowsError(try server.managedProxyOutbounds()) { error in
+            XCTAssertEqual(error as? PendingNetRuntimeConfigError, .invalidLocalConfiguration)
+        }
+    }
+
+    func testManagedProxyOutboundsRejectsTagMissingSelectorPrefix() throws {
+        let server = PendingNetRuntimeServer(
+            serverID: "pn_test_server",
+            name: "Test VPS",
+            selectorTag: "pendingnet-abcdef",
+            proxyOutbounds: Data(#"[{"type":"vless","tag":"other-server-reality"}]"#.utf8)
+        )
+        XCTAssertThrowsError(try server.managedProxyOutbounds()) { error in
+            XCTAssertEqual(error as? PendingNetRuntimeConfigError, .invalidLocalConfiguration)
+        }
+    }
+
+    func testManagedProxyOutboundsRejectsDuplicateTag() throws {
+        let server = PendingNetRuntimeServer(
+            serverID: "pn_test_server",
+            name: "Test VPS",
+            selectorTag: "pendingnet-abcdef",
+            proxyOutbounds: Data(#"""
+            [
+              {"type":"vless","tag":"pendingnet-abcdef-reality"},
+              {"type":"hysteria2","tag":"pendingnet-abcdef-reality"}
+            ]
+            """#.utf8)
+        )
+        XCTAssertThrowsError(try server.managedProxyOutbounds()) { error in
+            XCTAssertEqual(error as? PendingNetRuntimeConfigError, .invalidLocalConfiguration)
+        }
+    }
 }

@@ -29,7 +29,7 @@ public enum PendingNetTunnelConfig {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
 
-        let (proxyOutbounds, protocolTags) = try managedOutbounds(runtimeServer)
+        let (proxyOutbounds, protocolTags) = try runtimeServer.managedProxyOutbounds()
         let mixTag = runtimeServer.selectorTag + "-mix"
 
         var outbounds: [[String: Any]] = proxyOutbounds
@@ -66,30 +66,5 @@ public enum PendingNetTunnelConfig {
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         ) + Data([0x0a])
-    }
-
-    /// 解出受管协议 outbounds，并校验它们只带本 VPS 的 tag 前缀。
-    static func managedOutbounds(
-        _ runtimeServer: PendingNetRuntimeServer
-    ) throws -> ([[String: Any]], [String]) {
-        guard runtimeServer.selectorTag.hasPrefix("pendingnet-"),
-              let managed = try JSONSerialization.jsonObject(with: runtimeServer.proxyOutbounds)
-              as? [[String: Any]],
-              !managed.isEmpty else {
-            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
-        }
-        let prefix = runtimeServer.selectorTag + "-"
-        var tags: [String] = []
-        for outbound in managed {
-            guard let type = outbound["type"] as? String,
-                  type == "vless" || type == "hysteria2",
-                  let tag = outbound["tag"] as? String,
-                  tag.hasPrefix(prefix),
-                  !tags.contains(tag) else {
-                throw PendingNetRuntimeConfigError.invalidLocalConfiguration
-            }
-            tags.append(tag)
-        }
-        return (managed, tags)
     }
 }
