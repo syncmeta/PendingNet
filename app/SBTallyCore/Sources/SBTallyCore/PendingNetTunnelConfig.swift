@@ -85,9 +85,10 @@ public enum PendingNetTunnelConfig {
             "route": [
                 "auto_detect_interface": true,
                 "final": runtimeServer.selectorTag,
-                // sing-box 1.12+ 弃用了"省略即隐式走 dns.rules"的旧行为；
-                // 显式指到 dns-direct，避免代理侧解析器反过来要靠自己解析自己。
-                "default_domain_resolver": "dns-direct",
+                // sing-box 1.12+ 起，配置 2 个及以上 DNS server 时必须显式声明
+                // default_domain_resolver（省略即校验失败）。.global 模式下指到
+                // dns-proxy：任何走到这个字段的解析都应留在隧道内，不得漏到 direct。
+                "default_domain_resolver": "dns-proxy",
                 "rules": [
                     ["action": "sniff"],
                     ["protocol": "dns", "action": "hijack-dns"],

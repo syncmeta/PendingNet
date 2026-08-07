@@ -189,6 +189,11 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             },
             "未劫持 DNS 会让系统解析器绕过隧道"
         )
+
+        // sing-box 1.12+ 要求显式声明 default_domain_resolver；.global 模式下
+        // 必须指到 dns-proxy，否则未来触发这条路径的解析（route resolve
+        // action、ICMP-to-domain、WireGuard/Tailscale 端点、SOCKS4）会漏出隧道。
+        XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-proxy")
     }
 
     func testTunnelConfigPassesInstalledSingBoxCheck() throws {
