@@ -109,16 +109,23 @@ private extension NSColor {
 
 struct PendingPageHeader: View {
     let title: String
-    let subtitle: String
+    let subtitle: String?
+
+    init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .font(PendingNetTheme.Fonts.pageTitle(title))
                 .foregroundStyle(PendingNetTheme.Palette.ink)
-            Text(subtitle)
-                .font(PendingNetTheme.Fonts.body)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            if let subtitle {
+                Text(subtitle)
+                    .font(PendingNetTheme.Fonts.body)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -224,7 +231,13 @@ struct PendingQuietButtonStyle: ButtonStyle {
 struct PendingEmptyState: View {
     let icon: String
     let title: String
-    let detail: String
+    let detail: String?
+
+    init(icon: String, title: String, detail: String? = nil) {
+        self.icon = icon
+        self.title = title
+        self.detail = detail
+    }
 
     var body: some View {
         VStack(spacing: 8) {
@@ -234,10 +247,12 @@ struct PendingEmptyState: View {
             Text(title)
                 .font(PendingNetTheme.Fonts.bodyEmphasized)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
-            Text(detail)
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                .multilineTextAlignment(.center)
+            if let detail {
+                Text(detail)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .multilineTextAlignment(.center)
+            }
         }
         .padding(24)
     }

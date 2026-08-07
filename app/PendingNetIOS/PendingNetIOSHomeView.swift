@@ -16,12 +16,8 @@ struct PendingNetIOSHomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    PendingPageHeader(
-                        title: "PendingNet",
-                        subtitle: "连接自己的 VPS，规则留在自己的设备上。"
-                    )
+                    PendingPageHeader(title: "PendingNet")
                     serverCard
-                    tunnelCard
 
                     if let server = controller.server, let profile = controller.nodeProfile {
                         tunnelSection(profile: profile, serverName: server.name)
@@ -92,10 +88,7 @@ struct PendingNetIOSHomeView: View {
     }
 
     private var serverCard: some View {
-        PendingSectionCard(
-            "VPS",
-            subtitle: ".pdn 只用于一次配对，协议材料由 VPS 后续下发。"
-        ) {
+        PendingSectionCard("VPS") {
             VStack(alignment: .leading, spacing: 14) {
                 if let server = controller.server {
                     HStack(spacing: 12) {
@@ -122,8 +115,7 @@ struct PendingNetIOSHomeView: View {
                 } else {
                     PendingEmptyState(
                         icon: "server.rack",
-                        title: "还没有配对 VPS",
-                        detail: "请导入 VPS 生成的 .pdn 配对文件。"
+                        title: "还没有配对 VPS"
                     )
                     .frame(maxWidth: .infinity)
                 }
@@ -148,57 +140,14 @@ struct PendingNetIOSHomeView: View {
         }
     }
 
-    private var tunnelCard: some View {
-        PendingSectionCard(
-            "连接",
-            subtitle: "路由规则由本机管理，不会写回 VPS。"
-        ) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Label("Packet Tunnel", systemImage: "checkmark.shield")
-                        .font(PendingNetTheme.Fonts.bodyEmphasized)
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
-                    Spacer()
-                    PendingStatusPill(
-                        text: controller.nodeProfile == nil ? "等待配置" : "配置就绪",
-                        kind: controller.nodeProfile == nil ? .neutral : .success
-                    )
-                }
-
-                if let profile = controller.nodeProfile {
-                    Divider().overlay(PendingNetTheme.Palette.hairline)
-                    ForEach(profile.protocols) { item in
-                        HStack(spacing: 9) {
-                            Image(systemName: "point.3.connected.trianglepath.dotted")
-                                .foregroundStyle(PendingNetTheme.Palette.accent)
-                            Text(item.displayName)
-                                .font(PendingNetTheme.Fonts.body)
-                                .foregroundStyle(PendingNetTheme.Palette.ink)
-                        }
-                    }
-                } else {
-                    Text("配对后会自动从 VPS 读取协议连接材料。")
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                }
-            }
-        }
-    }
-
     @ViewBuilder
     private func tunnelSection(
         profile: PendingNetNodeProfile,
         serverName: String
     ) -> some View {
-        PendingSectionCard(
-            "隧道",
-            subtitle: "开关由本机 Packet Tunnel 扩展驱动，VPS 不参与开关状态。"
-        ) {
+        PendingSectionCard("隧道") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Label("PendingNet Tunnel", systemImage: "checkmark.shield")
-                        .font(PendingNetTheme.Fonts.bodyEmphasized)
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
                     Spacer()
                     PendingStatusPill(text: statusText, kind: statusKind)
                 }
@@ -279,9 +228,6 @@ struct PendingNetIOSHomeView: View {
         .pickerStyle(.segmented)
         .disabled(switchingRouteMode)
 
-        Text(routeModeDetail(controller.tunnel.routeMode))
-            .font(PendingNetTheme.Fonts.caption)
-            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
     }
 
     /// 切换分流模式的完整流程，含降级。
@@ -352,14 +298,6 @@ struct PendingNetIOSHomeView: View {
         }
     }
 
-    private func routeModeDetail(_ mode: PendingNetRouteMode) -> String {
-        switch mode {
-        case .global: "所有流量都走 VPS。"
-        case .bypassCN: "国内域名与 IP 直连，其余走 VPS；需要先下载规则集。"
-        case .direct: "应急模式：VPN 保持开启，但流量不经 VPS，全部直连。"
-        }
-    }
-
     /// 协议手选与测速。只在隧道在位、且控制通道已经推回分组成员时出现——
     /// 这两个动作都要经 command client 连扩展里的 command server，隧道没起
     /// 来时无从谈起。切换与测速都不重启隧道。
@@ -406,9 +344,6 @@ struct PendingNetIOSHomeView: View {
             outboundRow(tag: tag, profile: profile)
         }
 
-        Text("切换协议经隧道内的控制通道生效，不会重启隧道、也不会断开已有连接。")
-            .font(PendingNetTheme.Fonts.caption)
-            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
     }
 
     private func outboundRow(tag: String, profile: PendingNetNodeProfile) -> some View {

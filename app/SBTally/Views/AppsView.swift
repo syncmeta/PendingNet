@@ -6,10 +6,7 @@ struct AppsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PendingPageHeader(
-                title: "应用",
-                subtitle: "按应用查看所选时间范围内的流量。"
-            )
+            PendingPageHeader(title: "应用")
             .padding(.horizontal, PendingNetTheme.Metrics.gutter)
             .padding(.top, PendingNetTheme.Metrics.gutter)
 

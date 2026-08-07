@@ -76,10 +76,7 @@ struct ControlView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PendingPageHeader(
-                    title: "连接",
-                    subtitle: "配对 VPS、启动本机代理，并选择路由方式。"
-                )
+                PendingPageHeader(title: "连接")
                 pairedServersCard
                 engineCard
                 routingCard
@@ -118,10 +115,7 @@ struct ControlView: View {
     }
 
     private var pairedServersCard: some View {
-        PendingSectionCard(
-            "VPS",
-            subtitle: ".pdn 只负责建立一次配对；协议材料由 VPS 后续下发。"
-        ) {
+        PendingSectionCard("VPS") {
             VStack(alignment: .leading, spacing: 12) {
                 if vpsPairing.servers.isEmpty {
                     HStack(spacing: 11) {
@@ -132,9 +126,6 @@ struct ControlView: View {
                             Text("还没有配对 VPS")
                                 .font(PendingNetTheme.Fonts.bodyEmphasized)
                                 .foregroundStyle(PendingNetTheme.Palette.ink)
-                            Text("请导入 VPS 生成的 .pdn 配对文件。")
-                                .font(PendingNetTheme.Fonts.caption)
-                                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                         }
                     }
                 } else {
@@ -204,7 +195,7 @@ struct ControlView: View {
     private var engineCard: some View {
         PendingSectionCard(
             "本机代理",
-            subtitle: "仅端口模式监听 127.0.0.1:\(engine.localProxyPort)，不会更改系统代理。"
+            subtitle: engine.takeover == "local" ? "127.0.0.1:\(engine.localProxyPort)" : nil
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
@@ -270,7 +261,6 @@ struct ControlView: View {
     private var routingCard: some View {
         PendingSectionCard(
             "路由",
-            subtitle: "路由规则保存在本机，不写入 .pdn 配对文件。"
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 7) {
@@ -288,10 +278,6 @@ struct ControlView: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .disabled(state.proxies.isEmpty || engine.takeover == "local")
-                }
-
-                if engine.takeover == "local" {
-                    messageBanner("当前仅端口模式使用全局转发；白名单、黑名单规则会作为独立的本机设置接入。", kind: .neutral)
                 }
 
                 if let all = vpsProxy?.all {
@@ -330,11 +316,10 @@ struct ControlView: View {
     private var rulesCard: some View {
         PendingSectionCard(
             "规则集",
-            subtitle: "规则更新与 VPS 配对相互独立。"
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if rulesetsUnavailable {
-                    messageBanner("统计与规则服务尚未启用，当前代理连接不受影响。", kind: .neutral)
+                    messageBanner("统计与规则服务尚未启用", kind: .neutral)
                 } else if rulesets.isEmpty {
                     Text("暂无规则集")
                         .font(PendingNetTheme.Fonts.body)
@@ -373,7 +358,6 @@ struct ControlView: View {
     private var appUpdateCard: some View {
         PendingSectionCard(
             "应用更新",
-            subtitle: "自动检查、验证签名并安全替换 PendingNet。"
         ) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
