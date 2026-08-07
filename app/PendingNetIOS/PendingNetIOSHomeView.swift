@@ -209,11 +209,19 @@ struct PendingNetIOSHomeView: View {
                             await controller.tunnel.stop()
                         } else {
                             do {
+                                controller.errorMessage = nil
                                 try await controller.tunnel.start(
                                     profile: profile,
                                     serverName: serverName,
                                     serverID: profile.serverID
                                 )
+                                // 规则集不可用时 start 会降级到全局代理而不是
+                                // 失败；降级必须让用户看见，否则界面上的
+                                // 「绕过大陆」会悄悄变成「全局代理」。
+                                if let notice = controller.tunnel.degradeNotice {
+                                    controller.errorMessage = notice
+                                    controller.tunnel.degradeNotice = nil
+                                }
                             } catch {
                                 controller.errorMessage = error.localizedDescription
                             }
@@ -324,13 +332,13 @@ struct PendingNetIOSHomeView: View {
         profile: PendingNetNodeProfile,
         serverName: String
     ) async -> Bool {
-        controller.tunnel.setRouteMode(mode)
+        controller.tunnel.setRouteMode(mode, profile: profile, serverName: serverName)
         guard controller.tunnel.isTunnelLive else { return true }
         do {
             try await controller.tunnel.reload(profile: profile, serverName: serverName)
             return true
         } catch {
-            controller.tunnel.setRouteMode(previous)
+            controller.tunnel.setRouteMode(previous, profile: profile, serverName: serverName)
             controller.errorMessage = "切换分流模式失败，已回退：\(error.localizedDescription)"
             return false
         }

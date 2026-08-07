@@ -28,6 +28,10 @@ final class PendingNetTunnelController: ObservableObject {
     /// 各成员最近一次 urltest 的延迟（毫秒）。0 表示还没有测速结果。
     @Published private(set) var outboundDelays: [String: Int] = [:]
 
+    /// `start()` 因为规则集不可用而降级到全局代理时留下的提示。UI 取用后
+    /// 自行清空——降级不是错误，`start()` 不能因此抛出。
+    @Published var degradeNotice: String?
+
     /// 隧道在位。`.reasserting` 也算——Wi-Fi↔蜂窝切换时隧道并没有断，只是
     /// 内核在重新握手，此时控制通道仍然可用，把选择器藏起来反而是误导。
     var isTunnelLive: Bool {
@@ -41,15 +45,19 @@ final class PendingNetTunnelController: ObservableObject {
 
     private let tunnelBundleID = "net.pending.PendingNet.ios.PacketTunnel"
     private let routeModeKey = "pendingnet.ios.route-mode.v1"
+    private let ruleSetStore: PendingNetRuleSetStore
 
-    init() {
+    init(ruleSetStore: PendingNetRuleSetStore) {
+        self.ruleSetStore = ruleSetStore
         if let raw = UserDefaults.standard.string(forKey: routeModeKey),
            let mode = PendingNetRouteMode(rawValue: raw) {
             routeMode = mode
         }
-        commandClient = PendingNetCommandClient { [weak self] snapshot in
+        // 显式写标签：`PendingNetCommandClient` 现在有 onSnapshot / onLogEvent
+        // 两个初始化器，尾随闭包会歧义。
+        commandClient = PendingNetCommandClient(onSnapshot: { [weak self] snapshot in
             Task { @MainActor in self?.apply(snapshot) }
-        }
+        })
     }
 
     deinit {
@@ -86,9 +94,38 @@ final class PendingNetTunnelController: ObservableObject {
         }
     }
 
-    func setRouteMode(_ mode: PendingNetRouteMode) {
+    /// 落地分流模式。
+    ///
+    /// 隧道**不在位**时还要顺手把 App Group 里的启动快照一起重写。少了这一步，
+    /// `UserDefaults` 里是新模式、快照里还是旧模式，而快照正是「设置 → VPN」
+    /// 里直接开隧道时扩展唯一能读到的配置（那条路径 `startTunnel` 的 options
+    /// 是空的）——界面显示「绕过大陆」、隧道实际跑「全局代理」，反过来也一样：
+    /// 用户以为在走代理，快照里却是 `.direct` 的全直连。
+    ///
+    /// 隧道在位时不写：那条路径由调用方 `reload()` 把新配置推给扩展，扩展在
+    /// libbox **接受之后**才落盘快照，这个次序不能绕过。
+    ///
+    /// 这里写的是一份没有经过内核校验的配置，理论上可能毒化下一次冷启动。
+    /// 权衡过：`PendingNetTunnelConfig.make` 的三种分流模式输出都有
+    /// `testEveryRouteModePassesInstalledSingBoxCheck` 用真 sing-box 兜底，
+    /// 而万一真被拒，失败是**可见**的（扩展会写 `last-error.txt`，隧道起不来），
+    /// 用户打开 App 点一次连接就恢复；反过来「静默跑错模式」既看不见也不会自愈。
+    func setRouteMode(
+        _ mode: PendingNetRouteMode,
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) {
         routeMode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: routeModeKey)
+        guard !isTunnelLive else { return }
+        guard let base = PendingNetTunnelPaths.container(),
+              let content = try? makeConfigContent(profile: profile, serverName: serverName)
+        else { return }
+        // 写不成不是致命错误：下一次从 App 里 `start` 会带着 options 覆盖它。
+        try? Data(content.utf8).write(
+            to: PendingNetTunnelPaths.snapshotURL(in: base),
+            options: .atomic
+        )
     }
 
     // MARK: - 协议手选与测速
@@ -192,11 +229,37 @@ final class PendingNetTunnelController: ObservableObject {
         // 控制通道要在隧道连上的那一刻就知道该订阅哪个 selector，不能等
         // 界面那边的绑定先跑。
         bindSelector(profile: profile, serverName: serverName)
+        await ensureRouteModeIsRunnable(profile: profile, serverName: serverName)
         let content = try makeConfigContent(profile: profile, serverName: serverName)
         let manager = try await installedManager()
         try manager.connection.startVPNTunnel(options: [
             "configContent": content as NSString,
         ])
+    }
+
+    /// 「规则集缺失或损坏时降级为全局代理，不使隧道启动失败」这条规则原先
+    /// 只长在分流选择器那条路径上。持久化的 `.bypassCN` 走的是这里：直接
+    /// 拿它生成配置，规则集不在（或上一轮落了个被替换的 HTML）就会产出一份
+    /// 内核拒收的配置，隧道干脆起不来——正是那条规则要避免的结果。
+    ///
+    /// 判据是 `ensureAvailable()` 之后的 `isReady`，而不是它有没有抛错：
+    /// `isReady` 是照磁盘上的文件（含 `.srs` 魔数）重新算出来的，就算下载
+    /// 那一步「成功」了却没落下有效文件，这里也拦得住。
+    private func ensureRouteModeIsRunnable(
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) async {
+        guard routeMode == .bypassCN else { return }
+        var reason: String?
+        do {
+            try await ruleSetStore.ensureAvailable()
+            if !ruleSetStore.isReady { reason = "规则集文件不完整或不是有效的 .srs" }
+        } catch {
+            reason = error.localizedDescription
+        }
+        guard let reason else { return }
+        setRouteMode(.global, profile: profile, serverName: serverName)
+        degradeNotice = "规则集不可用，本次已降级为全局代理：\(reason)"
     }
 
     func stop() async {
@@ -224,8 +287,12 @@ final class PendingNetTunnelController: ObservableObject {
         // 用户会看到「已切换」，但扩展根本没收到新配置。控制通道本身在
         // reasserting 期间是可用的（`selectOutbound`/`runURLTest` 用的也是
         // 同一个前提），`sendProviderMessage` 没有理由是例外。
+        //
+        // 判据不成立时**抛错**而不是 `return`：调用方在自己的 guard 与这次
+        // 调用之间隧道断掉是一条窄但真实的竞态，静默返回等于告诉调用方
+        // 「已切换」，而扩展根本没收到新配置——正是上一轮修掉的那类 bug。
         guard isTunnelLive, let session = manager?.connection as? NETunnelProviderSession else {
-            return
+            throw PendingNetCommandError.notConnected
         }
 
         let gate = ReloadResumeGate()

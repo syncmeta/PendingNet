@@ -20,14 +20,20 @@ final class PendingNetIOSController: ObservableObject {
     @Published var message: String?
     @Published var errorMessage: String?
 
-    let tunnel = PendingNetTunnelController()
-    let ruleSetStore = PendingNetRuleSetStore()
+    let tunnel: PendingNetTunnelController
+    let ruleSetStore: PendingNetRuleSetStore
 
     private let defaults = UserDefaults.standard
     private let defaultsKey = "pendingnet.ios.paired-server.v1"
     private var cancellables = Set<AnyCancellable>()
 
     init() {
+        // 同一个 store 交给两边：隧道控制器在 `start` 时用它决定 `.bypassCN`
+        // 能不能跑，界面在切换分流模式时用它下载规则集。两份实例会让
+        // `isReady` 各说各话。
+        let store = PendingNetRuleSetStore()
+        ruleSetStore = store
+        tunnel = PendingNetTunnelController(ruleSetStore: store)
         if let data = defaults.data(forKey: defaultsKey) {
             server = try? JSONDecoder().decode(IOSPairedServer.self, from: data)
         }

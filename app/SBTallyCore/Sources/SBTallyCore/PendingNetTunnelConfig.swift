@@ -21,8 +21,49 @@ public enum PendingNetTunnelConfig {
     /// 直连侧解析器。走 direct，用于分流模式下的国内域名。
     static let directDNSServer = "223.5.5.5"
 
-    /// Task 10 的下载器按这个清单取 .srs 文件，两处不得各写各的。
-    public static let requiredRuleSetNames = ["geoip-cn", "geosite-cn"]
+    /// 一个规则集：配置里的 tag / 文件名，以及主 App 下载它的来源。
+    ///
+    /// 名字与下载地址必须待在同一条记录里。早先名单在 SBTallyCore、地址在
+    /// App 侧的下载器，两处各写各的——只要有一边多/少一个名字，表现就是
+    /// sing-box 启动时报 `rule-set not found`，而且要到真机上才看得见。
+    public struct RuleSetSource: Sendable, Equatable {
+        public let name: String
+        public let url: URL
+    }
+
+    /// 全项目唯一一份规则集名单。扩展按 `type: local` 读同名 `.srs` 文件，
+    /// 主 App 的下载器按同一份名单取文件。
+    public static let requiredRuleSets: [RuleSetSource] = [
+        RuleSetSource(
+            name: "geoip-cn",
+            url: URL(
+                string: "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+            )!
+        ),
+        RuleSetSource(
+            name: "geosite-cn",
+            url: URL(
+                string: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+            )!
+        ),
+    ]
+
+    public static var requiredRuleSetNames: [String] { requiredRuleSets.map(\.name) }
+
+    /// `.srs` 二进制的魔数（sing-box `common/srs/binary.go` 的 `MagicBytes`）。
+    /// 只按大小判断是不够的：`raw.githubusercontent.com` 在大陆网络下不可达，
+    /// 中间设备返回一个 200 + HTML 的门户页完全可能，那种文件大小非零、
+    /// 状态码正常，落地之后要到 sing-box 解析时才炸。
+    public static let ruleSetMagicBytes: [UInt8] = [0x53, 0x52, 0x53] // "SRS"
+
+    /// 文件是否像一个真正的 `.srs`。只看头三个字节——完整校验是 sing-box
+    /// 自己的事，这里要挡的是「根本不是 srs」这一类。
+    public static func looksLikeRuleSet(at path: String) -> Bool {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: ruleSetMagicBytes.count) else { return false }
+        return Array(head) == ruleSetMagicBytes
+    }
 
     static func ruleSets(directory: String) -> [[String: Any]] {
         requiredRuleSetNames.map { name in

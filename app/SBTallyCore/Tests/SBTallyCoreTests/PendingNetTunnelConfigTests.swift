@@ -311,35 +311,53 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-proxy")
     }
 
-    func testTunnelConfigPassesInstalledSingBoxCheck() throws {
-        let candidates = ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
-        guard let binary = candidates.first(where: {
-            FileManager.default.isExecutableFile(atPath: $0)
-        }) else { throw XCTSkip("sing-box is not installed") }
+    // MARK: - Rule-set manifest and .srs validation
 
+    /// 名字与下载地址必须来自同一条记录。两处各写各的是运行时才暴露的错误
+    /// （`rule-set not found`），而且只在真机上看得见。
+    func testRuleSetNamesComeFromTheSingleManifest() {
+        XCTAssertEqual(
+            PendingNetTunnelConfig.requiredRuleSetNames,
+            PendingNetTunnelConfig.requiredRuleSets.map(\.name)
+        )
+        XCTAssertEqual(PendingNetTunnelConfig.requiredRuleSetNames, ["geoip-cn", "geosite-cn"])
+        for source in PendingNetTunnelConfig.requiredRuleSets {
+            XCTAssertTrue(
+                source.url.lastPathComponent == "\(source.name).srs",
+                "下载地址与规则集名字对不上：\(source.name) ← \(source.url)"
+            )
+        }
+    }
+
+    /// 只按「非空」判断会放过一个 200 + HTML 的门户页——`raw.githubusercontent.com`
+    /// 在大陆网络下不可达，这是很现实的结果。必须认魔数。
+    func testRuleSetValidationRejectsNonSRSContent() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("pendingnet-tunnel-check-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("pendingnet-srs-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let configURL = directory.appendingPathComponent("config.json")
-        try PendingNetTunnelConfig.make(
-            runtimeServer: Self.sampleRuntimeServer(),
-            routeMode: .global,
-            ruleSetDirectory: directory.path,
-            cachePath: directory.appendingPathComponent("cache.db").path
-        ).write(to: configURL)
+        let html = directory.appendingPathComponent("portal.srs")
+        try Data("<!DOCTYPE html><html><body>blocked</body></html>".utf8).write(to: html)
+        XCTAssertFalse(PendingNetTunnelConfig.looksLikeRuleSet(at: html.path))
 
-        let check = Process()
-        check.executableURL = URL(fileURLWithPath: binary)
-        check.arguments = ["check", "-c", configURL.path]
-        let output = Pipe()
-        check.standardOutput = output
-        check.standardError = output
-        try check.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        check.waitUntilExit()
-        XCTAssertEqual(check.terminationStatus, 0, String(decoding: data, as: UTF8.self))
+        let empty = directory.appendingPathComponent("empty.srs")
+        try Data().write(to: empty)
+        XCTAssertFalse(PendingNetTunnelConfig.looksLikeRuleSet(at: empty.path))
+
+        let truncated = directory.appendingPathComponent("truncated.srs")
+        try Data([0x53, 0x52]).write(to: truncated)
+        XCTAssertFalse(PendingNetTunnelConfig.looksLikeRuleSet(at: truncated.path))
+
+        XCTAssertFalse(
+            PendingNetTunnelConfig.looksLikeRuleSet(
+                at: directory.appendingPathComponent("missing.srs").path
+            )
+        )
+
+        let good = directory.appendingPathComponent("good.srs")
+        try Data([0x53, 0x52, 0x53, 0x03, 0x00]).write(to: good)
+        XCTAssertTrue(PendingNetTunnelConfig.looksLikeRuleSet(at: good.path))
     }
 
     // MARK: - Shared managedProxyOutbounds() validator
@@ -415,6 +433,20 @@ final class PendingNetTunnelPathsTests: XCTestCase {
         XCTAssertEqual(
             PendingNetTunnelPaths.stderrLogURL(in: base).path,
             "/tmp/group-container/stderr.log"
+        )
+        // 崩溃栈必须与 stderr.log 分开：LibboxRedirectStderr 内部是 os.Create，
+        // 指向同一个文件会把扩展自己的诊断日志截断掉。
+        XCTAssertEqual(
+            PendingNetTunnelPaths.crashLogURL(in: base).path,
+            "/tmp/group-container/go-crash.log"
+        )
+        XCTAssertNotEqual(
+            PendingNetTunnelPaths.crashLogURL(in: base),
+            PendingNetTunnelPaths.stderrLogURL(in: base)
+        )
+        XCTAssertEqual(
+            PendingNetTunnelPaths.lastErrorURL(in: base).path,
+            "/tmp/group-container/last-error.txt"
         )
         XCTAssertEqual(
             PendingNetTunnelPaths.ruleSetDirectory(in: base).path,

@@ -29,12 +29,35 @@ enum PendingNetCommandError: LocalizedError, Equatable {
 /// `sendProviderMessage` 在本项目里只用于换配置。
 ///
 /// 本类型有两条互不相干的路径：
-/// - 订阅：长连接的 `LibboxCommandClient`，只订阅 `LibboxCommandGroup`，
-///   分组状态（当前选中项 + 各成员延迟）由 `writeGroups:` 推上来。
+/// - 订阅：长连接的 `LibboxCommandClient`，每个实例只订阅一种命令
+///   （`LibboxCommandGroup` 或 `LibboxCommandLog`），由 `Subscription` 决定。
 /// - 动作：`LibboxNewStandaloneCommandClient()` 的一次性调用，
 ///   `selectOutbound:outboundTag:error:` 与 `urlTest:error:` 在本版本
 ///   libbox 里是同步阻塞的，所以一律放到后台队列执行。
+///
+/// 一个实例同一时刻只维持一条连接，所以「分组」和「日志」要两个实例。
+/// 分组订阅常驻（隧道在位 + App 在前台），日志订阅只在日志页打开时存在——
+/// 扩展只有约 50MB 额度，不该为一个没人看的页面持续序列化日志。
 final class PendingNetCommandClient: NSObject {
+    /// 一个实例订阅什么。
+    enum Subscription: Equatable {
+        /// 某个 selector 的分组状态（当前选中项 + 各成员延迟）。
+        case groups(tag: String)
+        /// sing-box 内核日志。
+        ///
+        /// 这是内核日志**唯一**的出口：libbox 有 platform interface 时会把
+        /// `defaultLogWriter` 设成 `io.Discard`，日志只进 command server 的
+        /// 环形缓冲。扩展那边的 stderr.log 里没有它们。
+        case logs
+    }
+
+    /// 日志订阅推上来的事件。`append` 与 `clear` 必须分开——用「空数组表示
+    /// 清空」会和「这一批没有新行」混成一件事。
+    enum LogEvent: Equatable {
+        case append([String])
+        case clear
+    }
+
     /// selector 的一次快照。成员顺序按内核给出的顺序，不重排。
     struct Snapshot: Equatable {
         var members: [String] = []
@@ -68,6 +91,8 @@ final class PendingNetCommandClient: NSObject {
             options.workingPath = base.path
             options.tempPath = NSTemporaryDirectory()
             // App 侧不订阅 log 命令，环形缓冲给个下限就行。
+            // 这是 App 进程自己的环形缓冲；App 侧没有 command server，日志
+            // 缓冲是扩展那边 `logMaxLines` 的事，这里给个下限就行。
             options.logMaxLines = 100
             options.debug = false
             var error: NSError?
@@ -157,25 +182,43 @@ final class PendingNetCommandClient: NSObject {
     /// handler，断开之后仍可能有在途回调。
     private var generation: UInt64 = 0
     private var wantsConnection = false
-    private var subscribedTag: String?
+    private var subscription: Subscription?
     private var retryCount = 0
 
-    private let onSnapshot: (Snapshot) -> Void
+    private let onSnapshot: ((Snapshot) -> Void)?
+    private let onLogEvent: ((LogEvent) -> Void)?
 
     /// - Parameter onSnapshot: 在主线程调用。
     init(onSnapshot: @escaping (Snapshot) -> Void) {
         self.onSnapshot = onSnapshot
+        onLogEvent = nil
+        super.init()
+    }
+
+    /// - Parameter onLogEvent: 在主线程调用。
+    init(onLogEvent: @escaping (LogEvent) -> Void) {
+        self.onLogEvent = onLogEvent
+        onSnapshot = nil
         super.init()
     }
 
     /// 订阅某个 selector 的分组状态。重复调用同一个 tag 是空操作，
     /// 因此可以安全地挂在每一次隧道状态变化上。
     func start(groupTag: String) {
+        start(.groups(tag: groupTag))
+    }
+
+    /// 订阅内核日志。同样幂等。
+    func startLogs() {
+        start(.logs)
+    }
+
+    private func start(_ wanted: Subscription) {
         queue.async {
-            if self.wantsConnection, self.subscribedTag == groupTag { return }
+            if self.wantsConnection, self.subscription == wanted { return }
             self.tearDown()
             self.wantsConnection = true
-            self.subscribedTag = groupTag
+            self.subscription = wanted
             self.retryCount = 0
             self.openConnection()
         }
@@ -184,7 +227,7 @@ final class PendingNetCommandClient: NSObject {
     func stop() {
         queue.async {
             self.wantsConnection = false
-            self.subscribedTag = nil
+            self.subscription = nil
             self.tearDown()
         }
     }
@@ -208,7 +251,7 @@ final class PendingNetCommandClient: NSObject {
     /// 所以这种泄漏是**静默**的，只表现为扩展内存增长直至被 jetsam 干掉。
     private func openConnection() {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard wantsConnection, client == nil, let groupTag = subscribedTag else { return }
+        guard wantsConnection, client == nil, let subscription else { return }
         // setup 失败是永久性的（拿不到 App Group 容器），重试没有意义。
         guard (try? Self.setupLibbox()) != nil else { return }
 
@@ -216,10 +259,13 @@ final class PendingNetCommandClient: NSObject {
         let token = generation
 
         let options = LibboxCommandClientOptions()
-        // 只订阅分组：状态、日志、连接列表都不是本功能需要的，订多了白白
-        // 占扩展那 50MB 的额度。分组走的是自己的 gRPC 流（服务端的
-        // `SubscribeGroups`），不依赖 status 通道。
-        options.addCommand(LibboxCommandGroup)
+        // 一个实例只订一种命令：状态、连接列表都不是本项目需要的，订多了
+        // 白白占扩展那 50MB 的额度。两种命令各自走自己的流（服务端的
+        // `SubscribeGroups` / `SubscribeLogs`），都不依赖 status 通道。
+        switch subscription {
+        case .groups: options.addCommand(LibboxCommandGroup)
+        case .logs: options.addCommand(LibboxCommandLog)
+        }
         // 注意：这个间隔只作用于 status 与 connections 两条流
         // （`SubscribeStatusRequest.GetInterval` / `SubscribeConnectionsRequest.GetInterval`），
         // `SubscribeGroupsRequest` 根本没有 interval 字段——调它不会改变
@@ -227,7 +273,7 @@ final class PendingNetCommandClient: NSObject {
         options.statusInterval = Int64(NSEC_PER_SEC)
 
         guard let client = LibboxNewCommandClient(
-            Handler(owner: self, token: token, groupTag: groupTag),
+            Handler(owner: self, token: token, subscription: subscription),
             options
         ) else {
             scheduleRetry()
@@ -285,26 +331,34 @@ final class PendingNetCommandClient: NSObject {
 
     private func handleSnapshot(_ snapshot: Snapshot, token: UInt64) {
         queue.async {
-            guard token == self.generation, self.wantsConnection else { return }
-            let deliver = self.onSnapshot
+            guard token == self.generation, self.wantsConnection,
+                  let deliver = self.onSnapshot else { return }
             DispatchQueue.main.async { deliver(snapshot) }
+        }
+    }
+
+    private func handleLogEvent(_ event: LogEvent, token: UInt64) {
+        queue.async {
+            guard token == self.generation, self.wantsConnection,
+                  let deliver = self.onLogEvent else { return }
+            DispatchQueue.main.async { deliver(event) }
         }
     }
 
     // MARK: - libbox 回调
 
     /// 本版本 libbox 的 `LibboxCommandClientHandler` 协议没有可选方法，
-    /// 十个全都要实现——用不上的空着即可（我们只订阅了分组命令，其余命令
+    /// 十个全都要实现——用不上的空着即可（每个实例只订一种命令，其余命令
     /// 的回调根本不会被触发）。
     private final class Handler: NSObject, LibboxCommandClientHandlerProtocol {
         private weak var owner: PendingNetCommandClient?
         private let token: UInt64
-        private let groupTag: String
+        private let subscription: Subscription
 
-        init(owner: PendingNetCommandClient, token: UInt64, groupTag: String) {
+        init(owner: PendingNetCommandClient, token: UInt64, subscription: Subscription) {
             self.owner = owner
             self.token = token
-            self.groupTag = groupTag
+            self.subscription = subscription
             super.init()
         }
 
@@ -320,7 +374,8 @@ final class PendingNetCommandClient: NSObject {
         }
 
         func writeGroups(_ message: LibboxOutboundGroupIteratorProtocol?) {
-            guard let message, let owner else { return }
+            guard let message, let owner,
+                  case .groups(let groupTag) = subscription else { return }
             var snapshot: Snapshot?
             while message.hasNext() {
                 guard let group = message.next() else { continue }
@@ -343,10 +398,27 @@ final class PendingNetCommandClient: NSObject {
             owner.handleSnapshot(snapshot, token: token)
         }
 
+        /// 内核推来的一批日志行。连上时会先把环形缓冲里已有的整批回放一次，
+        /// 之后才是增量——所以刚打开日志页就能看到隧道启动那几行。
+        func writeLogs(_ messageList: LibboxLogIteratorProtocol?) {
+            guard let messageList, let owner, subscription == .logs else { return }
+            var lines: [String] = []
+            while messageList.hasNext() {
+                guard let entry = messageList.next() else { continue }
+                lines.append(entry.message)
+            }
+            guard !lines.isEmpty else { return }
+            owner.handleLogEvent(.append(lines), token: token)
+        }
+
+        /// 内核要求订阅方清空自己那份日志（`ClearLogs` 之后）。
+        func clearLogs() {
+            guard let owner, subscription == .logs else { return }
+            owner.handleLogEvent(.clear, token: token)
+        }
+
         // 以下命令没有订阅，回调不会到达；留空实现只为满足协议。
-        func clearLogs() {}
         func setDefaultLogLevel(_: Int32) {}
-        func writeLogs(_: LibboxLogIteratorProtocol?) {}
         func writeStatus(_: LibboxStatusMessage?) {}
         // 头文件里的 selector 是 `writeConnectionEvents:`，但 Swift 侧导入成
         // `write(_:)`（编译器按重命名规则改写）。以编译器为准。
