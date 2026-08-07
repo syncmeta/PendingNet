@@ -141,7 +141,8 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 按实测根因，对策集中在 DNS 侧：
 
 - **不使用 `local` DNS transport。** 显式配置 DoH 或 UDP DNS server，避免走 Apple 系统解析的 cgo 路径，从根上消除 A 类线程膨胀。
-- **DNS 查询必须设置超时并限制并发。** 上游黑洞时查询需被回收，不得无限堆积。
+- ~~**DNS 查询必须设置超时并限制并发。**~~ **本条无法按字面实现，且已无必要。** 经核对 v1.13.13：`dns.servers[].timeout` 会被 `sing-box check` 拒绝（`json: unknown field "timeout"`），`option.DNSClientOptions` 只暴露 `strategy` / `disable_cache` / `disable_expire` / `independent_cache` / `cache_capacity` / `client_subnet`，没有任何配置层的 DNS 超时或并发上限。而 4.6.1 的现象 B（2083 个查询未超时回收）实际由内核内置的 `C.DNSTimeout = 10s` 兜底——`dns/client.go` 用 `context.WithTimeout` 应用它，这条路径在本版本里已经是有界的。**不要在硬件会话里去找这个不存在的开关。**
+- **`strategy: ipv4_only`**（实现时补充，非本文档原有）：把每个域名的查询数从 A+AAAA 两条降到一条，直接减半 goroutine 产生速率。注意代价：在 IPv6-only 蜂窝网络（NAT64/DNS64）下会影响 `.direct` 模式。
 - **开启 DNS 缓存**，减少重复查询产生的 goroutine。
 - tun stack 使用 gvisor；rule-set 使用二进制 `.srs`；关闭非必要的 cache 与日志缓冲。
 - 兜底机制用 libbox 自带的内存限制。**具体 API 随 sing-box 版本而变，必须以实际 vendored 头文件为准：**
@@ -171,7 +172,21 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 | Keychain 中无设备令牌 | 主 App 阻止启动隧道，提示重新配对 |
 | `/v1/node` 刷新失败 | 沿用上次成功写入的配置，仅提示，不中断已有连接 |
 | 规则集缺失或损坏 | 降级为全局代理模式并提示，不使隧道启动失败 |
-| libbox 启动失败 | 通过 `lastError` 回传，App 展示原始错误文本 |
+| libbox 启动失败 | 扩展把错误文本写入 App Group 的 `last-error.txt`，App 读取并展示原文 |
+
+### 5.1 关于扩展侧诊断日志的一处更正
+
+本文档与实施计划曾要求用 `LibboxRedirectStderr` 把 sing-box 日志镜像到 App Group，供真机排查。**经核对 v1.13.13 源码，该方案不成立：**
+
+1. `RedirectStderr` **不重定向 fd 2**。它只调用 `debug.SetCrashOutput` —— 接管的是 Go 的崩溃栈输出，不是日志。函数名有误导性，头文件也看不出来。
+2. 即使自行重定向 fd 2 也拿不到 sing-box 的日志：存在 platform interface 时 libbox 会把 `defaultLogWriter` 设为 `io.Discard`，日志改走 `PlatformLogWriter` 进入 command server 的环形缓冲区，**从不经过 stderr**。
+3. 该函数还必须在 `LibboxSetup` **之后**调用：它内部使用的 `sUserID`/`sGroupID` 由 `Setup()` 赋值，提前调用会以 uid/gid 0 执行 `chown`，在沙盒扩展中必然失败，且失败路径会**删除刚创建的文件**。
+
+因此扩展侧诊断的正确构成是三条独立通道，不可互相替代：
+
+- **扩展自身的诊断输出** —— 由 Swift 侧自行 `freopen` 重定向 fd 2 后落盘；
+- **sing-box 内核日志** —— 只能经 command client 订阅 `LibboxCommandLog` 取得；
+- **Go 崩溃栈** —— 保留 `LibboxRedirectStderr`，但须在 `LibboxSetup` 之后调用，且明确它只负责这一项。
 
 ## 6. 测试策略
 
