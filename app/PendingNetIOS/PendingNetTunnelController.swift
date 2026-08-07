@@ -28,9 +28,16 @@ final class PendingNetTunnelController: ObservableObject {
     /// 各成员最近一次 urltest 的延迟（毫秒）。0 表示还没有测速结果。
     @Published private(set) var outboundDelays: [String: Int] = [:]
 
+    /// 隧道在位。`.reasserting` 也算——Wi-Fi↔蜂窝切换时隧道并没有断，只是
+    /// 内核在重新握手，此时控制通道仍然可用，把选择器藏起来反而是误导。
+    var isTunnelLive: Bool {
+        status == .connected || status == .reasserting
+    }
+
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var commandClient: PendingNetCommandClient?
+    private var isForeground = true
 
     private let tunnelBundleID = "net.pending.PendingNet.ios.PacketTunnel"
     private let routeModeKey = "pendingnet.ios.route-mode.v1"
@@ -40,12 +47,8 @@ final class PendingNetTunnelController: ObservableObject {
            let mode = PendingNetRouteMode(rawValue: raw) {
             routeMode = mode
         }
-        // 回调由 PendingNetCommandClient 保证投递在主线程。
         commandClient = PendingNetCommandClient { [weak self] snapshot in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.apply(snapshot)
-            }
+            Task { @MainActor in self?.apply(snapshot) }
         }
     }
 
@@ -99,9 +102,17 @@ final class PendingNetTunnelController: ObservableObject {
         syncCommandChannel()
     }
 
+    /// App 进入后台/回到前台。后台期间把分组流拆掉：扩展只有约 50MB 额度，
+    /// 不该为一个没人看的界面每秒序列化一次分组。
+    func setForeground(_ value: Bool) {
+        guard isForeground != value else { return }
+        isForeground = value
+        syncCommandChannel()
+    }
+
     /// 切换 selector 的当前出站。走 command client，隧道不重启、已有连接不断。
     func selectOutbound(_ tag: String) async throws {
-        guard status == .connected, let selectorTag else {
+        guard isTunnelLive, let selectorTag else {
             throw PendingNetCommandError.notConnected
         }
         try await PendingNetCommandClient.selectOutbound(
@@ -116,10 +127,26 @@ final class PendingNetTunnelController: ObservableObject {
     /// 触发一次分组测速。结果不在这里返回——内核测完之后，延迟随分组推送
     /// 落到 `outboundDelays`。
     func runURLTest() async throws {
-        guard status == .connected, let selectorTag else {
+        guard isTunnelLive, let selectorTag else {
             throw PendingNetCommandError.notConnected
         }
         try await PendingNetCommandClient.urlTest(groupTag: selectorTag)
+    }
+
+    /// 等 `outboundDelays` 真的变了，或者等到超时为止。
+    ///
+    /// `urlTest:` 只负责**触发**，测速结果是随下一轮分组推送异步到达的。
+    /// UI 的「测速中」必须盖住这段等待，否则转圈在 RPC 返回的瞬间就停了、
+    /// 数字却还没变，用户只会以为什么都没发生。
+    func awaitDelayChange(
+        from previous: [String: Int],
+        timeout: TimeInterval = 8
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if outboundDelays != previous { return }
+            try? await Task.sleep(nanoseconds: 200 * NSEC_PER_MSEC)
+        }
     }
 
     private func apply(_ snapshot: PendingNetCommandClient.Snapshot) {
@@ -128,15 +155,22 @@ final class PendingNetTunnelController: ObservableObject {
         outboundDelays = snapshot.delays
     }
 
-    /// 控制通道的生命周期完全跟随隧道状态：只有 `.connected` 且知道
-    /// selector tag 时才订阅，其余情况一律拆掉并清空状态——否则 UI 会
-    /// 留着上一次连接的延迟数字，看上去像还连着。
+    /// 控制通道的生命周期跟随两件事：隧道是否在位，以及 App 是否在前台。
+    ///
+    /// - 隧道不在位（或还不知道 selector tag）：拆流**并清空**状态。留着
+    ///   上一次的延迟数字会让断开的隧道看上去还连着。
+    /// - 隧道在位但 App 在后台：只拆流，**不清空**。回到前台一秒内就会重新
+    ///   订上，中间保留最后一次快照，免得切回来先闪一下空列表。
     private func syncCommandChannel() {
-        guard status == .connected, let selectorTag else {
+        guard isTunnelLive, let selectorTag else {
             commandClient?.stop()
             outboundMembers = []
             currentOutbound = nil
             outboundDelays = [:]
+            return
+        }
+        guard isForeground else {
+            commandClient?.stop()
             return
         }
         commandClient?.start(groupTag: selectorTag)

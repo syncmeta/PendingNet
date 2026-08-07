@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct PendingNetIOSHomeView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingImporter = false
     @State private var showingLog = false
     @State private var testingOutbounds = false
@@ -72,6 +73,20 @@ struct PendingNetIOSHomeView: View {
         .task(id: controller.nodeProfile?.serverID) {
             guard let server = controller.server, let profile = controller.nodeProfile else { return }
             controller.tunnel.bindSelector(profile: profile, serverName: server.name)
+        }
+        // 退到后台就把分组流拆掉——扩展只有约 50MB 额度，没人看的时候不该
+        // 让它继续往一个没人读的 socket 里写。
+        .onChange(of: scenePhase) { _, phase in
+            controller.tunnel.setForeground(phase == .active)
+        }
+        // 隧道一旦不在位，两个「进行中」标志必须无条件归位。它们是 @State，
+        // 活得比选择器的显示条件长：靠 RPC 自己返回来清是不够的（挂住的
+        // 调用可能永远不返回），那样重连之后每一行都会是灰的、且没有任何
+        // 用户可见的恢复路径。
+        .onChange(of: controller.tunnel.isTunnelLive) { _, live in
+            guard !live else { return }
+            testingOutbounds = false
+            switchingOutbound = nil
         }
     }
 
@@ -210,7 +225,7 @@ struct PendingNetIOSHomeView: View {
                 .buttonStyle(PendingPrimaryButtonStyle())
                 .disabled(isBusy)
 
-                if controller.tunnel.status == .connected,
+                if controller.tunnel.isTunnelLive,
                    !controller.tunnel.outboundMembers.isEmpty {
                     outboundPicker(profile: profile)
                 }
@@ -218,7 +233,7 @@ struct PendingNetIOSHomeView: View {
         }
     }
 
-    /// 协议手选与测速。只在隧道已连接、且控制通道已经推回分组成员时出现——
+    /// 协议手选与测速。只在隧道在位、且控制通道已经推回分组成员时出现——
     /// 这两个动作都要经 command client 连扩展里的 command server，隧道没起
     /// 来时无从谈起。切换与测速都不重启隧道。
     @ViewBuilder
@@ -234,11 +249,17 @@ struct PendingNetIOSHomeView: View {
                 Task {
                     testingOutbounds = true
                     defer { testingOutbounds = false }
+                    let before = controller.tunnel.outboundDelays
                     do {
                         try await controller.tunnel.runURLTest()
                     } catch {
                         controller.errorMessage = error.localizedDescription
+                        return
                     }
+                    // urlTest 只是触发，延迟随下一轮分组推送才回来。转圈要
+                    // 一直转到数字真的变了（或等够了），否则用户会看到
+                    // 「测速完成但一个数字没动」。
+                    await controller.tunnel.awaitDelayChange(from: before)
                 }
             } label: {
                 HStack(spacing: 6) {

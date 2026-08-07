@@ -6,12 +6,14 @@ enum PendingNetCommandError: LocalizedError, Equatable {
     case setup(String)
     case unavailable
     case notConnected
+    case timedOut
 
     var errorDescription: String? {
         switch self {
         case .setup(let reason): "无法接入隧道控制通道：\(reason)"
         case .unavailable: "无法创建隧道控制通道"
         case .notConnected: "隧道未连接，无法切换协议或测速"
+        case .timedOut: "隧道控制通道无响应，请稍后重试"
         }
     }
 }
@@ -91,10 +93,17 @@ final class PendingNetCommandClient: NSObject {
 
     /// 本版本 libbox 的这两个调用是同步阻塞的（`BOOL ... error:` 形态，
     /// 不是回调），必须离开主线程，否则连不上扩展时会卡住 UI。
+    ///
+    /// 底层调用**不可取消**，`withCheckedThrowingContinuation` 也不参与
+    /// 任务取消：真挂住了就再也不会回来，调用方的「切换中/测速中」标志会
+    /// 永远留着。所以这里自己设一个超时——超时只代表「不再等它」，后台
+    /// 线程仍会自己跑完，`ResumeGate` 保证 continuation 只被 resume 一次。
     private static func perform(
+        timeout: TimeInterval = 10,
         _ body: @escaping (LibboxCommandClient) throws -> Void
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let gate = ResumeGate(continuation)
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     try setupLibbox()
@@ -102,10 +111,37 @@ final class PendingNetCommandClient: NSObject {
                         throw PendingNetCommandError.unavailable
                     }
                     try body(client)
-                    continuation.resume()
+                    gate.resume(nil)
                 } catch {
-                    continuation.resume(throwing: error)
+                    gate.resume(error)
                 }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                gate.resume(PendingNetCommandError.timedOut)
+            }
+        }
+    }
+
+    /// 只放行第一次 resume。两条路径（真结果 / 超时）都可能先到。
+    /// 唯一的可变状态由 `lock` 保护，跨线程传递是安全的。
+    private final class ResumeGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Void, Error>?
+
+        init(_ continuation: CheckedContinuation<Void, Error>) {
+            self.continuation = continuation
+        }
+
+        func resume(_ error: Error?) {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            guard let pending else { return }
+            if let error {
+                pending.resume(throwing: error)
+            } else {
+                pending.resume()
             }
         }
     }
@@ -162,9 +198,15 @@ final class PendingNetCommandClient: NSObject {
         }
     }
 
+    /// 幂等：已经有一条活着的连接就什么都不做。少了 `client == nil` 这一条，
+    /// 两个各自合法的重连（比如失败重连与 `disconnected:` 触发的重连）会
+    /// 各建一条连接，后者把前者从 `client` 里挤掉且不 disconnect——被挤掉
+    /// 的那条仍然是一路活着的 `SubscribeGroups` 流，扩展会继续往里序列化
+    /// 分组，而扩展只有约 50MB 额度。回调侧的 token 校验会把它的推送丢掉，
+    /// 所以这种泄漏是**静默**的，只表现为扩展内存增长直至被 jetsam 干掉。
     private func openConnection() {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard wantsConnection, let groupTag = subscribedTag else { return }
+        guard wantsConnection, client == nil, let groupTag = subscribedTag else { return }
         // setup 失败是永久性的（拿不到 App Group 容器），重试没有意义。
         guard (try? Self.setupLibbox()) != nil else { return }
 
@@ -173,9 +215,13 @@ final class PendingNetCommandClient: NSObject {
 
         let options = LibboxCommandClientOptions()
         // 只订阅分组：状态、日志、连接列表都不是本功能需要的，订多了白白
-        // 占扩展那 50MB 的额度。
+        // 占扩展那 50MB 的额度。分组走的是自己的 gRPC 流（服务端的
+        // `SubscribeGroups`），不依赖 status 通道。
         options.addCommand(LibboxCommandGroup)
-        // 推送节奏。sing-box 官方客户端用 1 秒，这里跟随。
+        // 注意：这个间隔只作用于 status 与 connections 两条流
+        // （`SubscribeStatusRequest.GetInterval` / `SubscribeConnectionsRequest.GetInterval`），
+        // `SubscribeGroupsRequest` 根本没有 interval 字段——调它不会改变
+        // 分组推送的节奏。留着只是给一个正常值，别指望调它有效果。
         options.statusInterval = Int64(NSEC_PER_SEC)
 
         guard let client = LibboxNewCommandClient(
@@ -188,23 +234,35 @@ final class PendingNetCommandClient: NSObject {
         do {
             try client.connect()
         } catch {
+            try? client.disconnect()
+            // 这条已经废了：让它的 handler 回调不再被采纳，也让上一步排的
+            // 重试（如果有）失效，保证同一时刻只有一个待执行的重连。
+            generation &+= 1
             // 隧道刚起来时扩展的 command server 可能还没就位，退避重试。
             scheduleRetry()
             return
         }
         self.client = client
+        // 不能只靠 `connected()` 回调归零退避：libbox 若连上了却没回调，
+        // 退避会一直钉在 15 秒。
+        retryCount = 0
     }
 
     /// 指数退避重连，不设次数上限：重连只在 `wantsConnection` 为真时继续，
     /// 而它随隧道断开立刻变假，所以循环不会活过隧道。设次数上限反而更糟——
     /// 用完之后 UI 会永久停在「没有成员」，用户除了重启隧道无从恢复。
+    ///
+    /// 重试块和回调一样带 token：中途发生过 `stop()` / `tearDown()` /
+    /// 连接失败的这一批重试必须作废，否则会叠出多条连接。
     private func scheduleRetry() {
         dispatchPrecondition(condition: .onQueue(queue))
         guard wantsConnection else { return }
         retryCount += 1
         let delay = min(pow(2.0, Double(retryCount - 1)), 15)
+        let token = generation
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.openConnection()
+            guard let self, token == self.generation else { return }
+            self.openConnection()
         }
     }
 
