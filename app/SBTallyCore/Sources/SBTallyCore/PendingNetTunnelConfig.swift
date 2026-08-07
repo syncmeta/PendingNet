@@ -21,8 +21,42 @@ public enum PendingNetTunnelConfig {
     /// 直连侧解析器。走 direct，用于分流模式下的国内域名。
     static let directDNSServer = "223.5.5.5"
 
-    static func dnsSection(selectorTag: String) -> [String: Any] {
-        [
+    /// Task 10 的下载器按这个清单取 .srs 文件，两处不得各写各的。
+    public static let requiredRuleSetNames = ["geoip-cn", "geosite-cn"]
+
+    static func ruleSets(directory: String) -> [[String: Any]] {
+        requiredRuleSetNames.map { name in
+            [
+                "type": "local",
+                "tag": name,
+                "format": "binary",
+                "path": (directory as NSString).appendingPathComponent("\(name).srs"),
+            ]
+        }
+    }
+
+    static func routeRules(mode: PendingNetRouteMode) -> [[String: Any]] {
+        var rules: [[String: Any]] = [
+            ["action": "sniff"],
+            ["protocol": "dns", "action": "hijack-dns"],
+        ]
+        if mode == .bypassCN {
+            rules.append(["ip_is_private": true, "outbound": "direct"])
+            rules.append(["rule_set": ["geosite-cn"], "outbound": "direct"])
+            rules.append(["rule_set": ["geoip-cn"], "outbound": "direct"])
+        }
+        return rules
+    }
+
+    /// `route.default_domain_resolver` 必须跟着分流模式走，而不是永远钉在
+    /// dns-proxy：.direct 是应急全直连，若解析仍指向 dns-proxy，等于把
+    /// 应急模式下的域名解析又绕回代理，和该模式的意义相悖。
+    static func defaultDomainResolver(mode: PendingNetRouteMode) -> String {
+        mode == .direct ? "dns-direct" : "dns-proxy"
+    }
+
+    static func dnsSection(selectorTag: String, mode: PendingNetRouteMode) -> [String: Any] {
+        var section: [String: Any] = [
             "servers": [
                 [
                     "type": "https",
@@ -37,12 +71,16 @@ public enum PendingNetTunnelConfig {
                     "detour": "direct",
                 ],
             ],
-            "final": "dns-proxy",
+            "final": mode == .direct ? "dns-direct" : "dns-proxy",
             // A+AAAA 双查会让 goroutine 数直接翻倍，实测中这是主要放大器。
             "strategy": "ipv4_only",
             "disable_cache": false,
             "independent_cache": false,
         ]
+        if mode == .bypassCN {
+            section["rules"] = [["rule_set": ["geosite-cn"], "server": "dns-direct"]]
+        }
+        return section
     }
 
     public static func make(
@@ -51,9 +89,6 @@ public enum PendingNetTunnelConfig {
         ruleSetDirectory: String,
         cachePath: String
     ) throws -> Data {
-        guard routeMode == .global else {
-            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
-        }
         guard !cachePath.isEmpty, !ruleSetDirectory.isEmpty else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
@@ -70,6 +105,19 @@ public enum PendingNetTunnelConfig {
         ])
         outbounds.append(["type": "direct", "tag": "direct"])
 
+        var route: [String: Any] = [
+            "auto_detect_interface": true,
+            "final": routeMode == .direct ? "direct" : runtimeServer.selectorTag,
+            // sing-box 1.12+ 起，配置 2 个及以上 DNS server 时必须显式声明
+            // default_domain_resolver（省略即校验失败）。这个字段跟着分流
+            // 模式走，见 defaultDomainResolver(mode:)。
+            "default_domain_resolver": defaultDomainResolver(mode: routeMode),
+            "rules": routeRules(mode: routeMode),
+        ]
+        if routeMode == .bypassCN {
+            route["rule_set"] = ruleSets(directory: ruleSetDirectory)
+        }
+
         let root: [String: Any] = [
             "log": ["level": "warn", "timestamp": true],
             "inbounds": [[
@@ -82,19 +130,8 @@ public enum PendingNetTunnelConfig {
                 "stack": "gvisor",
             ]],
             "outbounds": outbounds,
-            "route": [
-                "auto_detect_interface": true,
-                "final": runtimeServer.selectorTag,
-                // sing-box 1.12+ 起，配置 2 个及以上 DNS server 时必须显式声明
-                // default_domain_resolver（省略即校验失败）。.global 模式下指到
-                // dns-proxy：任何走到这个字段的解析都应留在隧道内，不得漏到 direct。
-                "default_domain_resolver": "dns-proxy",
-                "rules": [
-                    ["action": "sniff"],
-                    ["protocol": "dns", "action": "hijack-dns"],
-                ],
-            ],
-            "dns": dnsSection(selectorTag: runtimeServer.selectorTag),
+            "route": route,
+            "dns": dnsSection(selectorTag: runtimeServer.selectorTag, mode: routeMode),
             "experimental": [
                 "cache_file": ["enabled": true, "path": cachePath],
             ],

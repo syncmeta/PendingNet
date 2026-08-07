@@ -120,16 +120,131 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         XCTAssertNil(tun["server"], "tun inbound 不得携带任何服务端字段")
     }
 
-    func testUnimplementedRouteModesAreRejectedForNow() throws {
+    func testBypassCNRoutesDomesticTrafficDirect() throws {
         let server = try Self.sampleRuntimeServer()
-        for mode in [PendingNetRouteMode.bypassCN, .direct] {
-            XCTAssertThrowsError(
-                try PendingNetTunnelConfig.make(
-                    runtimeServer: server,
-                    routeMode: mode,
-                    ruleSetDirectory: "/tmp/pendingnet-rulesets",
-                    cachePath: "/tmp/pendingnet-cache.db"
-                )
+        let data = try PendingNetTunnelConfig.make(
+            runtimeServer: server,
+            routeMode: .bypassCN,
+            ruleSetDirectory: "/tmp/rs",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+
+        let ruleSets = try XCTUnwrap(route["rule_set"] as? [[String: Any]])
+        XCTAssertEqual(ruleSets.count, 2)
+        for ruleSet in ruleSets {
+            XCTAssertEqual(ruleSet["type"] as? String, "local")
+            XCTAssertEqual(ruleSet["format"] as? String, "binary")
+            let path = try XCTUnwrap(ruleSet["path"] as? String)
+            XCTAssertTrue(path.hasPrefix("/tmp/rs/"))
+            XCTAssertTrue(path.hasSuffix(".srs"))
+        }
+        XCTAssertEqual(
+            Set(ruleSets.compactMap { $0["tag"] as? String }),
+            Set(PendingNetTunnelConfig.requiredRuleSetNames)
+        )
+
+        let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+        XCTAssertTrue(rules.contains { ($0["ip_is_private"] as? Bool) == true
+            && ($0["outbound"] as? String) == "direct" })
+        XCTAssertTrue(rules.contains { ($0["rule_set"] as? [String]) == ["geosite-cn"]
+            && ($0["outbound"] as? String) == "direct" })
+        XCTAssertTrue(rules.contains { ($0["rule_set"] as? [String]) == ["geoip-cn"]
+            && ($0["outbound"] as? String) == "direct" })
+        XCTAssertEqual(route["final"] as? String, server.selectorTag)
+
+        // .bypassCN 仍然把绝大多数流量送进隧道，域名解析默认走代理侧解析器；
+        // 只有命中 geosite-cn 的域名才会被下面的 dns.rules 摘出来走直连。
+        XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-proxy")
+
+        // 国内域名必须用直连解析器，否则分流判断本身要先过一次代理。
+        let dnsRules = try XCTUnwrap((root["dns"] as? [String: Any])?["rules"] as? [[String: Any]])
+        XCTAssertTrue(dnsRules.contains { ($0["rule_set"] as? [String]) == ["geosite-cn"]
+            && ($0["server"] as? String) == "dns-direct" })
+    }
+
+    func testDirectModeKeepsTunnelUpButSendsEverythingDirect() throws {
+        let server = try Self.sampleRuntimeServer()
+        let data = try PendingNetTunnelConfig.make(
+            runtimeServer: server,
+            routeMode: .direct,
+            ruleSetDirectory: "/tmp/rs",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        XCTAssertEqual(route["final"] as? String, "direct")
+        XCTAssertNil(route["rule_set"], "应急模式不依赖任何规则集文件")
+        XCTAssertEqual((root["dns"] as? [String: Any])?["final"] as? String, "dns-direct")
+
+        // .direct 是应急全直连：域名解析也必须走直连解析器，否则解析本身
+        // 仍会绕回代理，与"应急模式下不依赖代理"的意图相悖。
+        XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-direct")
+
+        // 隧道仍然建立，selector 仍然在位，方便一键切回。
+        let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+        XCTAssertTrue(outbounds.contains { $0["tag"] as? String == server.selectorTag })
+        XCTAssertEqual((root["inbounds"] as? [[String: Any]])?.first?["type"] as? String, "tun")
+    }
+
+    func testEveryRouteModePassesInstalledSingBoxCheck() throws {
+        let candidates = ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
+        guard let binary = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }) else { throw XCTSkip("sing-box is not installed") }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-modes-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // sing-box check 会真的解析 local rule_set 文件的内容（即便是
+        // type: local + format: binary 也要能反解出一个空规则集），所以占位文件
+        // 必须是用 `sing-box rule-set compile` 生成的真实 .srs，不能是空字节。
+        // 真实规则内容由 Task 10 下载器落地；此处只验证 schema 与路径拼装。
+        for name in PendingNetTunnelConfig.requiredRuleSetNames {
+            let sourceJSON = directory.appendingPathComponent("\(name).json")
+            try Data(#"{"version":1,"rules":[]}"#.utf8).write(to: sourceJSON)
+            let compile = Process()
+            compile.executableURL = URL(fileURLWithPath: binary)
+            compile.arguments = [
+                "rule-set", "compile", sourceJSON.path,
+                "-o", directory.appendingPathComponent("\(name).srs").path,
+            ]
+            let compileOutput = Pipe()
+            compile.standardOutput = compileOutput
+            compile.standardError = compileOutput
+            try compile.run()
+            let compileData = compileOutput.fileHandleForReading.readDataToEndOfFile()
+            compile.waitUntilExit()
+            XCTAssertEqual(
+                compile.terminationStatus, 0,
+                "compiling placeholder rule-set \(name): \(String(decoding: compileData, as: UTF8.self))"
+            )
+        }
+
+        for mode in PendingNetRouteMode.allCases {
+            let configURL = directory.appendingPathComponent("config-\(mode.rawValue).json")
+            try PendingNetTunnelConfig.make(
+                runtimeServer: Self.sampleRuntimeServer(),
+                routeMode: mode,
+                ruleSetDirectory: directory.path,
+                cachePath: directory.appendingPathComponent("cache-\(mode.rawValue).db").path
+            ).write(to: configURL)
+
+            let check = Process()
+            check.executableURL = URL(fileURLWithPath: binary)
+            check.arguments = ["check", "-c", configURL.path]
+            let output = Pipe()
+            check.standardOutput = output
+            check.standardError = output
+            try check.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            check.waitUntilExit()
+            XCTAssertEqual(
+                check.terminationStatus, 0,
+                "\(mode.rawValue): \(String(decoding: data, as: UTF8.self))"
             )
         }
     }
