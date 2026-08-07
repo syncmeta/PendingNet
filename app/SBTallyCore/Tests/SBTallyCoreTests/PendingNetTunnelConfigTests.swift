@@ -413,6 +413,10 @@ final class PendingNetTunnelPathsTests: XCTestCase {
         )
         XCTAssertEqual(PendingNetTunnelPaths.cacheURL(in: base).path, "/tmp/group-container/cache.db")
         XCTAssertEqual(
+            PendingNetTunnelPaths.stderrLogURL(in: base).path,
+            "/tmp/group-container/stderr.log"
+        )
+        XCTAssertEqual(
             PendingNetTunnelPaths.ruleSetDirectory(in: base).path,
             "/tmp/group-container/rulesets"
         )

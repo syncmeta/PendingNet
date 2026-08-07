@@ -27,6 +27,16 @@ public enum PendingNetTunnelPaths {
         base.appendingPathComponent("cache.db")
     }
 
+    /// 扩展进程 stderr 的落点。
+    ///
+    /// sing-box 的 log 默认写 stderr，而本版本 libbox 的
+    /// `LibboxPlatformInterface` 没有 `writeLog` —— 不重定向的话，内核日志
+    /// 只存在于扩展进程内的环形缓冲里，除了连上 command client 别无出口，
+    /// 真机排障等于摸黑。放在 App Group 里，主 App 才读得到。
+    public static func stderrLogURL(in base: URL) -> URL {
+        base.appendingPathComponent("stderr.log")
+    }
+
     public static func ruleSetDirectory(in base: URL) -> URL {
         base.appendingPathComponent("rulesets", isDirectory: true)
     }

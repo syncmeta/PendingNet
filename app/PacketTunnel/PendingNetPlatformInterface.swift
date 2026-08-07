@@ -63,12 +63,26 @@ final class PendingNetPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
             settings.mtu = NSNumber(value: options.getMTU())
 
             // v1.13 的 GetDNSServerAddress 返回单个 StringBox（不是迭代器，
-            // 也没有 GetDNSMode）；未配置 auto_route DNS 时它返回 error。
+            // 也没有 GetDNSMode）；未配置 auto_route DNS 时它返回 error，
+            // 所以这里用 do/catch 而不是把失败当成致命错误。
+            //
+            // 但失败不能悄悄过去：拿不到地址就不会设 dnsSettings，系统会
+            // 继续用物理接口的解析器，我们的 https 解析器和 dns-direct 分流
+            // 被整个绕过 —— 表现是「能上网但分流不对」，最难查的那一类。
             var dnsSettings: NEDNSSettings?
-            if let dnsServer = try? options.getDNSServerAddress(), !dnsServer.value.isEmpty {
-                let newDNSSettings = NEDNSSettings(servers: [dnsServer.value])
-                settings.dnsSettings = newDNSSettings
-                dnsSettings = newDNSSettings
+            do {
+                let dnsServer = try options.getDNSServerAddress()
+                if dnsServer.value.isEmpty {
+                    tunnel.writeMessage("(packet-tunnel) tun DNS 地址为空，DNS 将不经隧道")
+                } else {
+                    let newDNSSettings = NEDNSSettings(servers: [dnsServer.value])
+                    settings.dnsSettings = newDNSSettings
+                    dnsSettings = newDNSSettings
+                }
+            } catch {
+                tunnel.writeMessage(
+                    "(packet-tunnel) 取 tun DNS 地址失败，DNS 将不经隧道：\(error.localizedDescription)"
+                )
             }
 
             var ipv4Address: [String] = []
