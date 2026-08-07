@@ -63,7 +63,7 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 
 共享通道：
 
-- **App Group** `group.net.pending.PendingNet`：存放生成好的 `config.json`、规则集 `.srs`、以及 sing-box 的 cache 文件。
+- **App Group** `group.com.pendingname.pendingnet`：存放生成好的 `config.json`、规则集 `.srs`、以及 sing-box 的 cache 文件。
 - **Keychain Access Group**：共享设备令牌。
 
 **扩展不联网。** `/v1/node` 刷新、规则集下载、配置生成与写盘全部由主 App 负责，扩展只读取 App Group 内的本地文件。这样扩展内不存在 HTTP 栈、不存在令牌刷新的时序问题，内存占用也显著更低。
@@ -199,7 +199,7 @@ iOS Packet Tunnel Provider 的内存上限约为 50MB，超出即被系统终止
 以下配置阻塞真机验收，但不阻塞编码与单元测试：
 
 - Apple 开发者后台的 App ID 启用 Network Extension capability（`packet-tunnel-provider`）；
-- App Group `group.net.pending.PendingNet` 与 Keychain Access Group 注册并写入两个 target 的 entitlements；
+- App Group `group.com.pendingname.pendingnet` 与 Keychain Access Group 注册并写入两个 target 的 entitlements；
 - 真机 provisioning profile。
 
 均为后台自助配置，**无需向 Apple 提交额外申请**；同类 Packet Tunnel 应用已用同一开发者账号完成 TestFlight 外部测试发布，审核不构成风险。此前将 entitlement 审批列为未知风险的判断已由实践排除。

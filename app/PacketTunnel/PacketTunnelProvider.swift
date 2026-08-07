@@ -11,7 +11,7 @@ import SBTallyCore
 /// `PendingNetTunnelPaths`。
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let logger = Logger(
-        subsystem: "net.pending.PendingNet.ios.PacketTunnel",
+        subsystem: "com.pendingname.pendingnet.extension",
         category: "Provider"
     )
 

@@ -10,8 +10,8 @@ Tasks 1–7、9、10 已完成并通过审查。本清单是剩余工作的全�
 
 ## 0. 前置配置（阻塞一切）
 
-- [ ] Apple 开发者后台：App ID `net.pending.PendingNet.ios` 与 `net.pending.PendingNet.ios.PacketTunnel` 启用 Network Extension capability
-- [ ] App Group `group.net.pending.PendingNet` 注册并勾选到两个 App ID
+- [ ] Apple 开发者后台：App ID `com.pendingname.pendingnet` 与 `com.pendingname.pendingnet.extension` 启用 Network Extension capability
+- [ ] App Group `group.com.pendingname.pendingnet` 注册并勾选到两个 App ID
 - [ ] 真机 provisioning profile
 
 均为后台自助配置，无需向 Apple 提交申请。

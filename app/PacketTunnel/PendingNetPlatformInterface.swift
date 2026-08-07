@@ -18,7 +18,7 @@ final class PendingNetPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
     LibboxCommandServerHandlerProtocol
 {
     private static let logger = Logger(
-        subsystem: "net.pending.PendingNet.ios.PacketTunnel",
+        subsystem: "com.pendingname.pendingnet.extension",
         category: "PlatformInterface"
     )
 

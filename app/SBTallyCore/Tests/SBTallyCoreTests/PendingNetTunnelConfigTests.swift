@@ -423,7 +423,7 @@ final class PendingNetTunnelConfigTests: XCTestCase {
 final class PendingNetTunnelPathsTests: XCTestCase {
     func testLayoutIsStableRelativeToContainer() throws {
         let base = URL(fileURLWithPath: "/tmp/group-container")
-        XCTAssertEqual(PendingNetTunnelPaths.appGroupID, "group.net.pending.PendingNet")
+        XCTAssertEqual(PendingNetTunnelPaths.appGroupID, "group.com.pendingname.pendingnet")
         XCTAssertEqual(PendingNetTunnelPaths.configURL(in: base).path, "/tmp/group-container/config.json")
         XCTAssertEqual(
             PendingNetTunnelPaths.snapshotURL(in: base).path,

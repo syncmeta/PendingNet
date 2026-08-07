@@ -176,7 +176,7 @@ final class PendingNetCommandClient: NSObject {
     // MARK: - 订阅（长连接）
 
     /// 所有可变状态都只在这个队列上读写；回调统一在主线程投递。
-    private let queue = DispatchQueue(label: "net.pending.PendingNet.ios.command-client")
+    private let queue = DispatchQueue(label: "com.pendingname.pendingnet.command-client")
     private var client: LibboxCommandClient?
     /// 每次建/拆连接都自增。旧 client 的回调靠它被识别并丢弃——libbox 持有
     /// handler，断开之后仍可能有在途回调。
