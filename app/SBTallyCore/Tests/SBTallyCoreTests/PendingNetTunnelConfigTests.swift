@@ -19,7 +19,7 @@ final class PendingNetTunnelConfigTests: XCTestCase {
                         uuid: "11111111-2222-3333-4444-555555555555",
                         flow: "xtls-rprx-vision",
                         serverName: "www.cloudflare.com",
-                        publicKey: "cHVibGljLWtleS1wbGFjZWhvbGRlcg",
+                        publicKey: "JHjxqELXV16enBs4C429HrFtjC9s3jckg3Egv480n8k",
                         shortID: "0123abcd"
                     ),
                     hysteria2: nil
@@ -132,6 +132,94 @@ final class PendingNetTunnelConfigTests: XCTestCase {
                 )
             )
         }
+    }
+
+    func testDNSNeverUsesLocalTransport() throws {
+        let server = try Self.sampleRuntimeServer()
+        let data = try PendingNetTunnelConfig.make(
+            runtimeServer: server,
+            routeMode: .global,
+            ruleSetDirectory: "/tmp/pendingnet-rulesets",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let dns = try XCTUnwrap(root["dns"] as? [String: Any])
+        let servers = try XCTUnwrap(dns["servers"] as? [[String: Any]])
+
+        // 实测根因：local transport 走 cgo darwinLookupSystemDNS，
+        // 每个阻塞查询占住一个 OS 线程，266 个查询即撑爆内存。
+        XCTAssertFalse(
+            servers.contains { ($0["type"] as? String) == "local" },
+            "local DNS transport 会造成 goroutine/线程堆积，禁止出现"
+        )
+        XCTAssertTrue(servers.allSatisfy { ($0["type"] as? String) == "https" })
+
+        let tags = servers.compactMap { $0["tag"] as? String }
+        XCTAssertEqual(Set(tags), ["dns-proxy", "dns-direct"])
+
+        // 代理侧 DNS 必须走 selector，直连侧必须走 direct，
+        // 否则隧道建立前的 DNS 查询会打进黑洞而不回收。
+        let proxyServer = try XCTUnwrap(servers.first { $0["tag"] as? String == "dns-proxy" })
+        XCTAssertEqual(proxyServer["detour"] as? String, server.selectorTag)
+        let directServer = try XCTUnwrap(servers.first { $0["tag"] as? String == "dns-direct" })
+        XCTAssertEqual(directServer["detour"] as? String, "direct")
+
+        // ipv4_only 把每个域名的查询数从 A+AAAA 两条降到一条。
+        XCTAssertEqual(dns["strategy"] as? String, "ipv4_only")
+        XCTAssertEqual(dns["disable_cache"] as? Bool, false)
+        XCTAssertEqual(dns["independent_cache"] as? Bool, false)
+        XCTAssertEqual(dns["final"] as? String, "dns-proxy")
+    }
+
+    func testDNSTrafficIsHijackedIntoTheResolver() throws {
+        let server = try Self.sampleRuntimeServer()
+        let data = try PendingNetTunnelConfig.make(
+            runtimeServer: server,
+            routeMode: .global,
+            ruleSetDirectory: "/tmp/pendingnet-rulesets",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+        XCTAssertEqual(rules.first?["action"] as? String, "sniff")
+        XCTAssertTrue(
+            rules.contains {
+                ($0["protocol"] as? String) == "dns" && ($0["action"] as? String) == "hijack-dns"
+            },
+            "未劫持 DNS 会让系统解析器绕过隧道"
+        )
+    }
+
+    func testTunnelConfigPassesInstalledSingBoxCheck() throws {
+        let candidates = ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
+        guard let binary = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }) else { throw XCTSkip("sing-box is not installed") }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-tunnel-check-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let configURL = directory.appendingPathComponent("config.json")
+        try PendingNetTunnelConfig.make(
+            runtimeServer: Self.sampleRuntimeServer(),
+            routeMode: .global,
+            ruleSetDirectory: directory.path,
+            cachePath: directory.appendingPathComponent("cache.db").path
+        ).write(to: configURL)
+
+        let check = Process()
+        check.executableURL = URL(fileURLWithPath: binary)
+        check.arguments = ["check", "-c", configURL.path]
+        let output = Pipe()
+        check.standardOutput = output
+        check.standardError = output
+        try check.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        check.waitUntilExit()
+        XCTAssertEqual(check.terminationStatus, 0, String(decoding: data, as: UTF8.self))
     }
 
     // MARK: - Shared managedProxyOutbounds() validator

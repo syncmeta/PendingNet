@@ -16,6 +16,35 @@ public enum PendingNetTunnelConfig {
     static let tunAddresses = ["172.19.0.1/30", "fdfe:dcba:9876::1/126"]
     static let tunMTU = 9000
 
+    /// 代理侧解析器。走 selector，随隧道一起生效。
+    static let proxyDNSServer = "1.1.1.1"
+    /// 直连侧解析器。走 direct，用于分流模式下的国内域名。
+    static let directDNSServer = "223.5.5.5"
+
+    static func dnsSection(selectorTag: String) -> [String: Any] {
+        [
+            "servers": [
+                [
+                    "type": "https",
+                    "tag": "dns-proxy",
+                    "server": proxyDNSServer,
+                    "detour": selectorTag,
+                ],
+                [
+                    "type": "https",
+                    "tag": "dns-direct",
+                    "server": directDNSServer,
+                    "detour": "direct",
+                ],
+            ],
+            "final": "dns-proxy",
+            // A+AAAA 双查会让 goroutine 数直接翻倍，实测中这是主要放大器。
+            "strategy": "ipv4_only",
+            "disable_cache": false,
+            "independent_cache": false,
+        ]
+    }
+
     public static func make(
         runtimeServer: PendingNetRuntimeServer,
         routeMode: PendingNetRouteMode,
@@ -56,8 +85,15 @@ public enum PendingNetTunnelConfig {
             "route": [
                 "auto_detect_interface": true,
                 "final": runtimeServer.selectorTag,
-                "rules": [["action": "sniff"]],
+                // sing-box 1.12+ 弃用了"省略即隐式走 dns.rules"的旧行为；
+                // 显式指到 dns-direct，避免代理侧解析器反过来要靠自己解析自己。
+                "default_domain_resolver": "dns-direct",
+                "rules": [
+                    ["action": "sniff"],
+                    ["protocol": "dns", "action": "hijack-dns"],
+                ],
             ],
+            "dns": dnsSection(selectorTag: runtimeServer.selectorTag),
             "experimental": [
                 "cache_file": ["enabled": true, "path": cachePath],
             ],
