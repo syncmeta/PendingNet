@@ -90,6 +90,16 @@ macOS 用 `Process` 拉起独立的 sing-box 二进制。iOS 不允许 fork 子�
 
 状态回传 v1 只包含 `{state, lastError, currentOutbound, delay}`，以 JSON 编码返回。
 
+### 4.4.1 已决定的取舍：主 App 也链接 Libbox
+
+command client 跑在主 App 进程内，因此 `Libbox.xcframework` 同时链进 App 与 Extension 两个 target。实测 Release/device 构建：App 二进制 59.2MB、Extension 二进制 58.6MB，`.app` 总计 **118MB**（未链接前约 60MB）。
+
+评估过的替代方案是让 App 经 `sendProviderMessage` 请扩展代为执行命令，Libbox 只存在于扩展中，可省约 59MB。代价是双进程之间约 100 行手写消息编解码、分组状态由推送退化为轮询，并且要放宽本节的通道分工规则。
+
+**结论：接受 118MB，不再作为遗留项。** 该体积对 TestFlight 分发不构成阻塞，而在硬件验证之前重写一层从未运行过的传输代码，风险高于收益。
+
+注意二进制体积与 4.6 的运行时内存约束是两回事：Libbox 是静态库，链接进 App 不会增加 Extension 进程的内存占用，扩展的 50MB 上限不受本决定影响。
+
 ### 4.5 规则分流
 
 三档模式，保存在客户端本地策略中：
