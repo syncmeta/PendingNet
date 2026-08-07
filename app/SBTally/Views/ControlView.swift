@@ -76,10 +76,7 @@ struct ControlView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                PendingPageHeader(
-                    title: "连接",
-                    subtitle: "配对 VPS、启动本机代理，并选择路由方式。"
-                )
+                PendingPageHeader(title: "连接")
                 pairedServersCard
                 engineCard
                 routingCard

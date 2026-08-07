@@ -109,16 +109,18 @@ private extension NSColor {
 
 struct PendingPageHeader: View {
     let title: String
-    let subtitle: String
+    var subtitle: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title)
                 .font(PendingNetTheme.Fonts.pageTitle(title))
                 .foregroundStyle(PendingNetTheme.Palette.ink)
-            Text(subtitle)
-                .font(PendingNetTheme.Fonts.body)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(PendingNetTheme.Fonts.body)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

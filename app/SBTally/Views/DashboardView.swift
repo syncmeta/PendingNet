@@ -38,7 +38,6 @@ struct DashboardView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                brandHeader
                 List(Destination.allCases, selection: $selection) { item in
                     Label(item.title, systemImage: item.icon)
                         .font(PendingNetTheme.Fonts.chrome)
@@ -79,32 +78,6 @@ struct DashboardView: View {
         .onChange(of: state.since) {
             Task { await state.refresh() }
         }
-    }
-
-    private var brandHeader: some View {
-        HStack(spacing: 11) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(PendingNetTheme.Palette.accentBackground)
-                Image(systemName: "point.3.connected.trianglepath.dotted")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(PendingNetTheme.Palette.accent)
-            }
-            .frame(width: 38, height: 38)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("PendingNet")
-                    .font(.system(size: 17, weight: .semibold, design: .serif))
-                    .foregroundStyle(PendingNetTheme.Palette.ink)
-                Text("私人网络")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 15)
-        .padding(.bottom, 10)
     }
 
     @ViewBuilder
