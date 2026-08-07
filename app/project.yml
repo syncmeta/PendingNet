@@ -45,6 +45,11 @@ targets:
         product: SBTallyCore
       - framework: Vendor/Libbox.xcframework
         embed: false
+      # Libbox 是静态库，它自己的依赖要由宿主 target 补齐：
+      # Go 运行时的 cgo resolver 引用 res_9_ninit/nclose/nsearch（libresolv），
+      # 内嵌的 base::ios::ScopedCriticalAction 引用 UIApplication（UIKit）。
+      - sdk: libresolv.tbd
+      - sdk: UIKit.framework
   PendingNetIOS:
     type: application
     platform: iOS
