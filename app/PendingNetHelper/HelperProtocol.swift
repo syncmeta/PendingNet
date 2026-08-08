@@ -15,7 +15,7 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 2
+public let pendingNetHelperInterfaceVersion = 3
 
 @objc public protocol HelperProtocol {
     // MARK: - Interface version 1
@@ -49,6 +49,19 @@ public let pendingNetHelperInterfaceVersion = 2
     /// binary on the next connection. One-way by design: the process is gone
     /// before any reply could be delivered.
     func quitForUpgrade()
+
+    // MARK: - Interface version 3
+
+    /// When this helper process started, as seconds since 1970.
+    ///
+    /// The interface version alone only catches *protocol* changes, so a
+    /// release that fixes helper behaviour without touching `HelperProtocol`
+    /// would leave the old daemon resident and its bugs live — which is the
+    /// exact shape of the bug this whole handshake exists to prevent. Comparing
+    /// this against the mtime of the helper binary in the app bundle catches
+    /// that too: a helper that started before the binary on disk was written is
+    /// not running that binary.
+    func startedAt(reply: @escaping (Double) -> Void)
 }
 
 /// Code-signing requirement one side of the XPC pair demands of the other,

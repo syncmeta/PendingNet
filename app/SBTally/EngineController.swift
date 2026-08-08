@@ -164,7 +164,11 @@ final class EngineController: ObservableObject {
     private func ensureHelperCompatible() async -> Bool {
         if let known = helperInterfaceOK { return known }
         var version = await probeHelperInterfaceVersion()
-        if version != pendingNetHelperInterfaceVersion, !didAttemptHelperRecovery {
+        // Same protocol but older code — a release that only fixed helper
+        // behaviour — is stale too, or those fixes never take effect.
+        var stale = version != pendingNetHelperInterfaceVersion
+        if !stale { stale = await helperPredatesItsBinary() }
+        if stale, !didAttemptHelperRecovery {
             didAttemptHelperRecovery = true
             if version > 0 {
                 // New enough to retire itself: launchd relaunches the current
@@ -177,8 +181,10 @@ final class EngineController: ObservableObject {
                 await reregisterHelperService()
             }
             version = await probeHelperInterfaceVersion()
+            stale = version != pendingNetHelperInterfaceVersion
+            if !stale { stale = await helperPredatesItsBinary() }
         }
-        let ok = version == pendingNetHelperInterfaceVersion
+        let ok = !stale
         helperInterfaceOK = ok
         if ok {
             didAttemptHelperRecovery = false
@@ -202,6 +208,27 @@ final class EngineController: ObservableObject {
         await withHelper(-1, timeout: Self.quickTimeout) { p, reply in
             p.interfaceVersion { reply($0) }
         }
+    }
+
+    /// Whether the running helper started before the helper binary now sitting
+    /// in this app bundle was written — i.e. it cannot be running that binary.
+    ///
+    /// `ditto` preserves mtimes, so the installed binary carries its build time
+    /// and a daemon that predates it is by definition a leftover. Returns false
+    /// when either timestamp is unavailable, so an unreadable bundle can never
+    /// send the app into a pointless replacement loop.
+    private func helperPredatesItsBinary() async -> Bool {
+        let binary = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/PendingNetHelper")
+        guard let attributes = try? FileManager.default
+            .attributesOfItem(atPath: binary.path),
+              let built = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970
+        else { return false }
+        let started = await withHelper(0.0, timeout: Self.quickTimeout) { p, reply in
+            p.startedAt { reply($0) }
+        }
+        guard started > 0 else { return false }
+        return started < built
     }
 
     private func requestHelperQuit() async {

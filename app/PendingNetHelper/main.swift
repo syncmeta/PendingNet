@@ -1,6 +1,9 @@
 import Foundation
 import SBTallyCore
 
+/// Captured at launch so the app can tell whether this process predates the
+/// helper binary currently sitting in the app bundle.
+let helperStartTime = Date().timeIntervalSince1970
 let ETC = "/usr/local/etc/sbtally"
 let LABEL = "system/io.sbtally.singbox"
 let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
@@ -320,6 +323,10 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
 
     func interfaceVersion(reply: @escaping (Int) -> Void) {
         reply(pendingNetHelperInterfaceVersion)
+    }
+
+    func startedAt(reply: @escaping (Double) -> Void) {
+        reply(helperStartTime)
     }
 
     /// Exits so launchd relaunches this job from the app bundle currently on
