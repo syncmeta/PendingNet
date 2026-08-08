@@ -12,4 +12,7 @@ import Foundation
         reply: @escaping (String?) -> Void
     )
     func status(reply: @escaping (Bool, String, String) -> Void)  // running, mode, lastLogTail
+    /// Turns off a helper-owned system proxy that has no running engine behind
+    /// it. Replies true when such a stale proxy was actually cleared.
+    func repairSystemProxy(reply: @escaping (Bool) -> Void)
 }
