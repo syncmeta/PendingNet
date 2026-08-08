@@ -60,8 +60,8 @@ final class PendingNetIOSController: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
-        // 同一个 store 交给两边：隧道控制器在 `start` 时用它决定 `.bypassCN`
-        // 能不能跑，界面在切换分流模式时用它下载规则集。两份实例会让
+        // 同一个 store 交给两边：隧道控制器在 `start` 时用它决定白名单 /
+        // 黑名单能不能跑，界面在切换分流模式时用它下载规则集。两份实例会让
         // `isReady` 各说各话。
         let store = PendingNetRuleSetStore()
         ruleSetStore = store
