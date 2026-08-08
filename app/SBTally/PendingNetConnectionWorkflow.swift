@@ -13,6 +13,22 @@ enum PendingNetConnectionWorkflow {
         await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
     }
 
+    /// 开关：起停引擎，起来之后按记住的路由模式生效。
+    static func setConnected(
+        _ on: Bool,
+        engine: EngineController,
+        state: AppState
+    ) async {
+        if on {
+            await engine.start()
+            guard engine.running else { return }
+            await state.loadControl()
+            await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+        } else {
+            await engine.stop()
+        }
+    }
+
     static func refreshAndConnect(
         server: PairedVPSServer,
         pairing: VPSPairingController,
@@ -48,6 +64,7 @@ enum PendingNetConnectionWorkflow {
         for attempt in 0..<20 {
             if await state.select(selector: "proxy", name: runtime.selectorTag) {
                 pairing.markApplied(runtime)
+                await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
                 return
             }
             if attempt < 19 {

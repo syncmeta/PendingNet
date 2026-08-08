@@ -42,12 +42,53 @@ final class PendingNetUserEngine {
     var configURL: URL { engineDirectory.appendingPathComponent("config.json") }
     var logURL: URL { engineDirectory.appendingPathComponent("sing-box.log") }
 
+    /// Cached geosite/geoip lists — present means 白名单/黑名单 can be declared.
+    var ruleSets: PendingNetRouteRuleSets {
+        PendingNetRouteRuleSets(
+            directory: engineDirectory.appendingPathComponent("rule-sets", isDirectory: true)
+        )
+    }
+
+    /// Whether the config on disk actually routes by 白名单/黑名单.
+    var configDeclaresListModes: Bool {
+        guard let data = try? Data(contentsOf: configURL) else { return false }
+        return PendingNetProxyOnlyConfig.declaresListModes(data)
+    }
+
+    /// Downloads the rule-sets if needed and rewrites the applied config to use
+    /// them, restarting the engine when it is already up. Returns whether the
+    /// list modes are available afterwards.
+    @discardableResult
+    func enableListModes() async -> Bool {
+        let sets = ruleSets
+        guard await sets.download(throughLocalProxyPort: isRunning ? proxyPort : nil),
+              let directory = sets.configuredDirectory else { return false }
+        guard fileManager.fileExists(atPath: configURL.path) else { return true }
+        guard !configDeclaresListModes else { return true }
+        do {
+            let updated = try PendingNetProxyOnlyConfig.applyingRouteRules(
+                to: try Data(contentsOf: configURL),
+                ruleSetDirectory: directory
+            )
+            try validate(updated)
+            let wasRunning = isRunning
+            if wasRunning { await stop() }
+            try updated.write(to: configURL, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            if wasRunning { try await start() }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func apply(_ runtime: PendingNetRuntimeServer) async throws {
         try prepareDirectory()
         let base = try PendingNetProxyOnlyConfig.make(
             controlSecret: try controlSecret(),
             cachePath: engineDirectory.appendingPathComponent("cache.db").path,
-            listenPort: proxyPort
+            listenPort: proxyPort,
+            ruleSetDirectory: ruleSets.configuredDirectory
         )
         let config = try PendingNetLocalConfigComposer.merge(
             baseConfig: base,

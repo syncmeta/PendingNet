@@ -29,6 +29,20 @@ final class EngineController: ObservableObject {
 
     var localProxyPort: Int { userEngine.proxyPort }
 
+    /// Whether the app-run engine's config declares 白名单/黑名单 at all. Only
+    /// meaningful in 「仅端口」 — the helper runs its own config.
+    var listModesAvailable: Bool { userEngine.configDeclaresListModes }
+
+    /// Fetches the geosite/geoip lists and rewrites the config to route by them,
+    /// restarting the engine if it was up. Returns whether the list modes exist
+    /// afterwards.
+    func enableListModes() async -> Bool {
+        let ok = await userEngine.enableListModes()
+        running = userEngine.isRunning
+        logTail = userEngine.logTail()
+        return ok
+    }
+
     /// A single, cached XPC connection — reused across calls instead of
     /// creating (and leaking) a new one per toggle/refresh.
     private var connection: NSXPCConnection?

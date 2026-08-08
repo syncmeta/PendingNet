@@ -19,7 +19,11 @@ struct PendingNetLocalAPIProvider: StatsProvider, ControlProvider {
         let proxyRoot = try JSONSerialization.jsonObject(with: await proxyData) as? [String: Any]
         guard let mode = config?["mode"] as? String,
               let proxies = proxyRoot?["proxies"] else { throw URLError(.cannotParseResponse) }
-        let combined = try JSONSerialization.data(withJSONObject: ["mode": mode, "proxies": proxies])
+        let combined = try JSONSerialization.data(withJSONObject: [
+            "mode": mode,
+            "proxies": proxies,
+            "modeList": config?["mode-list"] as? [String] ?? [],
+        ])
         return try JSONDecoder().decode(ControlState.self, from: combined)
     }
 
