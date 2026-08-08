@@ -78,6 +78,9 @@ final class VPSPairingController: ObservableObject {
             lastMessage = "已配对，正在准备本机配置：\(record.name)"
             return try nodeProfile.runtimeServer(name: record.name)
         } catch {
+            // Clear the success line too — otherwise the GUI shows a green
+            // 「已应用并连接」 next to the red failure.
+            lastMessage = nil
             lastError = detailedMessage(for: error)
             return nil
         }
@@ -101,6 +104,9 @@ final class VPSPairingController: ObservableObject {
             upsert(updated)
             return try nodeProfile.runtimeServer(name: record.name)
         } catch {
+            // Clear the success line too — otherwise the GUI shows a green
+            // 「已应用并连接」 next to the red failure.
+            lastMessage = nil
             lastError = detailedMessage(for: error)
             return nil
         }
@@ -112,6 +118,7 @@ final class VPSPairingController: ObservableObject {
     }
 
     func reportApplyError(_ message: String) {
+        lastMessage = nil
         lastError = message
     }
 
