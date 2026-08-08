@@ -223,6 +223,161 @@ struct PendingQuietButtonStyle: ButtonStyle {
     }
 }
 
+/// Lays children out left to right, wrapping to a new line when the next one
+/// would overflow. Pill rows (VPS lists in particular) are open-ended, so they
+/// can't rely on a fixed HStack.
+struct PendingWrapLayout: Layout {
+    var spacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rows = rows(subviews: subviews, maxWidth: width)
+        let height = rows.reduce(0) { $0 + $1.height } +
+            lineSpacing * CGFloat(max(0, rows.count - 1))
+        let widest = rows.map(\.width).max() ?? 0
+        return CGSize(width: proposal.width ?? widest, height: height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout Void
+    ) {
+        var y = bounds.minY
+        for row in rows(subviews: subviews, maxWidth: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
+                    proposal: ProposedViewSize(size)
+                )
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Row {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func rows(subviews: Subviews, maxWidth: CGFloat) -> [Row] {
+        var rows: [Row] = []
+        var current = Row()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let advance = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            if !current.indices.isEmpty, advance > maxWidth {
+                rows.append(current)
+                current = Row()
+            }
+            current.width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            current.height = max(current.height, size.height)
+            current.indices.append(index)
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
+    }
+}
+
+/// One capsule in a pill row: brand green when selected, quiet fill otherwise.
+/// `accessory` rides inside the same capsule (used for the VPS 详情 button), so
+/// tapping it doesn't count as picking the pill.
+struct PendingPill<Accessory: View>: View {
+    let title: String
+    var selected: Bool = false
+    var monospacedTitle: Bool = false
+    let action: () -> Void
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Button(action: action) {
+                // verbatim: 药丸上可能是 IP/端口这类标识符，走 LocalizedStringKey
+                // 会被加上千分位分隔符。
+                Text(verbatim: title)
+                    .font(monospacedTitle
+                        ? PendingNetTheme.Fonts.chrome.monospaced()
+                        : PendingNetTheme.Fonts.chrome)
+                    .foregroundStyle(selected
+                        ? PendingNetTheme.Palette.onAccent
+                        : PendingNetTheme.Palette.ink)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            accessory
+        }
+        .padding(.horizontal, 13)
+        .frame(minHeight: 30)
+        .background(
+            Capsule().fill(selected
+                ? PendingNetTheme.Palette.accent
+                : PendingNetTheme.Palette.surfaceMuted)
+        )
+        .overlay(
+            Capsule().stroke(
+                selected ? Color.clear : PendingNetTheme.Palette.hairline,
+                lineWidth: 1
+            )
+        )
+    }
+}
+
+extension PendingPill where Accessory == EmptyView {
+    init(title: String, selected: Bool = false, monospacedTitle: Bool = false, action: @escaping () -> Void) {
+        self.init(
+            title: title,
+            selected: selected,
+            monospacedTitle: monospacedTitle,
+            action: action,
+            accessory: { EmptyView() }
+        )
+    }
+}
+
+/// A labelled row of pills — the one selection control this app uses.
+struct PendingPillPicker<Value: Hashable>: View {
+    struct Option: Identifiable {
+        let value: Value
+        let title: String
+        var id: Value { value }
+
+        init(_ value: Value, _ title: String) {
+            self.value = value
+            self.title = title
+        }
+    }
+
+    let label: String
+    let options: [Option]
+    let selection: Value?
+    let select: (Value) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !label.isEmpty {
+                Text(label)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            }
+            PendingWrapLayout {
+                ForEach(options) { option in
+                    PendingPill(
+                        title: option.title,
+                        selected: option.value == selection
+                    ) { select(option.value) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 struct PendingEmptyState: View {
     let icon: String
     let title: String
