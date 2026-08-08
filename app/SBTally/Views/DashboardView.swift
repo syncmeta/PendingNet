@@ -9,6 +9,7 @@ struct DashboardView: View {
         case live
         case apps
         case domains
+        case settings
 
         var id: String { rawValue }
 
@@ -18,6 +19,7 @@ struct DashboardView: View {
             case .live: "实时流量"
             case .apps: "应用"
             case .domains: "域名"
+            case .settings: "设置"
             }
         }
 
@@ -27,10 +29,11 @@ struct DashboardView: View {
             case .live: "waveform.path.ecg"
             case .apps: "square.grid.2x2"
             case .domains: "globe.asia.australia"
+            case .settings: "gear"
             }
         }
 
-        var showsTimeRange: Bool { self != .connection }
+        var showsTimeRange: Bool { self != .connection && self != .settings }
     }
 
     private var destination: Destination { selection ?? .connection }
@@ -91,6 +94,8 @@ struct DashboardView: View {
             AppsView()
         case .domains:
             DomainsView()
+        case .settings:
+            SettingsView()
         }
     }
 }
