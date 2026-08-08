@@ -1,13 +1,33 @@
 {
   "fill": {
-    "automatic-gradient": "extended-srgb:0.016,0.278,0.208,1.000"
+    "automatic-gradient": "extended-srgb:0.980,0.980,0.975,1.000"
   },
   "groups": [
     {
       "layers": [
         {
-          "image-name": "PendingNet.svg",
-          "name": "箭头"
+          "image-name": "secondary.svg",
+          "name": "次要箭头",
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.750,0.800,0.780,1.000"
+              }
+            }
+          ]
+        },
+        {
+          "image-name": "primary.svg",
+          "name": "主箭头",
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:1.000,1.000,1.000,1.000"
+              }
+            }
+          ]
         }
       ],
       "shadow": {

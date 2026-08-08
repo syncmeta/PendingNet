@@ -21,15 +21,16 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# 品牌深绿 —— 设计稿里主箭头的颜色，这里当底色用（前景改成白）。
-BRAND_GREEN = (0.016, 0.278, 0.208)
+# 浅色下的底：设计稿本来就是画在白底上的，这里给近白色（automatic-gradient
+# 会自动派生出一点点纵深）。深色下的底由系统给，我们给不了也不该给。
+LIGHT_GROUND = (0.98, 0.98, 0.975)
 
-# 设计稿里两组图形的语义：主（原深绿）压白，次（原浅灰）压半透明白。
-# 直接给灰色会在绿底上发脏，用带透明度的白才是同一套明度关系。
-PRIMARY = "#FFFFFF"
-SECONDARY = "#FFFFFF"
-SECONDARY_OPACITY = 0.65
+# 设计稿分两组：主（深绿箭头 + 深绿点）和次（浅灰箭头 + 浅灰点）。
+# 浅色下直接用设计稿自己的颜色；深色下系统会铺一层深底，深绿就沉下去了，
+# 所以给这两组各挂一个 dark 特化，把颜色换成白与浅灰。
 PRIMARY_CLASSES = {"st0", "st2"}
+DARK_PRIMARY = (1.0, 1.0, 1.0)
+DARK_SECONDARY = (0.75, 0.80, 0.78)
 
 CANVAS = 1024.0
 # 图形在 1024 画布里的最大边长。系统还会再往内缩一点做圆角裁切，
@@ -82,26 +83,39 @@ def stroke_widths(svg: str) -> dict[str, float]:
     return widths
 
 
-def build_foreground(svg_text: str, bbox: tuple[float, float, float, float]) -> str:
+def shape_colors(svg: str) -> dict[str, str]:
+    """设计稿自己的颜色，按 class 取（浅色模式下原样用）。"""
+    colors: dict[str, str] = {}
+    for classes, body in re.findall(r"((?:\.st\d,?\s*)+)\{([^}]*)\}", svg):
+        m = re.search(r"fill:\s*(#[0-9a-fA-F]{3,6})", body)
+        if not m:
+            continue
+        for cls in re.findall(r"st\d", classes):
+            colors.setdefault(cls, m.group(1))
+    return colors
+
+
+def build_layer(svg_text: str, bbox: tuple[float, ...], classes: set[str]) -> str:
+    """把设计稿里指定的一组图形，按图标网格摆进 1024 画布，保留原色。"""
     x, y, w, h = bbox
     scale = CONTENT_MAX / max(w, h)
     cx, cy = x + w / 2, y + h / 2
     tx = CANVAS / 2 - cx * scale
     ty = CANVAS / 2 - cy * scale
 
+    widths = stroke_widths(svg_text)
+    colors = shape_colors(svg_text)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" '
         f'viewBox="0 0 {CANVAS:.0f} {CANVAS:.0f}" width="{CANVAS:.0f}" height="{CANVAS:.0f}">',
         f'  <g transform="translate({tx:.2f} {ty:.2f}) scale({scale:.5f})">',
     ]
-    widths = stroke_widths(svg_text)
     for tag, cls, attrs in parse_shapes(svg_text):
-        primary = cls in PRIMARY_CLASSES
-        color = PRIMARY if primary else SECONDARY
+        if cls not in classes:
+            continue
+        color = colors.get(cls, "#000000")
         paint = f'fill="{color}"'
-        if not primary:
-            paint += f' fill-opacity="{SECONDARY_OPACITY}"'
         if cls in widths:
             # 描边照搬设计稿的宽度，只把 miter 改成 round：设计稿用的是 miter-limit 10，
             # 箭头倒钩那个锐角超限后会甩出一根毛刺（Illustrator 画板上没有，
@@ -110,11 +124,14 @@ def build_foreground(svg_text: str, bbox: tuple[float, float, float, float]) -> 
                 f' stroke="{color}" stroke-width="{widths[cls]}"'
                 ' stroke-linejoin="round" stroke-linecap="round"'
             )
-            if not primary:
-                paint += f' stroke-opacity="{SECONDARY_OPACITY}"'
         lines.append(f"    <{tag} {paint}{attrs}/>")
     lines += ["  </g>", "</svg>", ""]
     return "\n".join(lines)
+
+
+def srgb(rgb: tuple[float, float, float]) -> str:
+    r, g, b = rgb
+    return f"extended-srgb:{r:.3f},{g:.3f},{b:.3f},1.000"
 
 
 def main() -> None:
@@ -132,17 +149,33 @@ def main() -> None:
         shutil.rmtree(out)
     (out / "Assets").mkdir(parents=True)
 
+    # 包围盒按整张设计稿量，两层共用，才不会各自居中导致错位。
     bbox = shape_bbox(src, units)
-    (out / "Assets" / "PendingNet.svg").write_text(build_foreground(svg_text, bbox))
+    all_classes = {cls for _, cls, _ in parse_shapes(svg_text)}
+    secondary_classes = all_classes - PRIMARY_CLASSES
+    (out / "Assets" / "primary.svg").write_text(build_layer(svg_text, bbox, PRIMARY_CLASSES))
+    (out / "Assets" / "secondary.svg").write_text(build_layer(svg_text, bbox, secondary_classes))
 
-    r, g, b = BRAND_GREEN
+    # 分两层是为了让深色模式能把两组图形换成两种颜色（图层的 fill 特化是整层一个色）。
+    # 注意：**不能**给图层写 base 的 fill —— 一旦写了，dark 特化就不再生效，
+    # 浅色下也会丢掉设计稿自己的颜色。不写 fill = 浅色用 SVG 原色、深色走特化。
+    def layer(name: str, asset: str, dark: tuple[float, float, float]) -> dict:
+        return {
+            "image-name": asset,
+            "name": name,
+            "fill-specializations": [{"appearance": "dark", "value": {"solid": srgb(dark)}}],
+        }
+
     (out / "icon.json").write_text(
         json.dumps(
             {
-                "fill": {"automatic-gradient": f"extended-srgb:{r:.3f},{g:.3f},{b:.3f},1.000"},
+                "fill": {"automatic-gradient": srgb(LIGHT_GROUND)},
                 "groups": [
                     {
-                        "layers": [{"image-name": "PendingNet.svg", "name": "箭头"}],
+                        "layers": [
+                            layer("次要箭头", "secondary.svg", DARK_SECONDARY),
+                            layer("主箭头", "primary.svg", DARK_PRIMARY),
+                        ],
                         "shadow": {"kind": "neutral", "opacity": 0.5},
                         "specular": True,
                         "translucency": {"enabled": False, "value": 0.5},
