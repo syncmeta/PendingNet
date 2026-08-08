@@ -215,15 +215,16 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
         let variant = mode == "tun" ? "master-tun.json" : "master-notun.json"
         let wasRunning = engineRunning()
+        // Tear the system proxy down FIRST, before anything that can fail or
+        // return early. Doing it after the config writes meant a failed write
+        // left the machine pointing at a proxy for a takeover mode it was no
+        // longer in. Re-enabling below only happens once the engine is up.
+        disableOwnedSystemProxy()
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: "\(ETC)/\(variant)"))
             try data.write(to: URL(fileURLWithPath: "\(ETC)/master.json"))
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
-        // Turning the system proxy on before the engine is up (or when it isn't
-        // running at all) points the whole machine at a dead port. Enable it
-        // only once the engine is confirmed running, and roll back otherwise.
-        disableOwnedSystemProxy()
         guard wasRunning else { return reply(nil) }
         if let error = launchctl(["kickstart", "-k", LABEL]) { return reply(error) }
         guard waitForEngine() else { return reply("sing-box 重启后未进入运行状态") }
