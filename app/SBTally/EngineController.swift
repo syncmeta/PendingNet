@@ -248,10 +248,21 @@ final class EngineController: ObservableObject {
     func setTakeover(_ mode: String) async {
         guard ["local", "sysproxy", "tun"].contains(mode), mode != takeover else { return }
         if mode == "local" {
-            if running { await call { p, r in p.stopEngine(reply: r) } }
+            // Switching away from a helper-owned mode has to go through the
+            // helper, not just flip the GUI's own flag: only the helper can
+            // turn the system proxy back off and record the new mode. Skipping
+            // it left both behind — the machine still proxied through a port
+            // the app no longer runs, and the helper's mode file still said
+            // 「sysproxy」, so the next launch adopted that mode and could
+            // re-enable the proxy. `running` is the app's view and can be
+            // stale, so stop unconditionally rather than only when it is true.
+            lastError = nil
+            if helperReady {
+                await call { p, r in p.stopEngine(reply: r) }
+                await call { p, r in p.setTakeover("local", reply: r) }
+            }
             takeover = "local"
             running = userEngine.isRunning
-            lastError = nil
             return
         }
         // 助手还没就绪时直接发起授权 —— 从前这里只报错，而「授权后台服务…」按钮
