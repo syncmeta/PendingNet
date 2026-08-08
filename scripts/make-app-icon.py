@@ -72,16 +72,14 @@ def parse_shapes(svg: str) -> list[tuple[str, str, str]]:
     return shapes
 
 
-def fill_only(svg_text: str) -> str:
-    """把设计稿改写成「只填充、不描边」的等价图形。
-
-    Illustrator 里箭头是描边对齐到外侧画粗的，而 SVG 只有居中描边这一种语义 ——
-    导出后同色描边有一半落在图形内部，会把箭头两个倒钩之间的窄缝糊死，
-    尖角处还会甩出一根 miter 毛刺。设计稿本身没问题，丢掉描边即还原本来的形状。
-    """
-    head = svg_text[: svg_text.index("<path")]
-    body = "".join(f"<{tag} class=\"{cls}\"{attrs}/>" for tag, cls, attrs in parse_shapes(svg_text))
-    return head + body + "</svg>"
+def stroke_widths(svg: str) -> dict[str, float]:
+    """描边宽度是设计稿定的字重，必须保留 —— Illustrator 里写在 <style> 里，按 class 取。"""
+    widths: dict[str, float] = {}
+    for cls, body in re.findall(r"\.(st\d)\s*\{([^}]*)\}", svg):
+        m = re.search(r"stroke-width:\s*([\d.]+)px", body)
+        if m:
+            widths[cls] = float(m.group(1))
+    return widths
 
 
 def build_foreground(svg_text: str, bbox: tuple[float, float, float, float]) -> str:
@@ -97,11 +95,23 @@ def build_foreground(svg_text: str, bbox: tuple[float, float, float, float]) -> 
         f'viewBox="0 0 {CANVAS:.0f} {CANVAS:.0f}" width="{CANVAS:.0f}" height="{CANVAS:.0f}">',
         f'  <g transform="translate({tx:.2f} {ty:.2f}) scale({scale:.5f})">',
     ]
+    widths = stroke_widths(svg_text)
     for tag, cls, attrs in parse_shapes(svg_text):
         primary = cls in PRIMARY_CLASSES
-        paint = f'fill="{PRIMARY if primary else SECONDARY}"'
+        color = PRIMARY if primary else SECONDARY
+        paint = f'fill="{color}"'
         if not primary:
             paint += f' fill-opacity="{SECONDARY_OPACITY}"'
+        if cls in widths:
+            # 描边照搬设计稿的宽度，只把 miter 改成 round：设计稿用的是 miter-limit 10，
+            # 箭头倒钩那个锐角超限后会甩出一根毛刺（Illustrator 画板上没有，
+            # 三个 SVG 引擎都有）。圆角接头的结果与画板逐像素吻合。
+            paint += (
+                f' stroke="{color}" stroke-width="{widths[cls]}"'
+                ' stroke-linejoin="round" stroke-linecap="round"'
+            )
+            if not primary:
+                paint += f' stroke-opacity="{SECONDARY_OPACITY}"'
         lines.append(f"    <{tag} {paint}{attrs}/>")
     lines += ["  </g>", "</svg>", ""]
     return "\n".join(lines)
@@ -122,11 +132,7 @@ def main() -> None:
         shutil.rmtree(out)
     (out / "Assets").mkdir(parents=True)
 
-    # 包围盒要按去掉描边之后的真实图形来量，否则会白留一圈边距。
-    flat = out / "fill-only.svg"
-    flat.write_text(fill_only(svg_text))
-    bbox = shape_bbox(flat, units)
-    flat.unlink()
+    bbox = shape_bbox(src, units)
     (out / "Assets" / "PendingNet.svg").write_text(build_foreground(svg_text, bbox))
 
     r, g, b = BRAND_GREEN
