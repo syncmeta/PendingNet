@@ -102,7 +102,8 @@ struct ControlView: View {
             HStack {
                 PendingStatusPill(text: connectionStatus.0, kind: connectionStatus.1)
                 if engine.takeover == "local" {
-                    Text("127.0.0.1:\(engine.localProxyPort)")
+                    // verbatim: 端口是标识符不是数量，走 LocalizedStringKey 会被加上千分位（"2,080"）
+                    Text(verbatim: "127.0.0.1:\(engine.localProxyPort)")
                         .font(PendingNetTheme.Fonts.caption.monospaced())
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 }
