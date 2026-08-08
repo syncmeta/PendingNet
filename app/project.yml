@@ -7,8 +7,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "0.2.0"
-    CURRENT_PROJECT_VERSION: "1"
+    # 全端共用的版本号。macOS target 下面还会再写一遍同样的值 —— 发布脚本
+    # 取的是 MARKETING_VERSION 的最后一次出现，两处要一起改。
+    MARKETING_VERSION: "0.3.17"
+    CURRENT_PROJECT_VERSION: "317"
     GENERATE_INFOPLIST_FILE: "YES"
 packages:
   SBTallyCore:
