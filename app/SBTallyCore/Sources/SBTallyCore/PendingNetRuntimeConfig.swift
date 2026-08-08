@@ -29,6 +29,15 @@ public struct PendingNetRuntimeServer: Sendable, Equatable {
         self.selectorTag = selectorTag
         self.proxyOutbounds = proxyOutbounds
     }
+
+    /// The sing-box selector tag a given VPS always maps to. Derived purely from
+    /// the server ID so the GUI can match an applied tag back to a paired VPS
+    /// without asking the server for its node profile again.
+    public static func selectorTag(forServerID serverID: String) -> String {
+        let digest = SHA256.hash(data: Data(serverID.utf8))
+        let suffix = digest.prefix(6).map { String(format: "%02x", $0) }.joined()
+        return "pendingnet-\(suffix)"
+    }
 }
 
 extension PendingNetRuntimeServer {
@@ -114,9 +123,7 @@ public extension PendingNetNodeProfile {
     }
 
     func runtimeServer(name: String) throws -> PendingNetRuntimeServer {
-        let digest = SHA256.hash(data: Data(serverID.utf8))
-        let suffix = digest.prefix(6).map { String(format: "%02x", $0) }.joined()
-        let selectorTag = "pendingnet-\(suffix)"
+        let selectorTag = PendingNetRuntimeServer.selectorTag(forServerID: serverID)
         return PendingNetRuntimeServer(
             serverID: serverID,
             name: name,
