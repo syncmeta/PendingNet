@@ -44,10 +44,16 @@ sudo pendingnet-server status
 已有 `singbox-script-for-vps` 服务时，可以先只接管控制面而不打断现有代理服务：
 
 ```sh
+sudo ./pendingnet-server install \
+  --name "My VPS" \
+  --endpoint "https://203.0.113.10:7443"
+
 sudo pendingnet-server import-singb
 sudo pendingnet-server pair create --out /root/my-vps.pdn
 sudo pendingnet-server status
 ```
+
+`install` 是前置步骤：它初始化状态目录并启动控制服务，`import-singb` 需要已初始化的状态才能写入节点资料。这一步只新增 TCP/7443，不碰现有的 TCP/443 与 UDP/443。
 
 `import-singb` 默认读取现有 `/etc/singb/config.env` 和 `/etc/singb/state.env`。它只导入客户端连接所需字段，不导入 Xray 私钥、完整服务端配置或任何路由规则。
 
@@ -57,8 +63,11 @@ sudo pendingnet-server status
 sudo pendingnet-server provision \
   --server-ip "203.0.113.10" \
   --reality-sni "www.cloudflare.com" \
-  --replace-existing
+  --replace-existing \
+  --skip-download
 ```
+
+`--replace-existing` 必须与 `--skip-download` 同时使用，否则命令直接报错退出：接管已有 VPS 时沿用机器上已验证过的 Xray/Hysteria2 二进制，不重新下载引擎。
 
 切换过程会先验证新配置；若启动失败，会尝试恢复原有 `xray.service` 和 `hysteria-server.service`。旧配置不会被删除。
 
