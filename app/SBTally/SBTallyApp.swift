@@ -17,7 +17,9 @@ struct SBTallyApp: App {
                 .environmentObject(engine)
                 .environmentObject(vpsPairing)
                 .environmentObject(updater)
-                .frame(minWidth: 820, minHeight: 560)
+                // 内容并成一张卡之后不需要那么宽；最小值仍留足侧栏 + 一排药丸
+                // 不被截断的余量。
+                .frame(minWidth: 640, minHeight: 440)
                 .background(PendingNetTheme.Palette.canvas)
                 .task {
                     await state.refresh()
@@ -39,6 +41,7 @@ struct SBTallyApp: App {
                     engine.stopBeforeTermination()
                 }
         }
+        .defaultSize(width: 720, height: 500)
 
         MenuBarExtra {
             MenuBarView()
