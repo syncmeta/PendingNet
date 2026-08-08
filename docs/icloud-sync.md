@@ -34,15 +34,15 @@
 
 代码和构建配置已经就位，下面这几步必须由人在门户 / Xcode 里点，之后才能真跑：
 
-1. App ID `com.pendingname.pendingnet`（iOS）：开 **iCloud**（Key-value storage）
-   和 **Keychain Sharing**，钥匙串组填 `com.pendingname.pendingnet`。
-2. App ID `net.pending.PendingNet`（macOS）：同样开 **iCloud** 和
-   **Keychain Sharing**，钥匙串组同样填 `com.pendingname.pendingnet`
-   —— 两端必须逐字相同，bundle id 不同不要紧。
-3. 给 macOS 的 App ID 生成一份 **Developer ID** 类型的描述文件（含上面两项），
-   下下来，发版时经 `PENDINGNET_PROVISION_PROFILE` 传给构建脚本。
-4. iOS 侧自动签名会自己拉描述文件，Xcode 里确认两个 capability 都亮着即可。
-5. 两台设备登同一个 Apple ID，且**「设置 → Apple ID → iCloud → 钥匙串」要打开**
+1. App ID `com.pendingname.pendingnet`：开 **iCloud**（Key-value storage）和
+   **Keychain Sharing**，钥匙串组填 `com.pendingname.pendingnet`。
+   两端**共用这一个 App ID** —— 2026-08-08 把 macOS 的 bundle id 从
+   `net.pending.PendingNet` 归一过来之后，门户里不再需要第二个条目。
+2. 给这个 App ID 生成一份 **Developer ID** 类型的描述文件（含上面两项），
+   下下来，发版时经 `PENDINGNET_PROVISION_PROFILE` 传给构建脚本（macOS 发布
+   走手工 codesign，受限 entitlement 只有描述文件背书才作数）。
+3. iOS 侧自动签名会自己拉描述文件，Xcode 里确认两个 capability 都亮着即可。
+4. 两台设备登同一个 Apple ID，且**「设置 → Apple ID → iCloud → 钥匙串」要打开**
    —— 钥匙串同步没开的话，VPS 名单会同步、令牌不会，列表上的 VPS 连不上。
 
 ## 对发版脚本的影响
