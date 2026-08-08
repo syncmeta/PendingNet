@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct PendingNetIOSApp: App {
     @StateObject private var controller = PendingNetIOSController()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +18,11 @@ struct PendingNetIOSApp: App {
             }
             .environmentObject(controller)
             .tint(PendingNetTheme.Palette.accent)
+        }
+        // 回到前台顺手拉一次 iCloud —— 在 Mac 上配好的 VPS 不用重开 App 就能
+        // 出现在列表里。iCloud 用不了时这是空操作。
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { controller.refreshFromCloud() }
         }
     }
 }

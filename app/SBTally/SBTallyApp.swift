@@ -28,6 +28,12 @@ struct SBTallyApp: App {
                     await state.refresh()
                     state.startLive()
                     await engine.refresh()
+                    vpsPairing.refreshFromCloud()
+                }
+                // 回到前台顺手拉一次 iCloud —— 在 iPhone 上配好的 VPS 不用重开
+                // App 就能出现在列表里。iCloud 用不了时这是空操作。
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    vpsPairing.refreshFromCloud()
                 }
                 .onOpenURL { url in
                     guard url.pathExtension.lowercased() == "pdn" else { return }
