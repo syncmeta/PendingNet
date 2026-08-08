@@ -22,6 +22,9 @@ final class EngineController: ObservableObject {
     private let service = SMAppService.daemon(plistName: "net.pending.PendingNet.helper.plist")
     /// 用户在助手就绪前选中的接管方式。授权成功后自动接着切过去，省得再点一次。
     private var pendingTakeover: String?
+    /// The helper's mode is adopted once, at first refresh with a ready helper;
+    /// afterwards the user's own choice wins.
+    private var didAdoptHelperMode = false
     private let userEngine = PendingNetUserEngine()
 
     var localProxyPort: Int { userEngine.proxyPort }
@@ -75,8 +78,16 @@ final class EngineController: ObservableObject {
     /// either what `body` reports via its `reply` callback, or `fallback` if
     /// the proxy can't be obtained or the connection's error handler fires
     /// first (helper not registered, connection interrupted, etc).
+    /// Timeout for cheap, near-instant helper calls (status polling).
+    private static let quickTimeout: Duration = .seconds(5)
+    /// Timeout for calls that launch or reconfigure sing-box: `waitForEngine`
+    /// alone budgets 3s, on top of launchctl and full config validation. The
+    /// old blanket 3s ceiling made these calls *always* report "特权助手没有响应".
+    private static let engineTimeout: Duration = .seconds(60)
+
     private func withHelper<T: Sendable>(
         _ fallback: T,
+        timeout: Duration,
         _ body: @escaping (HelperProtocol, @escaping (T) -> Void) -> Void
     ) async -> T {
         let conn = xpcConnection()
@@ -95,7 +106,7 @@ final class EngineController: ObservableObject {
                 return
             }
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: timeout)
                 if once.resume(fallback) {
                     await MainActor.run {
                         self?.lastError = "特权助手没有响应，请重新授权"
@@ -113,16 +124,23 @@ final class EngineController: ObservableObject {
             // previous attempt's error must not outlive it.
             lastError = nil
             do {
+                // An already-approved helper must be left alone: unregistering
+                // it here knocked it back to 「待批准」, so pressing 授权 made
+                // things strictly worse.
+                if service.status == .enabled {
+                    helperReady = true
+                    helperNeedsApproval = false
+                    if let pending = pendingTakeover {
+                        pendingTakeover = nil
+                        await setTakeover(pending)
+                    }
+                    return
+                }
                 // Ad-hoc development builds created before 0.3.5 had a
                 // version-specific code identity. Remove that stale Service
                 // Management registration before registering the current app.
-                switch service.status {
-                case .enabled, .requiresApproval:
+                if service.status == .requiresApproval {
                     try await service.unregister()
-                case .notRegistered, .notFound:
-                    break
-                @unknown default:
-                    break
                 }
                 try service.register()
                 helperReady = service.status == .enabled
@@ -154,6 +172,22 @@ final class EngineController: ObservableObject {
             // wasn't no longer describes the current state.
             lastError = nil
         }
+        if helperReady {
+            // A helper-owned system proxy with no engine behind it leaves the
+            // whole machine unable to reach anything — clean it up on sight.
+            _ = await withHelper(false, timeout: Self.quickTimeout) { p, reply in
+                p.repairSystemProxy(reply: reply)
+            }
+        }
+        if takeover == "local", !didAdoptHelperMode, helperReady {
+            // `takeover` starts at "local", but the helper may well have the
+            // machine in sysproxy/tun already. Trust the helper's mode over the
+            // app's default, or the GUI claims 「仅端口」 while the system is not.
+            didAdoptHelperMode = true
+            if let mode = await helperStatus()?.1, mode != "local" {
+                takeover = mode
+            }
+        }
         if takeover == "local" {
             running = userEngine.isRunning
             logTail = userEngine.logTail()
@@ -163,17 +197,20 @@ final class EngineController: ObservableObject {
             running = false
             return
         }
-        let result: (Bool, String, String)? = await withHelper(nil) { p, reply in
-            p.status { run, mode, tail in reply((run, mode, tail)) }
-        }
-        guard let result else { return }
+        guard let result = await helperStatus() else { return }
         running = result.0
         takeover = result.1
         logTail = result.2
     }
 
+    private func helperStatus() async -> (Bool, String, String)? {
+        await withHelper(nil, timeout: Self.quickTimeout) { p, reply in
+            p.status { run, mode, tail in reply((run, mode, tail)) }
+        }
+    }
+
     private func call(_ f: @escaping (HelperProtocol, @escaping (String?) -> Void) -> Void) async {
-        let err: String? = await withHelper("助手连接失败") { p, reply in
+        let err: String? = await withHelper("助手连接失败", timeout: Self.engineTimeout) { p, reply in
             f(p) { reply($0) }
         }
         if let err { lastError = err }
@@ -244,7 +281,7 @@ final class EngineController: ObservableObject {
                 return false
             }
         }
-        let err: String? = await withHelper("特权助手尚未就绪") { p, reply in
+        let err: String? = await withHelper("特权助手尚未就绪", timeout: Self.engineTimeout) { p, reply in
             p.applyServerConfiguration(
                 runtime.serverID,
                 name: runtime.name,
