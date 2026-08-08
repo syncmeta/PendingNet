@@ -27,6 +27,35 @@ func launchctl(_ sub: [String]) -> String? {
     let (code, out) = sh(["/bin/launchctl"] + sub)
     return code == 0 ? nil : out
 }
+/// Boots out the root daemon left behind by the pre-`com.pendingname` builds.
+///
+/// 0.3.18 and earlier registered `net.pending.PendingNet.helper`. The app's
+/// bundle id changed, so this build registers a *different* daemon and the old
+/// one is orphaned: launchd keeps it resident, and nothing in the new app can
+/// reach it — different Mach service name, and the old helper only accepts peers
+/// signed as `net.pending.PendingNet`, which this build no longer is.
+///
+/// That matters beyond tidiness. Both builds drive the same
+/// `/usr/local/etc/sbtally` state, so a stale root daemon can still own the
+/// machine's system proxy while the new app believes nothing is set — the exact
+/// state where every proxied connection is refused.
+///
+/// `SMAppService` is no lever here: it only addresses daemons whose plist ships
+/// in *this* bundle, and Background Task Management keys the old registration to
+/// the old app's code identity. Being root is a lever, so launchd it is. What
+/// this cannot do is remove the old app's entry from 「登录项与扩展」 — that
+/// record belongs to the old bundle and goes away with it (see
+/// docs/macos-updates.md).
+///
+/// Best-effort on purpose: no such job is the normal case, and a failure here
+/// must never keep this helper from coming up.
+func retireLegacyHelperJob() {
+    let label = "system/" + PendingNetIdentifiers.legacyHelper
+    let (code, _) = sh(["/bin/launchctl", "print", label])
+    guard code == 0 else { return }
+    _ = launchctl(["bootout", label])
+}
+
 func networkServices() -> [String] { // active-ish: all listed services minus '*'-disabled
     let (_, out) = sh(["/usr/sbin/networksetup", "-listallnetworkservices"])
     return out.split(separator: "\n").dropFirst().map(String.init).filter { !$0.hasPrefix("*") }
@@ -360,6 +389,7 @@ func readData(path: String) throws -> Data {
 }
 
 let delegate = Helper()
+retireLegacyHelperJob()
 let listener = NSXPCListener(machServiceName: PendingNetIdentifiers.helper)
 listener.delegate = delegate
 listener.resume()
