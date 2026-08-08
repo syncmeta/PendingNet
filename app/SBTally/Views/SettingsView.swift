@@ -10,10 +10,16 @@ private struct RuleSetInfo: Decodable, Identifiable {
 
 struct SettingsView: View {
     @EnvironmentObject private var updater: PendingNetUpdateController
+    @EnvironmentObject private var engine: EngineController
 
     @State private var rulesets: [RuleSetInfo] = []
     @State private var rulesetsUpdating = false
     @State private var rulesetsUnavailable = false
+
+    @State private var portField = ""
+    @State private var portSaving = false
+    @State private var portError: String?
+    @State private var portSaved = false
 
     private let daemonBaseURL = URL(string: "http://127.0.0.1:7777")!
 
@@ -51,6 +57,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PendingPageHeader(title: "设置")
+                localPortCard
                 rulesCard
                 appUpdateCard
             }
@@ -59,7 +66,66 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(PendingNetTheme.Palette.canvas)
-        .task { await loadRulesets() }
+        .task {
+            portField = String(engine.localProxyPort)
+            await loadRulesets()
+        }
+    }
+
+    /// 本机代理端口。连接页不再显示它，要看要改都在这里。
+    private var localPortCard: some View {
+        PendingSectionCard(
+            "本地端口",
+            subtitle: "浏览器等程序按 127.0.0.1 加这个端口走代理。"
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 10) {
+                    // verbatim: 端口是标识符不是数量，别被本地化成 "2,080"
+                    Text(verbatim: "127.0.0.1 :")
+                        .font(PendingNetTheme.Fonts.body.monospaced())
+                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    TextField("", text: $portField)
+                        .textFieldStyle(.roundedBorder)
+                        .font(PendingNetTheme.Fonts.body.monospaced())
+                        .frame(width: 92)
+                        .onSubmit { savePort() }
+                    Button("保存") { savePort() }
+                        .buttonStyle(PendingQuietButtonStyle())
+                        .disabled(portSaving || portField == String(engine.localProxyPort))
+                    if portSaving { ProgressView().controlSize(.small) }
+                    Spacer()
+                }
+                if let portError {
+                    Text(portError)
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if portSaved {
+                    Text(engine.running
+                         ? "已改好，引擎已经在新端口上重开了。"
+                         : "已改好，下次连接就用这个端口。")
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.success)
+                }
+            }
+        }
+    }
+
+    private func savePort() {
+        portSaved = false
+        guard let port = Int(portField.trimmingCharacters(in: .whitespaces)) else {
+            portError = "端口只能是数字，比如 2080。"
+            return
+        }
+        portError = nil
+        portSaving = true
+        Task {
+            let failure = await engine.setLocalProxyPort(port)
+            portSaving = false
+            portError = failure
+            portSaved = failure == nil
+            portField = String(engine.localProxyPort)
+        }
     }
 
     private var rulesCard: some View {

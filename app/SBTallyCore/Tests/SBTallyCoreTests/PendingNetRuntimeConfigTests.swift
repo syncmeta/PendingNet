@@ -113,6 +113,23 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         XCTAssertEqual(tags(before), tags(after))
     }
 
+    /// 在设置里改端口不该让用户重新配对 VPS，也不该撞上控制端口。
+    func testApplyingListenPortKeepsEverythingElse() throws {
+        let base = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let moved = try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 3128)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: moved) as? [String: Any])
+        let inbound = try XCTUnwrap((root["inbounds"] as? [[String: Any]])?.first)
+        XCTAssertEqual(inbound["listen_port"] as? Int, 3128)
+        let clash = try XCTUnwrap((root["experimental"] as? [String: Any])?["clash_api"] as? [String: Any])
+        XCTAssertEqual(clash["secret"] as? String, "test-secret")
+
+        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 80))
+        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 29090))
+    }
+
     func testProxyOnlyBaseSupportsAnIsolatedListenPort() throws {
         let data = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",

@@ -7,6 +7,9 @@ enum PendingNetUserEngineError: LocalizedError {
     case noConfiguration
     case validationFailed(String)
     case startFailed(String)
+    case portOutOfRange
+    case portReserved
+    case portInUse(Int)
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +21,12 @@ enum PendingNetUserEngineError: LocalizedError {
             "本机代理配置校验失败：\(detail)"
         case .startFailed(let detail):
             "本机代理启动失败：\(detail)"
+        case .portOutOfRange:
+            "端口要在 1024 到 65535 之间。"
+        case .portReserved:
+            "29090 是 PendingNet 自己的控制端口，换一个。"
+        case .portInUse(let port):
+            "端口 \(port) 已经被别的程序占用了，换一个再试。"
         }
     }
 }
@@ -26,15 +35,67 @@ enum PendingNetUserEngineError: LocalizedError {
 final class PendingNetUserEngine {
     nonisolated static let controlURL = URL(string: "http://127.0.0.1:29090")!
 
-    let proxyPort: Int
+    static let portKey = "pendingnet.local-proxy-port"
+    static let defaultProxyPort = 2080
+
+    private(set) var proxyPort: Int
     private(set) var process: Process?
     private var logHandle: FileHandle?
 
     private let fileManager = FileManager.default
+    private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
-        let configured = defaults.integer(forKey: "pendingnet.local-proxy-port")
-        proxyPort = (1024...65535).contains(configured) ? configured : 2080
+        self.defaults = defaults
+        let configured = defaults.integer(forKey: Self.portKey)
+        proxyPort = (1024...65535).contains(configured) ? configured : Self.defaultProxyPort
+    }
+
+    /// 改本机代理端口：校验、落盘、改写已应用的配置，正在跑就顺手重启。
+    /// 配置里的 VPS 出站原样保留 —— 换个端口不该让用户重新配对。
+    func setProxyPort(_ port: Int) async throws {
+        guard (1024...65535).contains(port) else { throw PendingNetUserEngineError.portOutOfRange }
+        guard port != 29090 else { throw PendingNetUserEngineError.portReserved }
+        if port != proxyPort, !portIsFree(port) { throw PendingNetUserEngineError.portInUse(port) }
+
+        if fileManager.fileExists(atPath: configURL.path) {
+            let updated = try PendingNetProxyOnlyConfig.applyingListenPort(
+                to: try Data(contentsOf: configURL),
+                port: port
+            )
+            try validate(updated)
+            let wasRunning = isRunning
+            if wasRunning { await stop() }
+            try updated.write(to: configURL, options: .atomic)
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            proxyPort = port
+            defaults.set(port, forKey: Self.portKey)
+            if wasRunning { try await start() }
+            return
+        }
+        proxyPort = port
+        defaults.set(port, forKey: Self.portKey)
+    }
+
+    /// Whether nothing else is listening on 127.0.0.1:port right now. A bind
+    /// test, not a connect test: a port can be held by a process that refuses
+    /// connections and still be unusable for us.
+    private func portIsFree(_ port: Int) -> Bool {
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return true }
+        defer { close(descriptor) }
+        var yes: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return bound == 0
     }
 
     var isRunning: Bool { process?.isRunning == true }

@@ -256,6 +256,29 @@ public enum PendingNetProxyOnlyConfig {
         ) + Data([0x0a])
     }
 
+    /// Points the local inbound at a different port, leaving everything else
+    /// alone — the user changing 本地代理端口 in 设置 must not cost them their
+    /// applied VPS.
+    public static func applyingListenPort(to configData: Data, port: Int) throws -> Data {
+        guard (1024...65535).contains(port),
+              var root = try JSONSerialization.jsonObject(with: configData) as? [String: Any],
+              var inbounds = root["inbounds"] as? [[String: Any]],
+              !inbounds.isEmpty else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        guard let controller = ((root["experimental"] as? [String: Any])?["clash_api"]
+            as? [String: Any])?["external_controller"] as? String,
+              Int(controller.split(separator: ":").last.map(String.init) ?? "") != port else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        inbounds[0]["listen_port"] = port
+        root["inbounds"] = inbounds
+        return try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ) + Data([0x0a])
+    }
+
     /// Whether the document already routes by the list modes — i.e. whether
     /// rewriting it would change anything.
     public static func declaresListModes(_ configData: Data) -> Bool {

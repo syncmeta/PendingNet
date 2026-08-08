@@ -27,7 +27,28 @@ final class EngineController: ObservableObject {
     private var didAdoptHelperMode = false
     private let userEngine = PendingNetUserEngine()
 
-    var localProxyPort: Int { userEngine.proxyPort }
+    /// 本机代理端口。设置页可改；连接页不再显示。
+    @Published private(set) var localProxyPort: Int
+
+    init() {
+        localProxyPort = userEngine.proxyPort
+    }
+
+    /// 改端口。返回 nil 表示成功，否则是给用户看的人话。
+    /// 引擎在跑的话会就地重启到新端口，不用用户自己去关了再开。
+    func setLocalProxyPort(_ port: Int) async -> String? {
+        do {
+            try await userEngine.setProxyPort(port)
+            localProxyPort = userEngine.proxyPort
+            running = userEngine.isRunning
+            logTail = userEngine.logTail()
+            return nil
+        } catch {
+            localProxyPort = userEngine.proxyPort
+            running = userEngine.isRunning
+            return error.localizedDescription
+        }
+    }
 
     /// Whether the app-run engine's config declares 白名单/黑名单 at all. Only
     /// meaningful in 「仅端口」 — the helper runs its own config.
