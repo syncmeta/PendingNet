@@ -134,6 +134,7 @@ struct ControlView: View {
             }
 
             vpsList
+                .padding(.top, 10)
 
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 PendingPillPicker(
@@ -277,7 +278,7 @@ struct ControlView: View {
                 }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {

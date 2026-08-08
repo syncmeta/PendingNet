@@ -96,6 +96,7 @@ struct PendingNetIOSHomeView: View {
             routeModePills
 
             vpsList
+                .padding(.top, 10)
 
             if controller.tunnel.isTunnelLive, !controller.tunnel.outboundMembers.isEmpty {
                 outboundPills
@@ -318,7 +319,7 @@ struct PendingNetIOSHomeView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
