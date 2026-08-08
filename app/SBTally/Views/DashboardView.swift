@@ -2,46 +2,14 @@ import SwiftUI
 
 struct DashboardView: View {
     @EnvironmentObject private var state: AppState
-    @State private var selection: Destination? = .connection
+    @EnvironmentObject private var navigation: PendingNetNavigation
 
-    private enum Destination: String, CaseIterable, Identifiable {
-        case connection
-        case live
-        case apps
-        case domains
-        case settings
-
-        var id: String { rawValue }
-
-        var title: String {
-            switch self {
-            case .connection: "连接"
-            case .live: "实时流量"
-            case .apps: "应用"
-            case .domains: "域名"
-            case .settings: "设置"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .connection: "point.3.connected.trianglepath.dotted"
-            case .live: "waveform.path.ecg"
-            case .apps: "square.grid.2x2"
-            case .domains: "globe.asia.australia"
-            case .settings: "gear"
-            }
-        }
-
-        var showsTimeRange: Bool { self != .connection && self != .settings }
-    }
-
-    private var destination: Destination { selection ?? .connection }
+    private var destination: PendingNetSection { navigation.section ?? .connection }
 
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                List(Destination.allCases, selection: $selection) { item in
+                List(PendingNetSection.allCases, selection: $navigation.section) { item in
                     Label(item.title, systemImage: item.icon)
                         .font(PendingNetTheme.Fonts.chrome)
                         .tag(item)
