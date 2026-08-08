@@ -221,14 +221,30 @@ final class EngineController: ObservableObject {
         dropConnection()
         stale?.invalidate()
         try? await service.unregister()
-        // `unregister()` returns before launchd has finished tearing the job
-        // down; registering into that window re-adopts the job we just booted.
+        // `unregister()` reports success as soon as the job is booted out, but
+        // Background Task Management is still retiring the record behind it
+        // ("remove succeeded (EINPROGRESS)"). Registering into that window
+        // fails and leaves the daemon unregistered altogether — strictly worse
+        // than the stale helper we started with. So wait for the removal to
+        // land, then retry a few times before giving up.
         for _ in 0..<20 {
-            if service.status != .enabled { break }
+            if service.status == .notRegistered { break }
             try? await Task.sleep(for: .milliseconds(100))
         }
-        try? service.register()
+        for attempt in 0..<3 {
+            if attempt > 0 { try? await Task.sleep(for: .milliseconds(500)) }
+            do {
+                try service.register()
+                break
+            } catch {
+                // Surfaced rather than swallowed: this is the one step that can
+                // leave the user with no daemon at all, so it must not fail
+                // silently the way it did before.
+                lastError = "重新注册后台服务失败：\(error.localizedDescription)"
+            }
+        }
         helperNeedsApproval = service.status == .requiresApproval
+        if service.status != .notRegistered { lastError = nil }
     }
 
     func registerHelper() {
@@ -282,10 +298,30 @@ final class EngineController: ObservableObject {
         }
     }
 
+    /// Remembers that the daemon reached `.enabled` at least once, so a later
+    /// `.notRegistered` can be told apart from a user who never authorized it.
+    private static let everEnabledKey = "PendingNetHelperWasEnabled"
+    private var didRestoreRegistration = false
+
+    /// Re-registers a daemon that the user had already approved but that is now
+    /// gone from Service Management — the state a failed re-registration leaves
+    /// behind. Restoring consent the user already gave is fair game; asking for
+    /// it in the first place is not, so a daemon that was never enabled is left
+    /// alone for the 授权 button to handle.
+    private func restoreLostRegistrationIfNeeded() async {
+        guard !didRestoreRegistration,
+              service.status == .notRegistered,
+              UserDefaults.standard.bool(forKey: Self.everEnabledKey) else { return }
+        didRestoreRegistration = true
+        try? service.register()
+    }
+
     func refresh() async {
+        await restoreLostRegistrationIfNeeded()
         let wasReady = helperReady
         helperReady = service.status == .enabled
         helperNeedsApproval = service.status == .requiresApproval
+        if helperReady { UserDefaults.standard.set(true, forKey: Self.everEnabledKey) }
         if helperReady, !wasReady {
             // The helper just became approved — whatever failed while it
             // wasn't no longer describes the current state.
