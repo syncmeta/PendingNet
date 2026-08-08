@@ -116,23 +116,40 @@ public struct PendingNetCredentialStoreCore: Sendable {
     // MARK: - 读（顺带迁移）
 
     public func load(serverID: String) throws -> String? {
-        var lastFailure: OSStatus?
+        var missingEntitlementFailure: OSStatus?
+        var hardFailure: OSStatus?
+        var foundAccessibleEmptyLocation = false
         for (index, location) in locations.enumerated() {
             var find = query(for: location, serverID: serverID)
             find[kSecReturnData] = true
             find[kSecMatchLimit] = kSecMatchLimitOne
             let (status, data) = backend.copyMatching(find)
-            if status == errSecItemNotFound { continue }
+            if status == errSecItemNotFound {
+                foundAccessibleEmptyLocation = true
+                continue
+            }
             guard status == errSecSuccess,
                   let data,
                   let token = String(data: data, encoding: .utf8) else {
-                lastFailure = status
+                if status == errSecMissingEntitlement {
+                    missingEntitlementFailure = status
+                } else {
+                    hardFailure = status
+                }
                 continue
             }
             if index > 0 { migrate(token: token, serverID: serverID, foundAt: index) }
             return token
         }
-        if let lastFailure { throw PendingNetPairingError.keychain(lastFailure) }
+        if let hardFailure { throw PendingNetPairingError.keychain(hardFailure) }
+        // A development build commonly cannot query the synchronizable slots
+        // (-34018) but can query the legacy local slot. If that accessible slot
+        // explicitly says "not found", the credential is absent; surfacing the
+        // entitlement error would misdiagnose it as a broken keychain.
+        if foundAccessibleEmptyLocation { return nil }
+        if let missingEntitlementFailure {
+            throw PendingNetPairingError.keychain(missingEntitlementFailure)
+        }
         return nil
     }
 

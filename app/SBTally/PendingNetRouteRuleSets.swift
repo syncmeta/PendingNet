@@ -14,8 +14,6 @@ struct PendingNetRouteRuleSets {
             "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
         "geoip-cn":
             "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "geosite-noncn":
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
         "geosite-gfw":
             "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs",
     ]
@@ -30,19 +28,26 @@ struct PendingNetRouteRuleSets {
         return directory.appendingPathComponent(name)
     }
 
-    /// Whether every rule-set is cached, i.e. whether the engine config may
-    /// declare 白名单/黑名单 at all.
-    var isReady: Bool {
-        PendingNetProxyOnlyConfig.ruleSetFiles.keys.allSatisfy { tag in
-            guard let url = url(forTag: tag),
-                  let size = try? fileManager
-                      .attributesOfItem(atPath: url.path)[.size] as? Int else { return false }
-            return size > 0
-        }
+    func isReady(for mode: PendingNetRouteMode) -> Bool {
+        PendingNetTunnelConfig.ruleSetsPresent(mode: mode, directory: directory.path)
     }
 
-    /// Path to hand the config builder, or nil while the cache is incomplete.
-    var configuredDirectory: String? { isReady ? directory.path : nil }
+    var availableModes: Set<PendingNetRouteMode> {
+        Set([PendingNetRouteMode.whitelist, .blacklist].filter { isReady(for: $0) })
+    }
+
+    var availableRuleSetTags: Set<String> {
+        Set(availableModes.flatMap { PendingNetTunnelConfig.ruleSetTags(mode: $0) })
+    }
+
+    /// Whether both list modes are cached. Individual mode availability is
+    /// intentionally narrower; one failed download must not disable the other.
+    var isReady: Bool {
+        isReady(for: .whitelist) && isReady(for: .blacklist)
+    }
+
+    /// Path to hand the config builder once at least one list mode is usable.
+    var configuredDirectory: String? { availableModes.isEmpty ? nil : directory.path }
 
     /// Fetches whatever is missing, preferring the local proxy when the engine
     /// is up — a machine that needs these lists is usually one that can't reach
@@ -72,7 +77,7 @@ struct PendingNetRouteRuleSets {
 
         for (tag, source) in Self.sources {
             guard let destination = url(forTag: tag),
-                  !fileManager.fileExists(atPath: destination.path),
+                  !PendingNetTunnelConfig.looksLikeRuleSet(at: destination.path),
                   let remote = URL(string: source) else { continue }
             guard let (data, response) = try? await session.data(from: remote),
                   let http = response as? HTTPURLResponse,
@@ -83,6 +88,6 @@ struct PendingNetRouteRuleSets {
                   data.prefix(3) == Data("SRS".utf8) else { continue }
             try? data.write(to: destination, options: .atomic)
         }
-        return isReady
+        return configuredDirectory != nil
     }
 }

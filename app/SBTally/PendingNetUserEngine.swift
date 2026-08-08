@@ -127,26 +127,31 @@ final class PendingNetUserEngine {
         )
     }
 
-    /// Whether the config on disk actually routes by 白名单/黑名单.
-    var configDeclaresListModes: Bool {
+    func configDeclaresListMode(_ mode: PendingNetRouteMode) -> Bool {
         guard let data = try? Data(contentsOf: configURL) else { return false }
-        return PendingNetProxyOnlyConfig.declaresListModes(data)
+        return PendingNetProxyOnlyConfig.declaredListModes(data).contains(mode)
     }
 
     /// Downloads the rule-sets if needed and rewrites the applied config to use
     /// them, restarting the engine when it is already up. Returns whether the
-    /// list modes are available afterwards.
+    /// requested mode (not merely the other list mode) is available afterwards.
     @discardableResult
-    func enableListModes() async -> Bool {
+    func enableListMode(_ requestedMode: PendingNetRouteMode) async -> Bool {
         let sets = ruleSets
         guard await sets.download(throughLocalProxyPort: isRunning ? proxyPort : nil),
               let directory = sets.configuredDirectory else { return false }
-        guard fileManager.fileExists(atPath: configURL.path) else { return true }
-        guard !configDeclaresListModes else { return true }
+        guard fileManager.fileExists(atPath: configURL.path) else {
+            return sets.isReady(for: requestedMode)
+        }
         do {
+            let current = try Data(contentsOf: configURL)
+            guard PendingNetProxyOnlyConfig.declaredListModes(current) != sets.availableModes else {
+                return configDeclaresListMode(requestedMode)
+            }
             let updated = try PendingNetProxyOnlyConfig.applyingRouteRules(
-                to: try Data(contentsOf: configURL),
-                ruleSetDirectory: directory
+                to: current,
+                ruleSetDirectory: directory,
+                availableRuleSetTags: sets.availableRuleSetTags
             )
             try validate(updated)
             let wasRunning = isRunning
@@ -154,7 +159,7 @@ final class PendingNetUserEngine {
             try updated.write(to: configURL, options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
             if wasRunning { try await start() }
-            return true
+            return configDeclaresListMode(requestedMode)
         } catch {
             return false
         }
@@ -167,7 +172,8 @@ final class PendingNetUserEngine {
             cachePath: engineDirectory.appendingPathComponent("cache.db").path,
             listenPort: proxyPort,
             listenAddress: listenAddress,
-            ruleSetDirectory: ruleSets.configuredDirectory
+            ruleSetDirectory: ruleSets.configuredDirectory,
+            availableRuleSetTags: ruleSets.availableRuleSetTags
         )
         let config = try PendingNetLocalConfigComposer.merge(
             baseConfig: base,

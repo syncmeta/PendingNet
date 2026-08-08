@@ -6,7 +6,7 @@ import Foundation
 /// 叫「全局代理 / 绕过大陆 / 全局直连」：「绕过大陆」和 macOS 的「白名单」是
 /// 同一件事的两个名字，还多出一档全直连——要直连断开 VPN 就是了，留着只会
 /// 让人以为两端功能不一样。旧值的读法见 `stored(rawValue:)`。
-public enum PendingNetRouteMode: String, Codable, Sendable, CaseIterable {
+public enum PendingNetRouteMode: String, Codable, Sendable, CaseIterable, Hashable {
     /// 全部流量走代理。
     case global
     /// 国内直连、境外走代理。
@@ -123,6 +123,18 @@ public enum PendingNetTunnelConfig {
         ruleSetTags(mode: mode).allSatisfy { name in
             looksLikeRuleSet(at: (directory as NSString).appendingPathComponent("\(name).srs"))
         }
+    }
+
+    /// Recognizes a startup snapshot emitted by the removed global-direct mode.
+    /// Blacklist also has `route.final = direct`, but necessarily declares a
+    /// rule-set; the removed mode has no rule-set and would silently bypass all
+    /// proxies if the extension accepted it after an upgrade.
+    public static func isRemovedDirectModeSnapshot(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let route = root["route"] as? [String: Any],
+              route["final"] as? String == "direct" else { return false }
+        let ruleSets = route["rule_set"] as? [[String: Any]]
+        return ruleSets?.isEmpty ?? true
     }
 
     static func ruleSets(directory: String, mode: PendingNetRouteMode) -> [[String: Any]] {

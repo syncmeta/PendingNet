@@ -117,6 +117,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         else {
             throw PendingNetTunnelError.message("没有可用配置，请回到 PendingNet 完成配对")
         }
+        if PendingNetTunnelConfig.isRemovedDirectModeSnapshot(data) {
+            try? FileManager.default.removeItem(at: snapshot)
+            throw PendingNetTunnelError.message("没有可用配置，请回到 PendingNet 完成配对")
+        }
         return ResolvedConfig(content: content, isFromStartOptions: false)
     }
 

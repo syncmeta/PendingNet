@@ -151,6 +151,16 @@ final class PendingNetCredentialStoreBoundaryTests: XCTestCase {
         XCTAssertNil(try makeCore(MemoryKeychain()).load(serverID: "vps1"))
     }
 
+    /// 无 entitlement 的开发构建读同步位置会回 -34018；只要后面的本地位置
+    /// 可访问且明确说没有条目，最终结论就仍是「没找到」，不能拿前面的权限
+    /// 错误覆盖它，让用户看到一条与重新导入 .pdn 无关的误导信息。
+    func testMissingEntitlementBeforeAccessibleNotFoundStillReturnsNil() throws {
+        let backend = MemoryKeychain()
+        backend.refused = { $0.synchronizable }
+
+        XCTAssertNil(try makeCore(backend).load(serverID: "vps1"))
+    }
+
     /// 令牌已经在最好的位置上时，读不该顺手删任何东西——迁移只在「找到的位置
     /// 比能写的最好位置差」时才发生。
     func testLoadFromTheBestLocationTouchesNothing() throws {

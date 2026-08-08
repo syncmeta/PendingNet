@@ -57,6 +57,10 @@ final class PendingNetTunnelController: ObservableObject {
            let mode = PendingNetRouteMode.stored(rawValue: raw) {
             routeMode = mode
             if mode.rawValue != raw {
+                PendingNetTunnelPaths.invalidateSnapshotForRemovedDirectMode(
+                    storedRouteModeRawValue: raw,
+                    in: PendingNetTunnelPaths.container()
+                )
                 UserDefaults.standard.set(mode.rawValue, forKey: routeModeKey)
             }
         }
