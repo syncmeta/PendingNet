@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""从 PendingNetIcon.svg 生成 app/SBTally/PendingNet.icon（Icon Composer 文档）。
+"""从 PendingNetIcon.svg 生成 app/PendingNet.icon（Icon Composer 文档，macOS 与 iOS 共用）。
 
 macOS 26 起 app 图标是分层的 .icon：**圆角、玻璃高光、投影、深浅/单色变体全部由系统画**，
 我们只负责两件事 —— 前景图形和底色。所以这里不再手工画白底圆角方块（那正是之前
@@ -137,7 +137,7 @@ def srgb(rgb: tuple[float, float, float]) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--svg", default=str(ROOT / "PendingNetIcon.svg"))
-    ap.add_argument("--out", default=str(ROOT / "app" / "SBTally" / "PendingNet.icon"))
+    ap.add_argument("--out", default=str(ROOT / "app" / "PendingNet.icon"))
     args = ap.parse_args()
 
     src = pathlib.Path(args.svg)
@@ -181,7 +181,7 @@ def main() -> None:
                         "translucency": {"enabled": False, "value": 0.5},
                     }
                 ],
-                "supported-platforms": {"circles": ["watchOS"], "squares": ["macOS"]},
+                "supported-platforms": {"circles": ["watchOS"], "squares": ["iOS", "macOS"]},
             },
             indent=2,
             ensure_ascii=False,
