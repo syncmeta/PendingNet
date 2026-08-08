@@ -28,7 +28,7 @@ final class PendingNetTunnelController: ObservableObject {
     /// 各成员最近一次 urltest 的延迟（毫秒）。0 表示还没有测速结果。
     @Published private(set) var outboundDelays: [String: Int] = [:]
 
-    /// `start()` 因为规则集不可用而降级到全局代理时留下的提示。UI 取用后
+    /// `start()` 因为规则集不可用而降级到全局时留下的提示。UI 取用后
     /// 自行清空——降级不是错误，`start()` 不能因此抛出。
     @Published var degradeNotice: String?
 
@@ -244,7 +244,7 @@ final class PendingNetTunnelController: ObservableObject {
         ])
     }
 
-    /// 「规则集缺失或损坏时降级为全局代理，不使隧道启动失败」这条规则原先
+    /// 「规则集缺失或损坏时降级为全局，不使隧道启动失败」这条规则原先
     /// 只长在分流选择器那条路径上。持久化的白名单 / 黑名单走的是这里：直接
     /// 拿它生成配置，规则集不在（或上一轮落了个被替换的 HTML）就会产出一份
     /// 内核拒收的配置，隧道干脆起不来——正是那条规则要避免的结果。黑名单
@@ -267,7 +267,7 @@ final class PendingNetTunnelController: ObservableObject {
         }
         guard let reason else { return }
         setRouteMode(.global, profile: profile, serverName: serverName)
-        degradeNotice = "规则集不可用，本次已降级为全局代理：\(reason)"
+        degradeNotice = "规则集不可用，本次已降级为全局：\(reason)"
     }
 
     func stop() async {
