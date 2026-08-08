@@ -28,6 +28,8 @@ targets:
       path: PacketTunnel/Info.plist
       properties:
         CFBundleDisplayName: PendingNet Tunnel
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
@@ -72,6 +74,8 @@ targets:
     info:
       path: PendingNetIOS/Info.plist
       properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor
@@ -130,6 +134,16 @@ targets:
         embed: false
       - sdk: libresolv.tbd
       - sdk: UIKit.framework
+    postBuildScripts:
+      - name: Verify bundled version
+        script: |
+          INFO_PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+          actual_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
+          actual_build=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$INFO_PLIST")
+          if [ "$actual_version" != "$MARKETING_VERSION" ] || [ "$actual_build" != "$CURRENT_PROJECT_VERSION" ]; then
+            echo "error: bundled version $actual_version ($actual_build) does not match build settings $MARKETING_VERSION ($CURRENT_PROJECT_VERSION)" >&2
+            exit 1
+          fi
   PendingNetHelper:
     type: tool
     platform: macOS
@@ -164,6 +178,8 @@ targets:
       path: SBTally/Info.plist
       properties:
         CFBundleDisplayName: PendingNet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor
