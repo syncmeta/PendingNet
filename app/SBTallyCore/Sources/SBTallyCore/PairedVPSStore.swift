@@ -283,7 +283,13 @@ public final class PairedVPSStore: ObservableObject {
         remote: [PairedVPSRecord],
         merged: [PairedVPSRecord]
     ) -> Bool {
-        let remoteByID = Dictionary(uniqueKeysWithValues: remote.map { ($0.serverID, $0) })
+        var remoteByID: [String: PairedVPSRecord] = [:]
+        for record in remote {
+            if let existing = remoteByID[record.serverID], existing.updatedAt >= record.updatedAt {
+                continue
+            }
+            remoteByID[record.serverID] = record
+        }
         return merged.contains { record in
             guard let cloudRecord = remoteByID[record.serverID] else { return true }
             return record.updatedAt > cloudRecord.updatedAt
