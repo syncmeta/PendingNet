@@ -133,7 +133,7 @@ struct ControlView: View {
                 }
             }
 
-            vpsPills
+            vpsList
 
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 PendingPillPicker(
@@ -202,9 +202,9 @@ struct ControlView: View {
         }
     }
 
-    // MARK: - VPS: one pill per server, showing its IP
+    // MARK: - VPS: 竖排列表，选中的那行前面打勾
 
-    private var vpsPills: some View {
+    private var vpsList: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Spacer()
@@ -230,56 +230,67 @@ struct ControlView: View {
             }
 
             if vpsPairing.servers.isEmpty {
-                Text("还没有配对 VPS，导入 .pdn 后这里会出现一排可选的服务器。")
+                Text("还没有配对 VPS，导入 .pdn 后这里会列出你的服务器。")
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             } else {
-                PendingWrapLayout {
-                    ForEach(vpsPairing.servers) { server in
-                        vpsPill(server)
+                VStack(spacing: 0) {
+                    ForEach(Array(vpsPairing.servers.enumerated()), id: \.element.id) { index, server in
+                        if index > 0 { Divider().overlay(PendingNetTheme.Palette.hairline) }
+                        vpsRow(server)
                     }
+                }
+                .background(PendingNetTheme.Palette.surfaceMuted)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
                 }
             }
         }
     }
 
-    private func vpsPill(_ server: PairedVPSServer) -> some View {
+    private func vpsRow(_ server: PairedVPSServer) -> some View {
         let selected = server.serverID == appliedServer?.serverID
-        return PendingPill(
-            title: server.address,
-            selected: selected,
-            monospacedTitle: true,
-            action: {
-                guard !selected, !vpsPairing.pairing else { return }
-                Task {
-                    await PendingNetConnectionWorkflow.refreshAndConnect(
-                        server: server,
-                        pairing: vpsPairing,
-                        engine: engine,
-                        state: state
-                    )
-                }
-            },
-            accessory: {
-                Button {
-                    detailServerID = server.serverID
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(selected
-                            ? PendingNetTheme.Palette.onAccent
-                            : PendingNetTheme.Palette.inkMuted)
-                }
+        return HStack(spacing: 10) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(PendingNetTheme.Palette.accent)
+                .opacity(selected ? 1 : 0)
+                .frame(width: 14)
+            // verbatim: 地址是标识符，不能被本地化
+            Text(verbatim: server.address)
+                .font(selected
+                    ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
+                    : PendingNetTheme.Fonts.body.monospaced())
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+            Spacer()
+            Button("详情") { detailServerID = server.serverID }
                 .buttonStyle(.plain)
-                .help("详情")
+                .font(PendingNetTheme.Fonts.caption)
+                .foregroundStyle(PendingNetTheme.Palette.accent)
                 .popover(isPresented: Binding(
                     get: { detailServerID == server.serverID },
                     set: { if !$0 { detailServerID = nil } }
                 ), arrowEdge: .bottom) {
                     serverDetail(server)
                 }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !selected, !vpsPairing.pairing else { return }
+            Task {
+                await PendingNetConnectionWorkflow.refreshAndConnect(
+                    server: server,
+                    pairing: vpsPairing,
+                    engine: engine,
+                    state: state
+                )
             }
-        )
+        }
     }
 
     /// 端口、支持的协议、连通性测试 —— 主界面只放 IP，细节都在这里。

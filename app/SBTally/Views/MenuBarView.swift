@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @EnvironmentObject private var engine: EngineController
     @EnvironmentObject private var updater: PendingNetUpdateController
     @EnvironmentObject private var vpsPairing: VPSPairingController
+    @EnvironmentObject private var navigation: PendingNetNavigation
     @Environment(\.openWindow) private var openWindow
 
     private var totalUp: Int64 { state.live.reduce(0) { $0 + $1.upRate } }
@@ -101,14 +102,26 @@ struct MenuBarView: View {
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if !vpsPairing.servers.isEmpty {
-                PendingPillPicker(
-                    options: vpsPairing.servers.map { .init($0.serverID, $0.address) },
-                    selection: appliedServer?.serverID
-                ) { serverID in
-                    guard let server = vpsPairing.servers.first(where: { $0.serverID == serverID }),
-                          server.serverID != appliedServer?.serverID,
-                          !vpsPairing.pairing else { return }
+            // VPS 和主窗口一致：竖排列表，选中的那行前面打勾。
+            ForEach(vpsPairing.servers) { server in
+                let selected = server.serverID == appliedServer?.serverID
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(PendingNetTheme.Palette.accent)
+                        .opacity(selected ? 1 : 0)
+                        .frame(width: 12)
+                    // verbatim: 地址是标识符，不能被本地化
+                    Text(verbatim: server.address)
+                        .font(selected
+                            ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
+                            : PendingNetTheme.Fonts.body.monospaced())
+                        .foregroundStyle(PendingNetTheme.Palette.ink)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !selected, !vpsPairing.pairing else { return }
                     Task {
                         await PendingNetConnectionWorkflow.refreshAndConnect(
                             server: server,
@@ -163,11 +176,19 @@ struct MenuBarView: View {
 
             Divider().overlay(PendingNetTheme.Palette.hairline)
             HStack {
-                Button("打开主窗口") { openWindow(id: "main") }
-                    .buttonStyle(PendingQuietButtonStyle())
-                Button("检查更新") { updater.checkForUpdates() }
-                    .buttonStyle(.plain)
-                    .disabled(!updater.canCheckForUpdates)
+                Button("打开主窗口") {
+                    navigation.section = .connection
+                    openWindow(id: "main")
+                }
+                .buttonStyle(PendingQuietButtonStyle())
+                // 设置就是主窗口里的那一栏，不再另开一个设置窗口。
+                Button("设置") {
+                    navigation.section = .settings
+                    openWindow(id: "main")
+                }
+                .buttonStyle(.plain)
+                .font(PendingNetTheme.Fonts.chrome)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
                 Spacer()
                 Button("退出") { NSApplication.shared.terminate(nil) }
                     .buttonStyle(.plain)
