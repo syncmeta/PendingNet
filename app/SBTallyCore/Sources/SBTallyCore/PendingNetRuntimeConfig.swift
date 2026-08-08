@@ -193,7 +193,6 @@ public enum PendingNetProxyOnlyConfig {
     public static let ruleSetFiles: [String: String] = [
         "geosite-cn": "geosite-cn.srs",
         "geoip-cn": "geoip-cn.srs",
-        "geosite-noncn": "geosite-geolocation-noncn.srs",
         "geosite-gfw": "geosite-gfw.srs",
     ]
 
@@ -207,7 +206,8 @@ public enum PendingNetProxyOnlyConfig {
         listenPort: Int = 2080,
         listenAddress: String = loopbackListen,
         controlPort: Int = 29090,
-        ruleSetDirectory: String? = nil
+        ruleSetDirectory: String? = nil,
+        availableRuleSetTags: Set<String>? = nil
     ) throws -> Data {
         guard !controlSecret.isEmpty, !cachePath.isEmpty,
               (1024...65535).contains(listenPort),
@@ -228,7 +228,10 @@ public enum PendingNetProxyOnlyConfig {
                 ["type": "selector", "tag": "proxy", "outbounds": ["direct"]],
                 ["type": "direct", "tag": "direct"],
             ],
-            "route": route(ruleSetDirectory: ruleSetDirectory),
+            "route": route(
+                ruleSetDirectory: ruleSetDirectory,
+                availableRuleSetTags: availableRuleSetTags
+            ),
             "experimental": [
                 "clash_api": [
                     "external_controller": "127.0.0.1:\(controlPort)",
@@ -250,12 +253,16 @@ public enum PendingNetProxyOnlyConfig {
     /// 白名单/黑名单 without re-pairing the VPS.
     public static func applyingRouteRules(
         to configData: Data,
-        ruleSetDirectory: String?
+        ruleSetDirectory: String?,
+        availableRuleSetTags: Set<String>? = nil
     ) throws -> Data {
         guard var root = try JSONSerialization.jsonObject(with: configData) as? [String: Any] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
-        root["route"] = route(ruleSetDirectory: ruleSetDirectory)
+        root["route"] = route(
+            ruleSetDirectory: ruleSetDirectory,
+            availableRuleSetTags: availableRuleSetTags
+        )
         return try JSONSerialization.data(
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -294,13 +301,29 @@ public enum PendingNetProxyOnlyConfig {
     /// Whether the document already routes by the list modes — i.e. whether
     /// rewriting it would change anything.
     public static func declaresListModes(_ configData: Data) -> Bool {
-        guard let root = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
-              let route = root["route"] as? [String: Any],
-              let rules = route["rules"] as? [[String: Any]] else { return false }
-        return rules.contains { ($0["clash_mode"] as? String) == "Whitelist" }
+        !declaredListModes(configData).isEmpty
     }
 
-    private static func route(ruleSetDirectory: String?) -> [String: Any] {
+    /// List modes actually declared in a generated route. macOS uses this to
+    /// avoid restarting sing-box when a best-effort rule-set download did not
+    /// change which modes are available.
+    public static func declaredListModes(_ configData: Data) -> Set<PendingNetRouteMode> {
+        guard let root = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+              let route = root["route"] as? [String: Any],
+              let rules = route["rules"] as? [[String: Any]] else { return [] }
+        return Set(rules.compactMap { rule in
+            switch rule["clash_mode"] as? String {
+            case "Whitelist": .whitelist
+            case "Blacklist": .blacklist
+            default: nil
+            }
+        })
+    }
+
+    private static func route(
+        ruleSetDirectory: String?,
+        availableRuleSetTags: Set<String>?
+    ) -> [String: Any] {
         var rules: [[String: Any]] = [
             ["action": "sniff"],
             ["clash_mode": "Direct", "outbound": "direct"],
@@ -312,15 +335,29 @@ public enum PendingNetProxyOnlyConfig {
         // 白名单/黑名单 were accepted by the Clash API (204) and then silently
         // ignored, leaving the engine in 全局.
         if let ruleSetDirectory, !ruleSetDirectory.isEmpty {
-            rules.append(contentsOf: [
+            let available = availableRuleSetTags ?? Set(ruleSetFiles.keys)
+            let supportedModes = [PendingNetRouteMode.whitelist, .blacklist].filter { mode in
+                Set(PendingNetTunnelConfig.ruleSetTags(mode: mode)).isSubset(of: available)
+            }
+            if supportedModes.contains(.blacklist) {
                 // 黑名单：只有被墙的域名走代理，其余直连。
-                ["clash_mode": "Blacklist", "rule_set": "geosite-gfw", "outbound": "proxy"],
-                ["clash_mode": "Blacklist", "outbound": "direct"],
+                rules.append(contentsOf: [
+                    ["clash_mode": "Blacklist", "rule_set": "geosite-gfw", "outbound": "proxy"],
+                    ["clash_mode": "Blacklist", "outbound": "direct"],
+                ])
+            }
+            if supportedModes.contains(.whitelist) {
                 // 白名单：国内直连，境外走代理（兜底 final 同样是 proxy）。
-                ["clash_mode": "Whitelist", "rule_set": ["geoip-cn", "geosite-cn"], "outbound": "direct"],
-                ["clash_mode": "Whitelist", "rule_set": "geosite-noncn", "outbound": "proxy"],
-            ])
-            ruleSets = ruleSetFiles.keys.sorted().map { tag in
+                rules.append([
+                    "clash_mode": "Whitelist",
+                    "rule_set": ["geoip-cn", "geosite-cn"],
+                    "outbound": "direct",
+                ])
+            }
+            let usedTags = Set(supportedModes.flatMap {
+                PendingNetTunnelConfig.ruleSetTags(mode: $0)
+            })
+            ruleSets = usedTags.sorted().map { tag in
                 [
                     "type": "local",
                     "tag": tag,

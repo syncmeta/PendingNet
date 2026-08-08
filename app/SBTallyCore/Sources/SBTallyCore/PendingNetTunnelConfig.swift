@@ -6,7 +6,7 @@ import Foundation
 /// 叫「全局代理 / 绕过大陆 / 全局直连」：「绕过大陆」和 macOS 的「白名单」是
 /// 同一件事的两个名字，还多出一档全直连——要直连断开 VPN 就是了，留着只会
 /// 让人以为两端功能不一样。旧值的读法见 `stored(rawValue:)`。
-public enum PendingNetRouteMode: String, Codable, Sendable, CaseIterable {
+public enum PendingNetRouteMode: String, Codable, Sendable, CaseIterable, Hashable {
     /// 全部流量走代理。
     case global
     /// 国内直连、境外走代理。

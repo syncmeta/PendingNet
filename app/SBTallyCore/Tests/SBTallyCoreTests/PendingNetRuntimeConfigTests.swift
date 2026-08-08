@@ -81,6 +81,47 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         }
     }
 
+    /// macOS 的两个列表档位必须各自按真正用到的规则集启用：GFW 名单缺失
+    /// 不得连坐白名单，反过来国内名单缺失也不得把黑名单一起藏掉。
+    func testEachListModeIsDeclaredIndependentlyFromAvailableRuleSets() throws {
+        let directory = "/tmp/pendingnet-rule-sets"
+        let whitelist = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db",
+            ruleSetDirectory: directory,
+            availableRuleSetTags: ["geoip-cn", "geosite-cn"]
+        )
+        XCTAssertEqual(PendingNetProxyOnlyConfig.declaredListModes(whitelist), [.whitelist])
+        let whitelistRoot = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: whitelist) as? [String: Any]
+        )
+        let whitelistRoute = try XCTUnwrap(whitelistRoot["route"] as? [String: Any])
+        XCTAssertEqual(
+            Set((whitelistRoute["rule_set"] as? [[String: Any]] ?? []).compactMap {
+                $0["tag"] as? String
+            }),
+            ["geoip-cn", "geosite-cn"]
+        )
+
+        let blacklist = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db",
+            ruleSetDirectory: directory,
+            availableRuleSetTags: ["geosite-gfw"]
+        )
+        XCTAssertEqual(PendingNetProxyOnlyConfig.declaredListModes(blacklist), [.blacklist])
+        let blacklistRoot = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: blacklist) as? [String: Any]
+        )
+        let blacklistRoute = try XCTUnwrap(blacklistRoot["route"] as? [String: Any])
+        XCTAssertEqual(
+            Set((blacklistRoute["rule_set"] as? [[String: Any]] ?? []).compactMap {
+                $0["tag"] as? String
+            }),
+            ["geosite-gfw"]
+        )
+    }
+
     /// 名单下载完成后要能就地补上，不能逼用户重新配对 VPS。
     func testApplyingRouteRulesKeepsMergedOutbounds() throws {
         let base = try PendingNetProxyOnlyConfig.make(

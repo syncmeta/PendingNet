@@ -127,12 +127,6 @@ final class PendingNetUserEngine {
         )
     }
 
-    /// Whether the config on disk actually routes by 白名单/黑名单.
-    var configDeclaresListModes: Bool {
-        guard let data = try? Data(contentsOf: configURL) else { return false }
-        return PendingNetProxyOnlyConfig.declaresListModes(data)
-    }
-
     /// Downloads the rule-sets if needed and rewrites the applied config to use
     /// them, restarting the engine when it is already up. Returns whether the
     /// list modes are available afterwards.
@@ -142,11 +136,15 @@ final class PendingNetUserEngine {
         guard await sets.download(throughLocalProxyPort: isRunning ? proxyPort : nil),
               let directory = sets.configuredDirectory else { return false }
         guard fileManager.fileExists(atPath: configURL.path) else { return true }
-        guard !configDeclaresListModes else { return true }
         do {
+            let current = try Data(contentsOf: configURL)
+            guard PendingNetProxyOnlyConfig.declaredListModes(current) != sets.availableModes else {
+                return true
+            }
             let updated = try PendingNetProxyOnlyConfig.applyingRouteRules(
-                to: try Data(contentsOf: configURL),
-                ruleSetDirectory: directory
+                to: current,
+                ruleSetDirectory: directory,
+                availableRuleSetTags: sets.availableRuleSetTags
             )
             try validate(updated)
             let wasRunning = isRunning
@@ -167,7 +165,8 @@ final class PendingNetUserEngine {
             cachePath: engineDirectory.appendingPathComponent("cache.db").path,
             listenPort: proxyPort,
             listenAddress: listenAddress,
-            ruleSetDirectory: ruleSets.configuredDirectory
+            ruleSetDirectory: ruleSets.configuredDirectory,
+            availableRuleSetTags: ruleSets.availableRuleSetTags
         )
         let config = try PendingNetLocalConfigComposer.merge(
             baseConfig: base,
