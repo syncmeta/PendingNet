@@ -90,7 +90,7 @@ struct PendingNetIOSHomeView: View {
     // MARK: - 一张卡，一种控件
 
     private var connectionCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        PendingConnectionCard {
             header
 
             routeModePills
@@ -109,33 +109,21 @@ struct PendingNetIOSHomeView: View {
                 messageBanner(error, kind: .danger)
             }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PendingNetTheme.Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous)
-                .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-        }
     }
 
     /// 状态药丸 + 原来的滑动开关。开关是「连接/断开」这一个动作，不是多选一，
     /// 所以它不做成药丸——这一点和 macOS 定稿一致。
     private var header: some View {
-        HStack(spacing: 10) {
-            PendingStatusPill(text: statusText, kind: statusKind)
-            Spacer()
-            if isBusy {
-                ProgressView().controlSize(.small)
-            }
-            Toggle("连接", isOn: Binding(
-                get: { isConnected },
-                set: { on in Task { await setConnected(on) } }
-            ))
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .tint(PendingNetTheme.Palette.accent)
-            .disabled(isBusy || controller.server == nil || controller.nodeProfile == nil)
+        PendingConnectionHeader(
+            statusText: statusText,
+            statusKind: statusKind,
+            isBusy: isBusy,
+            action: .toggle(
+                isOn: isConnected,
+                enabled: !isBusy && controller.server != nil && controller.nodeProfile != nil
+            )
+        ) { on in
+            Task { await setConnected(on) }
         }
     }
 
@@ -171,15 +159,19 @@ struct PendingNetIOSHomeView: View {
     /// route/dns 段，`reload` 走的是已经建立的 `sendProviderMessage`
     /// 通道。未连接时只落地 `routeMode`，下一次 `start` 会带着它生效。
     private var routeModePills: some View {
-        PendingPillPicker(
-            options: PendingNetRouteMode.allCases.map { .init($0, routeModeTitle($0)) },
-            selection: controller.tunnel.routeMode
+        PendingRouteModePicker(
+            selection: controller.tunnel.routeMode,
+            isEnabled: !switchingRouteMode
         ) { mode in
             guard let server = controller.server, let profile = controller.nodeProfile else { return }
-            Task { await switchRouteMode(to: mode, profile: profile, serverName: server.name) }
+            Task {
+                await switchRouteMode(
+                    to: mode,
+                    profile: profile,
+                    serverName: server.name
+                )
+            }
         }
-        .disabled(switchingRouteMode)
-        .opacity(switchingRouteMode ? 0.6 : 1)
     }
 
     /// 切换分流模式的完整流程，含降级。
@@ -225,7 +217,7 @@ struct PendingNetIOSHomeView: View {
         }
 
         if await applyRouteMode(mode, previous: previous, profile: profile, serverName: serverName) {
-            controller.message = "已切换到「\(routeModeTitle(mode))」"
+            controller.message = "已切换到「\(mode.pendingTitle)」"
         }
     }
 
@@ -251,16 +243,6 @@ struct PendingNetIOSHomeView: View {
         }
     }
 
-    /// 档位名与 macOS 完全一致（ControlView / MenuBarView 的「全局 / 白名单 /
-    /// 黑名单」）。同一个功能两端两套说法，用户只会以为两端不是一个东西。
-    private func routeModeTitle(_ mode: PendingNetRouteMode) -> String {
-        switch mode {
-        case .global: "全局"
-        case .whitelist: "白名单"
-        case .blacklist: "黑名单"
-        }
-    }
-
     // MARK: - VPS：竖排列表，选中的那行前面打勾
 
     private var vpsList: some View {
@@ -283,59 +265,21 @@ struct PendingNetIOSHomeView: View {
                 .disabled(controller.working)
             }
 
-            if controller.servers.isEmpty {
-                Text("还没有配对 VPS，导入 .pdn 后这里会列出你的服务器。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(controller.servers.enumerated()), id: \.element.id) { index, server in
-                        if index > 0 { Divider().overlay(PendingNetTheme.Palette.hairline) }
-                        vpsRow(server)
-                    }
-                }
-                .background(PendingNetTheme.Palette.surfaceMuted)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-                }
+            PendingVPSList(
+                items: controller.servers,
+                selectedID: controller.selectedServerID,
+                switchingID: controller.switchingServerID
+            ) { serverID in
+                guard controller.switchingServerID == nil,
+                      !controller.working,
+                      let server = controller.servers.first(where: {
+                          $0.serverID == serverID
+                      })
+                else { return }
+                Task { await controller.select(server) }
+            } onShowDetails: { serverID in
+                detailServerID = serverID
             }
-        }
-    }
-
-    private func vpsRow(_ server: IOSPairedServer) -> some View {
-        let selected = server.serverID == controller.selectedServerID
-        let switching = controller.switchingServerID == server.serverID
-        return HStack(spacing: 10) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(PendingNetTheme.Palette.accent)
-                .opacity(selected ? 1 : 0)
-                .frame(width: 14)
-            // verbatim: 地址是标识符，不能被本地化
-            Text(verbatim: server.address)
-                .font(selected
-                    ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
-                    : PendingNetTheme.Fonts.body.monospaced())
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-            Spacer()
-            if switching {
-                ProgressView().controlSize(.small)
-            } else {
-                Button("详情") { detailServerID = server.serverID }
-                    .buttonStyle(.plain)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.accent)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !selected, controller.switchingServerID == nil, !controller.working else { return }
-            Task { await controller.select(server) }
         }
     }
 
@@ -494,17 +438,7 @@ struct PendingNetServerDetailSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    detailRow("名称", server.name)
-                    detailRow("地址", server.address, monospaced: true)
-                    if let port = server.controlPort {
-                        // verbatim: 端口是标识符不是数量（否则 7443 会被显示成 "7,443"）
-                        detailRow("端口", port, monospaced: true)
-                    }
-                    if let protocols = server.nodeProtocols, !protocols.isEmpty {
-                        detailRow("支持的协议", protocols.joined(separator: " · "))
-                    }
-                }
+                PendingVPSDetails(server: server, nameStyle: .labeledRow, spacing: 12)
                 .padding(PendingNetTheme.Metrics.gutter)
             }
             .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
@@ -518,21 +452,5 @@ struct PendingNetServerDetailSheet: View {
             }
         }
         .presentationDetents([.medium])
-    }
-
-    private func detailRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            Spacer()
-            // verbatim: 地址/端口都是标识符，不能被本地化成千分位数字
-            Text(verbatim: value)
-                .font(monospaced
-                    ? PendingNetTheme.Fonts.caption.monospaced()
-                    : PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-                .multilineTextAlignment(.trailing)
-        }
     }
 }

@@ -40,6 +40,10 @@ struct ControlView: View {
         return engine.running ? ("已连接", .success) : ("已停止", .neutral)
     }
 
+    private var routeMode: PendingNetRouteMode? {
+        PendingNetRouteMode(rawValue: state.mode.lowercased())
+    }
+
     private var friendlyEngineError: String? {
         guard let error = engine.lastError else { return nil }
         if error.localizedCaseInsensitiveContains("operation not permitted") {
@@ -93,7 +97,7 @@ struct ControlView: View {
     // MARK: - One card, one kind of control: pills all the way down
 
     private var connectionCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        PendingConnectionCard {
             header
 
             PendingPillPicker(
@@ -111,17 +115,12 @@ struct ControlView: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                PendingPillPicker(
-                    options: [
-                        .init("Global", "全局"),
-                        .init("Whitelist", "白名单"),
-                        .init("Blacklist", "黑名单"),
-                    ],
-                    selection: state.mode
-                ) { mode in
+                PendingRouteModePicker(selection: routeMode) { mode in
                     Task {
                         await PendingNetRoutingWorkflow.select(
-                            mode: mode, engine: engine, state: state
+                            mode: mode.rawValue.capitalized,
+                            engine: engine,
+                            state: state
                         )
                     }
                 }
@@ -169,36 +168,25 @@ struct ControlView: View {
                 .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PendingNetTheme.Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous)
-                .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-        }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            PendingStatusPill(text: connectionStatus.0, kind: connectionStatus.1)
-            Spacer()
-            if engine.takeover != "local" && !engine.helperReady {
-                Button("授权后台服务…") { engine.registerHelper() }
-                    .buttonStyle(PendingPrimaryButtonStyle())
+        let needsAuthorization = engine.takeover != "local" && !engine.helperReady
+        return PendingConnectionHeader(
+            statusText: connectionStatus.0,
+            statusKind: connectionStatus.1,
+            action: needsAuthorization
+                ? .button(title: "授权后台服务…")
+                : .toggle(isOn: engine.running)
+        ) { on in
+            if needsAuthorization {
+                engine.registerHelper()
             } else {
-                Toggle("连接", isOn: Binding(
-                    get: { engine.running },
-                    set: { on in
-                        Task {
-                            await PendingNetConnectionWorkflow.setConnected(
-                                on, engine: engine, state: state
-                            )
-                        }
-                    }
-                ))
-                .toggleStyle(.switch)
-                .labelsHidden()
+                Task {
+                    await PendingNetConnectionWorkflow.setConnected(
+                        on, engine: engine, state: state
+                    )
+                }
             }
         }
     }
@@ -230,66 +218,26 @@ struct ControlView: View {
                 .disabled(vpsPairing.pairing)
             }
 
-            if vpsPairing.servers.isEmpty {
-                Text("还没有配对 VPS，导入 .pdn 后这里会列出你的服务器。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(vpsPairing.servers.enumerated()), id: \.element.id) { index, server in
-                        if index > 0 { Divider().overlay(PendingNetTheme.Palette.hairline) }
-                        vpsRow(server)
-                    }
+            PendingVPSList(
+                items: vpsPairing.servers,
+                selectedID: appliedServer?.serverID,
+                detailID: $detailServerID
+            ) { serverID in
+                guard !vpsPairing.pairing,
+                      let server = vpsPairing.servers.first(where: { $0.serverID == serverID })
+                else { return }
+                Task {
+                    await PendingNetConnectionWorkflow.refreshAndConnect(
+                        server: server,
+                        pairing: vpsPairing,
+                        engine: engine,
+                        state: state
+                    )
                 }
-                .background(PendingNetTheme.Palette.surfaceMuted)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-                }
-            }
-        }
-    }
-
-    private func vpsRow(_ server: PairedVPSServer) -> some View {
-        let selected = server.serverID == appliedServer?.serverID
-        return HStack(spacing: 10) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(PendingNetTheme.Palette.accent)
-                .opacity(selected ? 1 : 0)
-                .frame(width: 14)
-            // verbatim: 地址是标识符，不能被本地化
-            Text(verbatim: server.address)
-                .font(selected
-                    ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
-                    : PendingNetTheme.Fonts.body.monospaced())
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-            Spacer()
-            Button("详情") { detailServerID = server.serverID }
-                .buttonStyle(.plain)
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.accent)
-                .popover(isPresented: Binding(
-                    get: { detailServerID == server.serverID },
-                    set: { if !$0 { detailServerID = nil } }
-                ), arrowEdge: .bottom) {
-                    serverDetail(server)
-                }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !selected, !vpsPairing.pairing else { return }
-            Task {
-                await PendingNetConnectionWorkflow.refreshAndConnect(
-                    server: server,
-                    pairing: vpsPairing,
-                    engine: engine,
-                    state: state
-                )
+            } onShowDetails: { serverID in
+                detailServerID = serverID
+            } detailPopover: { server in
+                AnyView(serverDetail(server))
             }
         }
     }
@@ -297,18 +245,11 @@ struct ControlView: View {
     /// 端口、支持的协议、连通性测试 —— 主界面只放 IP，细节都在这里。
     private func serverDetail(_ server: PairedVPSServer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(server.name)
-                .font(PendingNetTheme.Fonts.bodyEmphasized)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-
-            detailRow("地址", server.address, monospaced: true)
-            if let port = server.controlPort {
-                // verbatim: 端口是标识符不是数量（否则 7443 会被显示成 "7,443"）
-                detailRow("端口", port, monospaced: true)
-            }
-            if let protocols = server.nodeProtocols, !protocols.isEmpty {
-                detailRow("支持的协议", protocols.joined(separator: " · "))
-            }
+            PendingVPSDetails(
+                server: server,
+                nameStyle: .heading,
+                spacing: 10
+            )
 
             switch tester.results[server.serverID] {
             case .reachable(let milliseconds, let detail):
@@ -342,21 +283,6 @@ struct ControlView: View {
         }
         .padding(16)
         .frame(width: 280, alignment: .leading)
-    }
-
-    private func detailRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            Spacer()
-            // verbatim: 地址/端口都是标识符，不能被本地化成千分位数字
-            Text(verbatim: value)
-                .font(monospaced
-                    ? PendingNetTheme.Fonts.caption.monospaced()
-                    : PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-        }
     }
 
     private func test(_ server: PairedVPSServer) async {
