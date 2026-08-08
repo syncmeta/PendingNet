@@ -36,9 +36,12 @@ final class PendingNetUserEngine {
     nonisolated static let controlURL = URL(string: "http://127.0.0.1:29090")!
 
     static let portKey = "pendingnet.local-proxy-port"
+    static let lanKey = "pendingnet.allow-lan"
     static let defaultProxyPort = 2080
 
     private(set) var proxyPort: Int
+    /// 开着就监听 0.0.0.0，同网段的设备也能用这个代理。
+    private(set) var allowsLAN: Bool
     private(set) var process: Process?
     private var logHandle: FileHandle?
 
@@ -49,32 +52,46 @@ final class PendingNetUserEngine {
         self.defaults = defaults
         let configured = defaults.integer(forKey: Self.portKey)
         proxyPort = (1024...65535).contains(configured) ? configured : Self.defaultProxyPort
+        allowsLAN = defaults.bool(forKey: Self.lanKey)
     }
 
-    /// 改本机代理端口：校验、落盘、改写已应用的配置，正在跑就顺手重启。
-    /// 配置里的 VPS 出站原样保留 —— 换个端口不该让用户重新配对。
-    func setProxyPort(_ port: Int) async throws {
+    var listenAddress: String {
+        allowsLAN ? PendingNetProxyOnlyConfig.anyListen : PendingNetProxyOnlyConfig.loopbackListen
+    }
+
+    /// 改本机入站（端口 / 是否允许局域网）：校验、落盘、改写已应用的配置，
+    /// 正在跑就顺手重启。配置里的 VPS 出站原样保留 —— 换个端口不该让用户重新配对。
+    func setLocalInbound(port: Int, allowLAN: Bool) async throws {
         guard (1024...65535).contains(port) else { throw PendingNetUserEngineError.portOutOfRange }
         guard port != 29090 else { throw PendingNetUserEngineError.portReserved }
         if port != proxyPort, !portIsFree(port) { throw PendingNetUserEngineError.portInUse(port) }
 
+        let address = allowLAN
+            ? PendingNetProxyOnlyConfig.anyListen
+            : PendingNetProxyOnlyConfig.loopbackListen
         if fileManager.fileExists(atPath: configURL.path) {
-            let updated = try PendingNetProxyOnlyConfig.applyingListenPort(
+            let updated = try PendingNetProxyOnlyConfig.applyingLocalInbound(
                 to: try Data(contentsOf: configURL),
-                port: port
+                port: port,
+                listenAddress: address
             )
             try validate(updated)
             let wasRunning = isRunning
             if wasRunning { await stop() }
             try updated.write(to: configURL, options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
-            proxyPort = port
-            defaults.set(port, forKey: Self.portKey)
+            persist(port: port, allowLAN: allowLAN)
             if wasRunning { try await start() }
             return
         }
+        persist(port: port, allowLAN: allowLAN)
+    }
+
+    private func persist(port: Int, allowLAN: Bool) {
         proxyPort = port
+        allowsLAN = allowLAN
         defaults.set(port, forKey: Self.portKey)
+        defaults.set(allowLAN, forKey: Self.lanKey)
     }
 
     /// Whether nothing else is listening on 127.0.0.1:port right now. A bind
@@ -149,6 +166,7 @@ final class PendingNetUserEngine {
             controlSecret: try controlSecret(),
             cachePath: engineDirectory.appendingPathComponent("cache.db").path,
             listenPort: proxyPort,
+            listenAddress: listenAddress,
             ruleSetDirectory: ruleSets.configuredDirectory
         )
         let config = try PendingNetLocalConfigComposer.merge(

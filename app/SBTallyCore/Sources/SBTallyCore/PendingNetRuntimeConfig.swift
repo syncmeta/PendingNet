@@ -197,16 +197,22 @@ public enum PendingNetProxyOnlyConfig {
         "geosite-gfw": "geosite-gfw.srs",
     ]
 
+    /// 本机入站只允许这两种监听地址：只给本机，或者给整个局域网。
+    public static let loopbackListen = "127.0.0.1"
+    public static let anyListen = "0.0.0.0"
+
     public static func make(
         controlSecret: String,
         cachePath: String,
         listenPort: Int = 2080,
+        listenAddress: String = loopbackListen,
         controlPort: Int = 29090,
         ruleSetDirectory: String? = nil
     ) throws -> Data {
         guard !controlSecret.isEmpty, !cachePath.isEmpty,
               (1024...65535).contains(listenPort),
               (1024...65535).contains(controlPort),
+              [loopbackListen, anyListen].contains(listenAddress),
               listenPort != controlPort else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
@@ -215,7 +221,7 @@ public enum PendingNetProxyOnlyConfig {
             "inbounds": [[
                 "type": "mixed",
                 "tag": "pendingnet-local",
-                "listen": "127.0.0.1",
+                "listen": listenAddress,
                 "listen_port": listenPort,
             ]],
             "outbounds": [
@@ -256,11 +262,16 @@ public enum PendingNetProxyOnlyConfig {
         ) + Data([0x0a])
     }
 
-    /// Points the local inbound at a different port, leaving everything else
-    /// alone — the user changing 本地代理端口 in 设置 must not cost them their
-    /// applied VPS.
-    public static func applyingListenPort(to configData: Data, port: Int) throws -> Data {
+    /// Repoints the local inbound (port and/or listen address), leaving
+    /// everything else alone — changing 端口 or 允许局域网访问 in 设置 must not
+    /// cost the user their applied VPS.
+    public static func applyingLocalInbound(
+        to configData: Data,
+        port: Int,
+        listenAddress: String
+    ) throws -> Data {
         guard (1024...65535).contains(port),
+              [loopbackListen, anyListen].contains(listenAddress),
               var root = try JSONSerialization.jsonObject(with: configData) as? [String: Any],
               var inbounds = root["inbounds"] as? [[String: Any]],
               !inbounds.isEmpty else {
@@ -272,6 +283,7 @@ public enum PendingNetProxyOnlyConfig {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
         inbounds[0]["listen_port"] = port
+        inbounds[0]["listen"] = listenAddress
         root["inbounds"] = inbounds
         return try JSONSerialization.data(
             withJSONObject: root,

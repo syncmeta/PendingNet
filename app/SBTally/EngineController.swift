@@ -27,24 +27,31 @@ final class EngineController: ObservableObject {
     private var didAdoptHelperMode = false
     private let userEngine = PendingNetUserEngine()
 
-    /// 本机代理端口。设置页可改；连接页不再显示。
+    /// 本机代理端口与监听范围。设置页可改；连接页不再显示。
     @Published private(set) var localProxyPort: Int
+    @Published private(set) var allowsLAN: Bool
+
+    /// 界面上显示的监听地址 —— 允许局域网访问时就是 0.0.0.0。
+    var localListenAddress: String { userEngine.listenAddress }
 
     init() {
         localProxyPort = userEngine.proxyPort
+        allowsLAN = userEngine.allowsLAN
     }
 
-    /// 改端口。返回 nil 表示成功，否则是给用户看的人话。
-    /// 引擎在跑的话会就地重启到新端口，不用用户自己去关了再开。
-    func setLocalProxyPort(_ port: Int) async -> String? {
+    /// 改端口 / 局域网访问。返回 nil 表示成功，否则是给用户看的人话。
+    /// 引擎在跑的话会就地重启到新配置，不用用户自己去关了再开。
+    func setLocalInbound(port: Int, allowLAN: Bool) async -> String? {
         do {
-            try await userEngine.setProxyPort(port)
+            try await userEngine.setLocalInbound(port: port, allowLAN: allowLAN)
             localProxyPort = userEngine.proxyPort
+            allowsLAN = userEngine.allowsLAN
             running = userEngine.isRunning
             logTail = userEngine.logTail()
             return nil
         } catch {
             localProxyPort = userEngine.proxyPort
+            allowsLAN = userEngine.allowsLAN
             running = userEngine.isRunning
             return error.localizedDescription
         }

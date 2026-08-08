@@ -113,21 +113,31 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         XCTAssertEqual(tags(before), tags(after))
     }
 
-    /// 在设置里改端口不该让用户重新配对 VPS，也不该撞上控制端口。
-    func testApplyingListenPortKeepsEverythingElse() throws {
+    /// 在设置里改端口、开局域网访问都不该让用户重新配对 VPS，也不该撞上控制端口。
+    func testApplyingLocalInboundKeepsEverythingElse() throws {
         let base = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",
             cachePath: "/tmp/pendingnet-cache.db"
         )
-        let moved = try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 3128)
+        let moved = try PendingNetProxyOnlyConfig.applyingLocalInbound(
+            to: base,
+            port: 3128,
+            listenAddress: PendingNetProxyOnlyConfig.anyListen
+        )
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: moved) as? [String: Any])
         let inbound = try XCTUnwrap((root["inbounds"] as? [[String: Any]])?.first)
         XCTAssertEqual(inbound["listen_port"] as? Int, 3128)
+        XCTAssertEqual(inbound["listen"] as? String, "0.0.0.0")
         let clash = try XCTUnwrap((root["experimental"] as? [String: Any])?["clash_api"] as? [String: Any])
         XCTAssertEqual(clash["secret"] as? String, "test-secret")
 
-        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 80))
-        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingListenPort(to: base, port: 29090))
+        let loopback = PendingNetProxyOnlyConfig.loopbackListen
+        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingLocalInbound(
+            to: base, port: 80, listenAddress: loopback))
+        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingLocalInbound(
+            to: base, port: 29090, listenAddress: loopback))
+        XCTAssertThrowsError(try PendingNetProxyOnlyConfig.applyingLocalInbound(
+            to: base, port: 3128, listenAddress: "8.8.8.8"))
     }
 
     func testProxyOnlyBaseSupportsAnIsolatedListenPort() throws {
