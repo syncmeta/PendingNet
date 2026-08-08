@@ -82,6 +82,45 @@ def stroke_widths(svg: str) -> dict[str, float]:
     return widths
 
 
+def shape_bboxes(svg_text: str, units: float, work: pathlib.Path) -> dict[str, tuple[float, ...]]:
+    """逐个图形单独渲染取包围盒 —— 修主箭头时要按次箭头的尺寸/位置对齐。"""
+    head = svg_text[: svg_text.index("<path")]
+    out: dict[str, tuple[float, ...]] = {}
+    for tag, cls, attrs in parse_shapes(svg_text):
+        one = work / f"{cls}.svg"
+        one.write_text(f"{head}<{tag} class=\"{cls}\"{attrs}/></svg>")
+        out[cls] = shape_bbox(one, units)
+        one.unlink(missing_ok=True)
+    return out
+
+
+def repair_primary_arrow(svg_text: str, units: float, work: pathlib.Path) -> str:
+    """把主箭头换成次箭头旋转 180° 的副本。
+
+    设计稿导出的主箭头路径自交（渲出来是带缺口的墨块，苹果和 rsvg 的渲染结果一致）。
+    两个箭头本就是同一个字形的正反两版，所以拿干净的那个转过来复用，形状最忠于原设计。
+    """
+    shapes = {cls: (tag, attrs) for tag, cls, attrs in parse_shapes(svg_text)}
+    bb = shape_bboxes(svg_text, units, work)
+    x0, y0, w0, h0 = bb["st0"]
+    x1, y1, w1, h1 = bb["st1"]
+    scale = ((w0 / w1) + (h0 / h1)) / 2
+    cx0, cy0 = x0 + w0 / 2, y0 + h0 / 2
+    cx1, cy1 = x1 + w1 / 2, y1 + h1 / 2
+    tag, attrs = shapes["st1"]
+    # 变换写成图形自己的 transform 属性（而不是包一层 <g>），
+    # 后面按 class 逐个改色的正则才照样认得出它。
+    rebuilt = (
+        f'<{tag} class="st0" transform="translate({cx0:.2f} {cy0:.2f}) scale({scale:.4f}) '
+        f'rotate(180) translate({-cx1:.2f} {-cy1:.2f})"{attrs}/>'
+    )
+    head = svg_text[: svg_text.index("<path")]
+    rest = [rebuilt] + [
+        f'<{shapes[c][0]} class="{c}"{shapes[c][1]}/>' for c in ("st1", "st2", "st3") if c in shapes
+    ]
+    return head + "\n".join(rest) + "\n</svg>\n"
+
+
 def build_foreground(svg_text: str, bbox: tuple[float, float, float, float]) -> str:
     x, y, w, h = bbox
     scale = CONTENT_MAX / max(w, h)
@@ -115,17 +154,30 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--svg", default=str(ROOT / "PendingNetIcon.svg"))
     ap.add_argument("--out", default=str(ROOT / "app" / "SBTally" / "PendingNet.icon"))
+    ap.add_argument(
+        "--repair-primary-arrow",
+        action="store_true",
+        help="设计稿里主箭头路径自交时，用次箭头旋转 180° 顶上",
+    )
     args = ap.parse_args()
 
     src = pathlib.Path(args.svg)
     svg_text = src.read_text()
-    bbox = shape_bbox(src, view_box(svg_text))
+    units = view_box(svg_text)
 
     out = pathlib.Path(args.out)
     if out.exists():
         shutil.rmtree(out)
     (out / "Assets").mkdir(parents=True)
+
+    if args.repair_primary_arrow:
+        svg_text = repair_primary_arrow(svg_text, units, out)
+        src = out / "repaired.svg"
+        src.write_text(svg_text)
+    bbox = shape_bbox(src, units)
     (out / "Assets" / "PendingNet.svg").write_text(build_foreground(svg_text, bbox))
+    if args.repair_primary_arrow:
+        src.unlink()
 
     r, g, b = BRAND_GREEN
     (out / "icon.json").write_text(
