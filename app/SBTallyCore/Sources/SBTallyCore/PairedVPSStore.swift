@@ -160,8 +160,17 @@ public final class PairedVPSStore: ObservableObject {
         self.localKey = localKey
         self.cloudKey = cloudKey
         self.now = now
-        servers = PairedVPSMerge.merge(local: decode(defaults.data(forKey: localKey)), remote: cloudRecords())
-        persist()
+        let localRecords = decode(defaults.data(forKey: localKey))
+        let remoteRecords = cloudRecords()
+        servers = PairedVPSMerge.merge(local: localRecords, remote: remoteRecords)
+        persistLocally()
+        // A fresh device starts before iCloud's initial download has necessarily
+        // populated the KVS cache. Publishing [] here can therefore erase the
+        // real cloud value. Only publish when this device actually contributes
+        // a record that the currently visible cloud value lacks or has older.
+        if cloudNeedsUpdate(remote: remoteRecords, merged: servers) {
+            persistToCloud()
+        }
         observeCloud()
     }
 
@@ -225,10 +234,18 @@ public final class PairedVPSStore: ObservableObject {
     }
 
     private func mergeCloudIntoLocal() {
-        let merged = PairedVPSMerge.merge(local: servers, remote: cloudRecords())
-        guard merged != servers else { return }
-        servers = merged
-        persist()
+        let remoteRecords = cloudRecords()
+        let merged = PairedVPSMerge.merge(local: servers, remote: remoteRecords)
+        if merged != servers {
+            servers = merged
+            persistLocally()
+        }
+        // Also repair a cloud value that is missing records already held
+        // locally. In that case the in-memory union is unchanged, so comparing
+        // only `merged` with `servers` would never heal the cloud copy.
+        if cloudNeedsUpdate(remote: remoteRecords, merged: merged) {
+            persistToCloud()
+        }
     }
 
     private func cloudRecords() -> [PairedVPSRecord] {
@@ -245,8 +262,31 @@ public final class PairedVPSStore: ObservableObject {
     }
 
     private func persist() {
+        persistLocally()
+        persistToCloud()
+    }
+
+    private func persistLocally() {
         guard let data = try? JSONEncoder().encode(servers) else { return }
         defaults.set(data, forKey: localKey)
+    }
+
+    private func persistToCloud() {
+        guard let data = try? JSONEncoder().encode(servers) else { return }
         cloud?.setData(data, forKey: cloudKey)
+    }
+
+    /// Tie timestamps deliberately do not count as stale: merge semantics keep
+    /// the local value on a tie, and rewriting it would make two devices with
+    /// tied-but-different records overwrite each other forever.
+    private func cloudNeedsUpdate(
+        remote: [PairedVPSRecord],
+        merged: [PairedVPSRecord]
+    ) -> Bool {
+        let remoteByID = Dictionary(uniqueKeysWithValues: remote.map { ($0.serverID, $0) })
+        return merged.contains { record in
+            guard let cloudRecord = remoteByID[record.serverID] else { return true }
+            return record.updatedAt > cloudRecord.updatedAt
+        }
     }
 }

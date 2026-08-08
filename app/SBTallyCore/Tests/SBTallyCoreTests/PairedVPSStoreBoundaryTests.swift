@@ -243,14 +243,11 @@ final class PairedVPSStoreBoundaryTests: XCTestCase {
         XCTAssertEqual(relaunched.servers.map(\.updatedAt), [.distantPast])
     }
 
-    // MARK: - 已知未修的问题（报给机长了，产品代码不归这条线改）
+    // MARK: - 首次同步不能发布空名单
 
-    /// **这条现在是红的，用 `XCTExpectFailure` 兜着——修好之后请删掉那一行。**
-    ///
     /// 全新设备第一次启动：`NSUbiquitousKeyValueStore` 的本地缓存还没下下来，
-    /// `data(forKey:)` 回 nil，于是 `init` 里 `servers` 是空的，紧接着的
-    /// `persist()` 把**一份空名单**发布到了云上。KVS 是按键 last-writer-wins，
-    /// 这一下可能盖掉另一台设备已经同步上去的名单。
+    /// `data(forKey:)` 回 nil，`servers` 也是空的。此时绝不能把这份空名单发布
+    /// 到云上；KVS 是按键 last-writer-wins，会盖掉另一台已经同步好的名单。
     ///
     /// 要命的是它**不会自愈**：对面收到空名单后走 `merge(local:remote:)`，并集
     /// 语义下结果与自己原来的一模一样，`mergeCloudIntoLocal` 因此提前返回、
@@ -259,10 +256,26 @@ final class PairedVPSStoreBoundaryTests: XCTestCase {
     ///
     /// 现象正是最难查的那种：两台设备各自都好好的，就是同步不过去。
     func testFreshDeviceMustNotPublishAnEmptyListOverTheCloud() {
-        XCTExpectFailure("已知问题：init 无条件 persist()，空名单会被发布到云端")
         let cloud = RecordingCloudStore()
         _ = PairedVPSStore(defaults: boundaryDefaults("fresh"), cloud: cloud, now: { self.early })
         XCTAssertTrue(cloud.writes.isEmpty, "本地和云端都还是空的，不该往云里写一份空名单")
+    }
+
+    /// 老版本已经把云端盖成空名单时，新版本收到同步/主动刷新后要把本机仍有的
+    /// 记录补回去；不能因为内存里的并集没变化就提前返回。
+    func testLocalRecordsRepairAnEmptyCloudValueEvenWhenTheUnionIsUnchanged() throws {
+        let defaults = boundaryDefaults("repair-empty-cloud")
+        try seedLocal(defaults, [boundaryRecord(id: "a", updatedAt: early)])
+        let cloud = RecordingCloudStore()
+        let store = PairedVPSStore(defaults: defaults, cloud: cloud, now: { self.late })
+        XCTAssertEqual(cloud.records.map(\.serverID), ["a"])
+
+        try cloud.seed([])
+        let writesBeforeRefresh = cloud.writes.count
+        store.refreshFromCloud()
+
+        XCTAssertEqual(cloud.records.map(\.serverID), ["a"])
+        XCTAssertEqual(cloud.writes.count, writesBeforeRefresh + 1)
     }
 
     // MARK: - iCloud 主动推送
