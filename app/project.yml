@@ -63,6 +63,35 @@ targets:
       - path: PendingUI
       # 与 macOS 共用同一份分层图标（见 scripts/make-app-icon.py）
       - path: PendingNet.icon
+    # 与 macOS 那份**逐字相同**的 .pdn 类型声明（见下面 PendingNet target）。
+    # 少了它，系统根本不知道 PendingNet 认识这个后缀：「文件」里点开没反应，
+    # AirDrop 过来也不给选这个 App，只能进 App 里手动点导入。
+    #
+    # CFBundleDisplayName 不写在这里 —— iOS 侧走的是 INFOPLIST_KEY_ 那条路
+    # （见下面 settings），两处都写等于同一个键有两个来源。
+    info:
+      path: PendingNetIOS/Info.plist
+      properties:
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: PendingNet Pairing
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSItemContentTypes:
+              - com.pendingname.pdn
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.pendingname.pdn
+            UTTypeDescription: PendingNet Pairing
+            UTTypeConformsTo:
+              - public.json
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - pdn
+              public.mime-type: application/vnd.pendingnet.pairing+json
+        # 故意**不**支持就地打开：这样系统会把文件拷一份进 App 的 Inbox，
+        # 我们读完就把那份拷贝删掉（见 PendingNetIOSApp 的 onOpenURL）。
+        # 就地打开意味着去碰用户 iCloud 云盘里的原件，而我们对这个文件只有
+        # 「读一次」这一个诉求，拿不到删除它的正当理由。
+        LSSupportsOpeningDocumentsInPlace: false
     entitlements:
       path: PendingNetIOS/PendingNetIOS.entitlements
       properties:
