@@ -49,9 +49,16 @@ final class PendingNetTunnelController: ObservableObject {
 
     init(ruleSetStore: PendingNetRuleSetStore) {
         self.ruleSetStore = ruleSetStore
+        // 经 `stored(rawValue:)` 读，而不是直接 `init(rawValue:)`：档位改名之后
+        // 老用户存的还是 `bypassCN` / `direct`，直接解会读成 nil 并被悄悄打回
+        // 全局，等于因为一次改名丢掉了用户的设置。顺手把迁移结果写回去，免得
+        // 每次冷启动都再翻译一遍。
         if let raw = UserDefaults.standard.string(forKey: routeModeKey),
-           let mode = PendingNetRouteMode(rawValue: raw) {
+           let mode = PendingNetRouteMode.stored(rawValue: raw) {
             routeMode = mode
+            if mode.rawValue != raw {
+                UserDefaults.standard.set(mode.rawValue, forKey: routeModeKey)
+            }
         }
         // 显式写标签：`PendingNetCommandClient` 现在有 onSnapshot / onLogEvent
         // 两个初始化器，尾随闭包会歧义。
@@ -99,8 +106,8 @@ final class PendingNetTunnelController: ObservableObject {
     /// 隧道**不在位**时还要顺手把 App Group 里的启动快照一起重写。少了这一步，
     /// `UserDefaults` 里是新模式、快照里还是旧模式，而快照正是「设置 → VPN」
     /// 里直接开隧道时扩展唯一能读到的配置（那条路径 `startTunnel` 的 options
-    /// 是空的）——界面显示「绕过大陆」、隧道实际跑「全局代理」，反过来也一样：
-    /// 用户以为在走代理，快照里却是 `.direct` 的全直连。
+    /// 是空的）——界面显示「白名单」、隧道实际跑「全局」，反过来也一样：
+    /// 用户以为国内在直连，快照里却是全都走代理。
     ///
     /// 隧道在位时不写：那条路径由调用方 `reload()` 把新配置推给扩展，扩展在
     /// libbox **接受之后**才落盘快照，这个次序不能绕过。
@@ -238,9 +245,10 @@ final class PendingNetTunnelController: ObservableObject {
     }
 
     /// 「规则集缺失或损坏时降级为全局代理，不使隧道启动失败」这条规则原先
-    /// 只长在分流选择器那条路径上。持久化的 `.bypassCN` 走的是这里：直接
+    /// 只长在分流选择器那条路径上。持久化的白名单 / 黑名单走的是这里：直接
     /// 拿它生成配置，规则集不在（或上一轮落了个被替换的 HTML）就会产出一份
-    /// 内核拒收的配置，隧道干脆起不来——正是那条规则要避免的结果。
+    /// 内核拒收的配置，隧道干脆起不来——正是那条规则要避免的结果。黑名单
+    /// 同样吃规则集（geosite-gfw），所以判据是「不是全局」而不是某一档。
     ///
     /// 判据是 `ensureAvailable()` 之后的 `isReady`，而不是它有没有抛错：
     /// `isReady` 是照磁盘上的文件（含 `.srs` 魔数）重新算出来的，就算下载
@@ -249,7 +257,7 @@ final class PendingNetTunnelController: ObservableObject {
         profile: PendingNetNodeProfile,
         serverName: String
     ) async {
-        guard routeMode == .bypassCN else { return }
+        guard routeMode != .global else { return }
         var reason: String?
         do {
             try await ruleSetStore.ensureAvailable()

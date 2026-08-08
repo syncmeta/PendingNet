@@ -120,11 +120,11 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         XCTAssertNil(tun["server"], "tun inbound 不得携带任何服务端字段")
     }
 
-    func testBypassCNRoutesDomesticTrafficDirect() throws {
+    func testWhitelistRoutesDomesticTrafficDirect() throws {
         let server = try Self.sampleRuntimeServer()
         let data = try PendingNetTunnelConfig.make(
             runtimeServer: server,
-            routeMode: .bypassCN,
+            routeMode: .whitelist,
             ruleSetDirectory: "/tmp/rs",
             cachePath: "/tmp/pendingnet-cache.db"
         )
@@ -132,7 +132,6 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         let route = try XCTUnwrap(root["route"] as? [String: Any])
 
         let ruleSets = try XCTUnwrap(route["rule_set"] as? [[String: Any]])
-        XCTAssertEqual(ruleSets.count, 2)
         for ruleSet in ruleSets {
             XCTAssertEqual(ruleSet["type"] as? String, "local")
             XCTAssertEqual(ruleSet["format"] as? String, "binary")
@@ -140,9 +139,11 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             XCTAssertTrue(path.hasPrefix("/tmp/rs/"))
             XCTAssertTrue(path.hasSuffix(".srs"))
         }
+        // 只声明这一档真正引用到的规则集：多余的 rule_set 会被内核照单加载，
+        // 白名单没有理由为黑名单的 GFW 名单付内存。
         XCTAssertEqual(
             Set(ruleSets.compactMap { $0["tag"] as? String }),
-            Set(PendingNetTunnelConfig.requiredRuleSetNames)
+            ["geoip-cn", "geosite-cn"]
         )
 
         let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
@@ -154,7 +155,7 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             && ($0["outbound"] as? String) == "direct" })
         XCTAssertEqual(route["final"] as? String, server.selectorTag)
 
-        // .bypassCN 仍然把绝大多数流量送进隧道，域名解析默认走代理侧解析器；
+        // 白名单仍然把绝大多数流量送进隧道，域名解析默认走代理侧解析器；
         // 只有命中 geosite-cn 的域名才会被下面的 dns.rules 摘出来走直连。
         XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-proxy")
 
@@ -164,28 +165,67 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             && ($0["server"] as? String) == "dns-direct" })
     }
 
-    func testDirectModeKeepsTunnelUpButSendsEverythingDirect() throws {
+    /// 黑名单是白名单的镜像：兜底直连，只有 GFW 名单里的域名走代理。语义
+    /// 与 macOS 的 `clash_mode: Blacklist`（PendingNetProxyOnlyConfig）一致，
+    /// 用的也是同一个 geosite-gfw 名单。
+    func testBlacklistOnlyProxiesBlockedDomains() throws {
         let server = try Self.sampleRuntimeServer()
         let data = try PendingNetTunnelConfig.make(
             runtimeServer: server,
-            routeMode: .direct,
+            routeMode: .blacklist,
             ruleSetDirectory: "/tmp/rs",
             cachePath: "/tmp/pendingnet-cache.db"
         )
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let route = try XCTUnwrap(root["route"] as? [String: Any])
-        XCTAssertEqual(route["final"] as? String, "direct")
-        XCTAssertNil(route["rule_set"], "应急模式不依赖任何规则集文件")
-        XCTAssertEqual((root["dns"] as? [String: Any])?["final"] as? String, "dns-direct")
 
-        // .direct 是应急全直连：域名解析也必须走直连解析器，否则解析本身
-        // 仍会绕回代理，与"应急模式下不依赖代理"的意图相悖。
+        XCTAssertEqual(route["final"] as? String, "direct", "黑名单的兜底是直连")
+
+        let ruleSets = try XCTUnwrap(route["rule_set"] as? [[String: Any]])
+        XCTAssertEqual(Set(ruleSets.compactMap { $0["tag"] as? String }), ["geosite-gfw"])
+        XCTAssertEqual(
+            ruleSets.first?["path"] as? String,
+            "/tmp/rs/geosite-gfw.srs"
+        )
+
+        let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+        XCTAssertTrue(rules.contains { ($0["rule_set"] as? [String]) == ["geosite-gfw"]
+            && ($0["outbound"] as? String) == server.selectorTag })
+        XCTAssertTrue(rules.contains { ($0["ip_is_private"] as? Bool) == true
+            && ($0["outbound"] as? String) == "direct" })
+
+        // 绝大多数流量直连，解析默认也走直连侧；被墙的域名单独交给代理侧
+        // 解析器，否则拿到的是被污染的结果。
         XCTAssertEqual(route["default_domain_resolver"] as? String, "dns-direct")
+        let dns = try XCTUnwrap(root["dns"] as? [String: Any])
+        XCTAssertEqual(dns["final"] as? String, "dns-direct")
+        let dnsRules = try XCTUnwrap(dns["rules"] as? [[String: Any]])
+        XCTAssertTrue(dnsRules.contains { ($0["rule_set"] as? [String]) == ["geosite-gfw"]
+            && ($0["server"] as? String) == "dns-proxy" })
 
-        // 隧道仍然建立，selector 仍然在位，方便一键切回。
+        // 隧道仍然建立，selector 仍然在位。
         let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
         XCTAssertTrue(outbounds.contains { $0["tag"] as? String == server.selectorTag })
         XCTAssertEqual((root["inbounds"] as? [[String: Any]])?.first?["type"] as? String, "tun")
+    }
+
+    /// 档位改名不能让老用户的设置读成 nil 而被打回默认值。
+    func testStoredRouteModeMigratesLegacyRawValues() {
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "bypassCN"), .whitelist)
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "direct"), .global)
+        for mode in PendingNetRouteMode.allCases {
+            XCTAssertEqual(PendingNetRouteMode.stored(rawValue: mode.rawValue), mode)
+        }
+        XCTAssertNil(PendingNetRouteMode.stored(rawValue: "nonsense"))
+    }
+
+    /// 两端的档位必须是同一套三档，多一档少一档都会让用户以为 iOS 和 macOS
+    /// 不是一个东西——这正是这次统一要消除的困惑。
+    func testRouteModesMatchTheMacOSClashModes() {
+        XCTAssertEqual(
+            PendingNetRouteMode.allCases.map(\.rawValue),
+            ["global", "whitelist", "blacklist"]
+        )
     }
 
     func testEveryRouteModePassesInstalledSingBoxCheck() throws {
@@ -320,13 +360,33 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             PendingNetTunnelConfig.requiredRuleSetNames,
             PendingNetTunnelConfig.requiredRuleSets.map(\.name)
         )
-        XCTAssertEqual(PendingNetTunnelConfig.requiredRuleSetNames, ["geoip-cn", "geosite-cn"])
+        XCTAssertEqual(
+            PendingNetTunnelConfig.requiredRuleSetNames,
+            ["geoip-cn", "geosite-cn", "geosite-gfw"]
+        )
+        // 名单必须覆盖三档配置真正引用到的每一个 tag，否则表现是 sing-box
+        // 启动时报 `rule-set not found`，而且只在真机上看得见。
+        for mode in PendingNetRouteMode.allCases {
+            for tag in PendingNetTunnelConfig.ruleSetTags(mode: mode) {
+                XCTAssertTrue(
+                    PendingNetTunnelConfig.requiredRuleSetNames.contains(tag),
+                    "\(mode.rawValue) 引用了不在下载名单里的规则集：\(tag)"
+                )
+            }
+        }
+        // 落盘文件名一律是 `<name>.srs`，不跟着 URL 末段走——上游的
+        // geosite-gfw 就叫 gfw.srs。这里只要求来源确实是个 .srs。
         for source in PendingNetTunnelConfig.requiredRuleSets {
             XCTAssertTrue(
-                source.url.lastPathComponent == "\(source.name).srs",
-                "下载地址与规则集名字对不上：\(source.name) ← \(source.url)"
+                source.url.lastPathComponent.hasSuffix(".srs"),
+                "下载地址不像规则集：\(source.name) ← \(source.url)"
             )
         }
+        XCTAssertEqual(
+            Set(PendingNetTunnelConfig.requiredRuleSetNames).count,
+            PendingNetTunnelConfig.requiredRuleSetNames.count,
+            "规则集名字重复会让后下载的那份盖掉前一份"
+        )
     }
 
     /// 只按「非空」判断会放过一个 200 + HTML 的门户页——`raw.githubusercontent.com`

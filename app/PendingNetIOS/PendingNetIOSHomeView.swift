@@ -152,8 +152,8 @@ struct PendingNetIOSHomeView: View {
                 serverName: server.name,
                 serverID: profile.serverID
             )
-            // 规则集不可用时 start 会降级到全局代理而不是失败；降级必须让
-            // 用户看见，否则界面上的「绕过大陆」会悄悄变成「全局代理」。
+            // 规则集不可用时 start 会降级到全局而不是失败；降级必须让
+            // 用户看见，否则界面上的「白名单」会悄悄变成「全局」。
             if let notice = controller.tunnel.degradeNotice {
                 controller.errorMessage = notice
                 controller.tunnel.degradeNotice = nil
@@ -165,9 +165,9 @@ struct PendingNetIOSHomeView: View {
 
     // MARK: - 路由
 
-    /// 三档分流模式。切换只做两件事：落 `routeMode`（`.bypassCN` 之前先
-    /// 确保规则集在），隧道在位再 `reload` 把新配置真正推给扩展。两者都
-    /// 不重启隧道进程本身——`.bypassCN`/`.direct` 的差别只在 sing-box 的
+    /// 三档分流模式（与 macOS 同名同义）。切换只做两件事：落 `routeMode`
+    /// （白名单 / 黑名单之前先确保规则集在），隧道在位再 `reload` 把新配置
+    /// 真正推给扩展。两者都不重启隧道进程本身——三档的差别只在 sing-box 的
     /// route/dns 段，`reload` 走的是已经建立的 `sendProviderMessage`
     /// 通道。未连接时只落地 `routeMode`，下一次 `start` 会带着它生效。
     private var routeModePills: some View {
@@ -184,9 +184,9 @@ struct PendingNetIOSHomeView: View {
 
     /// 切换分流模式的完整流程，含降级。
     ///
-    /// `.bypassCN` 需要规则集：拿不到就不切——保持在原模式（多数情况下是
-    /// 已经在用的全局代理），并提示用户，绝不能让隧道因为规则集缺失/损坏
-    /// 而起不来。真正应用新模式（落地 `routeMode` + 已连接时 `reload`）统一
+    /// 白名单 / 黑名单都需要规则集：拿不到就不切——保持在原模式（多数情况下
+    /// 是已经在用的全局），并提示用户，绝不能让隧道因为规则集缺失/损坏而
+    /// 起不来。真正应用新模式（落地 `routeMode` + 已连接时 `reload`）统一
     /// 走 `applyRouteMode`，成功与「降级回退」共用同一条路径。
     private func switchRouteMode(
         to mode: PendingNetRouteMode,
@@ -200,13 +200,13 @@ struct PendingNetIOSHomeView: View {
         controller.errorMessage = nil
         controller.message = nil
 
-        if mode == .bypassCN {
+        if mode != .global {
             do {
                 try await controller.ruleSetStore.ensureAvailable()
             } catch {
-                controller.errorMessage = "规则集不可用，已保持全局代理：\(error.localizedDescription)"
-                // 降级：确保隧道（如果在位）确实跑在全局代理上，而不是停在
-                // 「用户点了绕过大陆，但没人知道最终生效的是哪个模式」这种
+                controller.errorMessage = "规则集不可用，已保持全局：\(error.localizedDescription)"
+                // 降级：确保隧道（如果在位）确实跑在全局上，而不是停在
+                // 「用户点了白名单，但没人知道最终生效的是哪个模式」这种
                 // 界面选中项和隧道实际配置对不上的状态。
                 if previous != .global {
                     _ = await applyRouteMode(.global, previous: previous, profile: profile, serverName: serverName)
@@ -242,11 +242,13 @@ struct PendingNetIOSHomeView: View {
         }
     }
 
+    /// 档位名与 macOS 完全一致（ControlView / MenuBarView 的「全局 / 白名单 /
+    /// 黑名单」）。同一个功能两端两套说法，用户只会以为两端不是一个东西。
     private func routeModeTitle(_ mode: PendingNetRouteMode) -> String {
         switch mode {
-        case .global: "全局代理"
-        case .bypassCN: "绕过大陆"
-        case .direct: "全局直连"
+        case .global: "全局"
+        case .whitelist: "白名单"
+        case .blacklist: "黑名单"
         }
     }
 

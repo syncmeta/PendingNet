@@ -35,7 +35,7 @@ struct PendingNetIOSSettingsView: View {
         PendingSectionCard("规则集") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("绕过大陆所需的 geoip / geosite 数据")
+                    Text("白名单 / 黑名单所需的 geoip / geosite 数据")
                         .font(PendingNetTheme.Fonts.body)
                         .foregroundStyle(PendingNetTheme.Palette.ink)
                         .fixedSize(horizontal: false, vertical: true)
@@ -46,7 +46,7 @@ struct PendingNetIOSSettingsView: View {
                     )
                 }
 
-                Text("「绕过大陆」要用它来判断哪些流量直连。没有的话切到那一档会自动降级成全局代理。")
+                Text("「白名单」靠它判断哪些流量直连，「黑名单」靠它判断哪些流量走代理。没有的话切到这两档会自动降级成全局。")
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)

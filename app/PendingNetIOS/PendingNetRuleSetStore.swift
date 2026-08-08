@@ -12,14 +12,14 @@ import SBTallyCore
 @MainActor
 final class PendingNetRuleSetStore: ObservableObject {
     /// 规则集全部就位且看上去确实是 `.srs`。`PendingNetTunnelController.start`
-    /// 用它决定 `.bypassCN` 能不能直接开跑。
+    /// 用它决定白名单 / 黑名单能不能直接开跑。
     @Published private(set) var isReady = false
 
     init() {
         isReady = Self.allPresent()
     }
 
-    /// 已有有效文件时直接返回，不重复下载。切分流模式到 `.bypassCN` 时调
+    /// 已有有效文件时直接返回，不重复下载。切分流模式到白名单 / 黑名单时调
     /// 这个，而不是 `refresh()`——已经在用的规则集没有理由每次都重下。
     func ensureAvailable() async throws {
         if Self.allPresent() {
