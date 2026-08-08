@@ -70,6 +70,13 @@ targets:
           - packet-tunnel-provider
         com.apple.security.application-groups:
           - group.com.pendingname.pendingnet
+        # 已配对 VPS 与设备令牌在 Mac 与 iPhone 之间同步：键值存储标识和
+        # 钥匙串共享组两端必须**逐字相同**（macOS 那个 target 的 bundle id 是
+        # net.pending.PendingNet，所以这里写死 com.pendingname.pendingnet，
+        # 不能用 $(CFBundleIdentifier)）。
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.pendingname.pendingnet
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.pendingname.pendingnet
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet
@@ -112,6 +119,16 @@ targets:
       - path: PendingUI
       - path: PendingNetHelper/HelperProtocol.swift
       - path: PendingNet.icon
+    # 与 iOS 端逐字相同的两把钥匙 —— 已配对 VPS 走 iCloud 键值存储，设备令牌
+    # 走共享钥匙串组。注意：这两项是「受限 entitlement」，必须由描述文件背书，
+    # 光靠 codesign 签进去不算数（见 scripts/sign-macos-development.sh）。
+    # 本地 ad-hoc 构建两项都不生效，App 自动退回纯本地存储。
+    entitlements:
+      path: SBTally/PendingNet.entitlements
+      properties:
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.pendingname.pendingnet
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.pendingname.pendingnet
     info:
       path: SBTally/Info.plist
       properties:
@@ -148,6 +165,9 @@ targets:
         MARKETING_VERSION: 0.3.18
         CURRENT_PROJECT_VERSION: 318
         PENDINGNET_UPDATE_FEED_URL: https://updates.pendingname.com/pendingnet/appcast.xml
+        # 发布仍是 Developer ID + 手工 codesign（构建时 CODE_SIGNING_ALLOWED=NO），
+        # 这里补 team 是为了能在门户/Xcode 侧给这个 App ID 配 iCloud 与钥匙串共享。
+        DEVELOPMENT_TEAM: M42BKJN82S
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore

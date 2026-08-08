@@ -351,46 +351,4 @@ public struct PendingNetEnrollmentClient: Sendable {
     }
 }
 
-public enum PendingNetCredentialStore {
-    public static let service = "net.pending.PendingNet.server-token"
-
-    public static func save(accessToken: String, serverID: String) throws {
-        let account = serverID as CFString
-        let tokenData = Data(accessToken.utf8) as CFData
-        let base: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service as CFString,
-            kSecAttrAccount: account,
-        ]
-        let updateStatus = SecItemUpdate(base as CFDictionary, [kSecValueData: tokenData] as CFDictionary)
-        if updateStatus == errSecSuccess { return }
-        guard updateStatus == errSecItemNotFound else {
-            throw PendingNetPairingError.keychain(updateStatus)
-        }
-        var add = base
-        add[kSecValueData] = tokenData
-        let addStatus = SecItemAdd(add as CFDictionary, nil)
-        guard addStatus == errSecSuccess else {
-            throw PendingNetPairingError.keychain(addStatus)
-        }
-    }
-
-    public static func load(serverID: String) throws -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service as CFString,
-            kSecAttrAccount: serverID as CFString,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let token = String(data: data, encoding: .utf8) else {
-            throw PendingNetPairingError.keychain(status)
-        }
-        return token
-    }
-}
+// 设备令牌的钥匙串读写见 PendingNetCredentialStore.swift。

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SBTallyCore
 
@@ -11,34 +12,9 @@ private enum VPSPairingControllerError: LocalizedError {
     }
 }
 
-struct PairedVPSServer: Codable, Identifiable, Equatable {
-    var id: String { serverID }
-    var serverID: String
-    var name: String
-    var endpoint: String
-    var certificateSHA256: String
-    var deviceID: String
-    var capabilities: [String]
-    var nodeProtocols: [String]?
-    var pairedAt: Date
-
-    /// 界面上代表这台 VPS 的就是它的 IP（或主机名）—— 不带协议、不带端口。
-    var address: String {
-        if let host = URL(string: endpoint)?.host, !host.isEmpty { return host }
-        var text = endpoint
-        if let range = text.range(of: "://") { text = String(text[range.upperBound...]) }
-        if let colon = text.lastIndex(of: ":") { text = String(text[text.startIndex..<colon]) }
-        return text
-    }
-
-    /// 控制服务端口，只在「详情」里出现。
-    var controlPort: String? {
-        if let port = URL(string: endpoint)?.port { return String(port) }
-        guard let colon = endpoint.lastIndex(of: ":") else { return nil }
-        let tail = String(endpoint[endpoint.index(after: colon)...])
-        return Int(tail) == nil ? nil : tail
-    }
-}
+/// 已配对 VPS 的形状和存储都在 SBTallyCore 里，和 iOS 共用同一份
+/// （见 `PairedVPSStore`）—— 两端各存各的时代已经过去了。
+typealias PairedVPSServer = PairedVPSRecord
 
 @MainActor
 final class VPSPairingController: ObservableObject {
@@ -47,12 +23,23 @@ final class VPSPairingController: ObservableObject {
     @Published var lastError: String?
     @Published var lastMessage: String?
 
-    private let defaults: UserDefaults
-    private let defaultsKey = "pendingnet.paired-vps.v1"
+    private let store: PairedVPSStore
+    private var cancellables = Set<AnyCancellable>()
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        load()
+    init(store: PairedVPSStore? = nil) {
+        let store = store ?? PairedVPSStore()
+        self.store = store
+        servers = store.servers
+        // 存储层是真源：本机改动、iCloud 推过来的改动，都从这一条流回界面。
+        store.$servers
+            .sink { [weak self] in self?.servers = $0 }
+            .store(in: &cancellables)
+    }
+
+    /// App 启动 / 回到前台时叫一次，把 iCloud 那边的改动拉过来。
+    /// iCloud 不可用时是空操作。
+    func refreshFromCloud() {
+        store.refreshFromCloud()
     }
 
     func importAndEnroll(url: URL) async -> PendingNetRuntimeServer? {
@@ -140,28 +127,8 @@ final class VPSPairingController: ObservableObject {
         lastError = message
     }
 
-    private func load() {
-        guard let data = defaults.data(forKey: defaultsKey),
-              let decoded = try? JSONDecoder().decode([PairedVPSServer].self, from: data) else {
-            servers = []
-            return
-        }
-        servers = decoded
-    }
-
-    private func save() {
-        guard let data = try? JSONEncoder().encode(servers) else { return }
-        defaults.set(data, forKey: defaultsKey)
-    }
-
     private func upsert(_ record: PairedVPSServer) {
-        if let index = servers.firstIndex(where: { $0.serverID == record.serverID }) {
-            servers[index] = record
-        } else {
-            servers.append(record)
-        }
-        servers.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        save()
+        store.upsert(record)
     }
 
     private func detailedMessage(for error: Error) -> String {

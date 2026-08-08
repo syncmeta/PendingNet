@@ -1,12 +1,44 @@
 #!/bin/sh
+# 用法: [PENDINGNET_SIGN_IDENTITY=<identity>] [PENDINGNET_PROVISION_PROFILE=<file>]
+#       scripts/sign-macos-development.sh /path/to/PendingNet.app
+#
+# 关于 entitlements：app 现在带 iCloud 键值存储 + 共享钥匙串组（已配对 VPS 与
+# 设备令牌要在 Mac 和 iPhone 之间同步）。这两项是**受限 entitlement**，光用
+# codesign 签进去不算数 —— 必须有一份包含它们的 Developer ID 描述文件放进
+# Contents/embedded.provisionprofile 背书，否则系统会当成没有。
+#
+# 所以：
+#   - ad-hoc（identity 为 `-`，本地开发构建）：照旧不带 entitlements。App 里
+#     那套存储探不到 iCloud 就退回纯本地，不报错 —— 本地开发不受影响。
+#   - Developer ID：必须给 PENDINGNET_PROVISION_PROFILE。硬要不带着发，得显式
+#     PENDINGNET_ALLOW_NO_PROFILE=1（发出去的包不会同步，只是不会崩）。
 set -eu
 
 app="${1:?usage: scripts/sign-macos-development.sh /path/to/PendingNet.app}"
 helper="$app/Contents/MacOS/PendingNetHelper"
 identity="${PENDINGNET_SIGN_IDENTITY:--}"
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
+profile="${PENDINGNET_PROVISION_PROFILE:-}"
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+entitlements_src="$root/app/SBTally/PendingNet.entitlements"
 
 test -x "$helper"
+
+# 描述文件在手：把它放进包里，并把 entitlements 里的 $(AppIdentifierPrefix) /
+# $(TeamIdentifierPrefix) 展开成描述文件里那个 team —— 手工 codesign 不认构建
+# 变量，字面量签进去等于把钥匙串组签废（而且全程零报错）。
+prepare_entitlements() {
+  cp "$profile" "$app/Contents/embedded.provisionprofile"
+  team=$(security cms -D -i "$profile" | plutil -extract TeamIdentifier.0 raw -o - -)
+  test -n "$team" || { echo "描述文件里取不到 TeamIdentifier" >&2; exit 2; }
+  expanded="$app.entitlements.expanded.plist"
+  sed -e "s/[$](AppIdentifierPrefix)/$team./g" \
+      -e "s/[$](TeamIdentifierPrefix)/$team./g" "$entitlements_src" > "$expanded"
+  if grep -q '[$](' "$expanded"; then
+    echo "entitlements 里还有没展开的构建变量：$(grep -o '[$]([A-Za-z]*)' "$expanded" | sort -u | tr '\n' ' ')" >&2
+    exit 2
+  fi
+}
 
 if test "$identity" = "-"; then
   # A plain `codesign -s -` uses a CDHash-only designated requirement, which
@@ -39,7 +71,18 @@ else
   fi
   /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
     --identifier net.pending.PendingNet.helper "$helper"
-  /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
-    --identifier net.pending.PendingNet "$app"
+  if test -n "$profile"; then
+    prepare_entitlements
+    /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
+      --identifier net.pending.PendingNet --entitlements "$expanded" "$app"
+    rm -f "$expanded"
+  elif test "${PENDINGNET_ALLOW_NO_PROFILE:-0}" = "1"; then
+    echo "warning: 没给描述文件，这个包不带 iCloud/钥匙串 entitlement —— 装上去以后 Mac 与 iPhone 不会同步已配对 VPS" >&2
+    /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
+      --identifier net.pending.PendingNet "$app"
+  else
+    echo "Developer ID 签名需要 PENDINGNET_PROVISION_PROFILE=<Developer ID 描述文件>（含 iCloud 键值存储与钥匙串共享组）；确实要发一个不带同步的包就设 PENDINGNET_ALLOW_NO_PROFILE=1" >&2
+    exit 2
+  fi
 fi
 /usr/bin/codesign --verify --deep --strict "$app"

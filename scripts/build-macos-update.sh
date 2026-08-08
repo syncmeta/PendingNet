@@ -1,6 +1,12 @@
 #!/bin/sh
-# 用法: PENDING_NOTARY_PROFILE=<profile> [PENDING_PUBLISH_R2=1] \
-#       scripts/build-macos-update.sh
+# 用法: PENDING_NOTARY_PROFILE=<notarytool profile> \
+#       PENDINGNET_PROVISION_PROFILE=<Developer ID 描述文件.provisionprofile> \
+#       [PENDING_PUBLISH_R2=1] scripts/build-macos-update.sh
+#
+# PENDINGNET_PROVISION_PROFILE 是 0.3.19 起的新要求：app 带了 iCloud 键值存储与
+# 共享钥匙串组，这类受限 entitlement 要描述文件背书才作数。描述文件从开发者门户
+# 下（App ID net.pending.PendingNet 开 iCloud + Keychain Sharing，配置类型
+# Developer ID）。不带着发会被下面的断言拦住。
 #
 # 与 PendingBot 单仓 `scripts/release/build-macos-update.sh` 同构（2026-08-06 收口）：
 # 干净快照（钉 main HEAD）里构建 Release → Developer ID 签名（Sparkle 内嵌件 +
@@ -98,14 +104,27 @@ esac
 PENDINGNET_SIGN_IDENTITY="${PENDING_SIGN_IDENTITY:-Developer ID Application: Yanze Tan (M42BKJN82S)}" \
   "$snap/src/scripts/sign-macos-development.sh" "$app"
 
-# 展开断言：签完的 app 里不许残留未展开的构建变量。本仓主 app 目前没有
-# entitlements，这条是给将来加的时候兜底 —— 单仓就是栽在这上面（手工 codesign
-# 不认 $(AppIdentifierPrefix)，把字面量签进 keychain access group，登录态静默丢失，
-# 而签名有效、公证通过、Gatekeeper 放行，全程零报错）。
+# 展开断言：签完的 app 里不许残留未展开的构建变量。单仓就是栽在这上面（手工
+# codesign 不认 $(AppIdentifierPrefix)，把字面量签进 keychain access group，登录态
+# 静默丢失，而签名有效、公证通过、Gatekeeper 放行，全程零报错）。
 if codesign -d --entitlements - --xml "$app" 2>/dev/null | grep -q '[$](' ; then
   echo "签名后的 entitlements 仍含未展开的构建变量 —— 会让 keychain 组等失效" >&2
   codesign -d --entitlements - --xml "$app" 2>/dev/null | plutil -convert xml1 -o - - >&2
   exit 2
+fi
+
+# 同步断言：app 带 iCloud 键值存储 + 共享钥匙串组（已配对 VPS 与设备令牌要在
+# Mac 和 iPhone 之间同步），这两项要描述文件背书才作数。签完的包里没有它们，
+# 装机后就是「一切正常但两台设备各配各的」—— 又一个全程零报错的静默失败，
+# 所以在这里拦。确实要发一个不带同步的包，设 PENDINGNET_ALLOW_NO_PROFILE=1。
+if [ "${PENDINGNET_ALLOW_NO_PROFILE:-0}" != "1" ]; then
+  signed_ents=$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)
+  case "$signed_ents" in
+    *ubiquity-kvstore-identifier*) ;;
+    *) echo "签完的 app 没有 iCloud 键值存储 entitlement —— 装机后 Mac 与 iPhone 不会同步已配对 VPS。给 PENDINGNET_PROVISION_PROFILE=<Developer ID 描述文件>，或显式 PENDINGNET_ALLOW_NO_PROFILE=1" >&2; exit 2 ;;
+  esac
+  test -f "$app/Contents/embedded.provisionprofile" \
+    || { echo "包里没有 embedded.provisionprofile —— 受限 entitlement 没人背书，等于没有" >&2; exit 2; }
 fi
 
 # dyld 断言：每个 @rpath 依赖都要能在包内解析出真实文件。上面那些查的全是签名和

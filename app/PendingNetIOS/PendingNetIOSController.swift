@@ -3,35 +3,9 @@ import Foundation
 import SBTallyCore
 import UIKit
 
-struct IOSPairedServer: Codable, Equatable, Identifiable {
-    var id: String { serverID }
-    var serverID: String
-    var name: String
-    var endpoint: String
-    var certificateSHA256: String
-    var deviceID: String
-    var capabilities: [String]
-    /// 节点资料拉到之后填上，供「详情」展示。可选，老版本存档里没有这一项。
-    var nodeProtocols: [String]?
-
-    /// 列表行上代表这台 VPS 的就是它的 IP（或主机名）—— 不带协议、不带端口，
-    /// 与 macOS 的 `PairedVPSServer.address` 同一套规则。
-    var address: String {
-        if let host = URL(string: endpoint)?.host, !host.isEmpty { return host }
-        var text = endpoint
-        if let range = text.range(of: "://") { text = String(text[range.upperBound...]) }
-        if let colon = text.lastIndex(of: ":") { text = String(text[text.startIndex..<colon]) }
-        return text
-    }
-
-    /// 控制服务端口，只在「详情」里出现。
-    var controlPort: String? {
-        if let port = URL(string: endpoint)?.port { return String(port) }
-        guard let colon = endpoint.lastIndex(of: ":") else { return nil }
-        let tail = String(endpoint[endpoint.index(after: colon)...])
-        return Int(tail) == nil ? nil : tail
-    }
-}
+/// 已配对 VPS 的形状和存储都在 SBTallyCore 里，和 macOS 共用同一份
+/// （见 `PairedVPSStore`）—— 两端各存各的、字段还对不齐的时代已经过去了。
+typealias IOSPairedServer = PairedVPSRecord
 
 @MainActor
 final class PendingNetIOSController: ObservableObject {
@@ -53,20 +27,29 @@ final class PendingNetIOSController: ObservableObject {
     let ruleSetStore: PendingNetRuleSetStore
 
     private let defaults = UserDefaults.standard
-    /// v1 存的是单台（`IOSPairedServer`），v2 起存数组 + 选中项。
+    /// iOS 自己的老存档：v1 存的是单台，v2 起存数组。两份都只读一次，搬进
+    /// 共用存储之后就不再写了；**不删**——万一用户装回旧版，配对不至于凭空消失。
     private let legacyKey = "pendingnet.ios.paired-server.v1"
-    private let serversKey = "pendingnet.ios.paired-servers.v2"
+    private let legacyServersKey = "pendingnet.ios.paired-servers.v2"
+    /// 选中哪一台是「这台设备现在用哪台」，属于本机状态，不跟着 iCloud 走。
     private let selectedKey = "pendingnet.ios.selected-server.v2"
+    private let store: PairedVPSStore
     private var cancellables = Set<AnyCancellable>()
 
-    init() {
+    init(store: PairedVPSStore? = nil) {
+        let store = store ?? PairedVPSStore()
+        self.store = store
         // 同一个 store 交给两边：隧道控制器在 `start` 时用它决定白名单 /
         // 黑名单能不能跑，界面在切换分流模式时用它下载规则集。两份实例会让
         // `isReady` 各说各话。
-        let store = PendingNetRuleSetStore()
-        ruleSetStore = store
-        tunnel = PendingNetTunnelController(ruleSetStore: store)
+        let ruleSets = PendingNetRuleSetStore()
+        ruleSetStore = ruleSets
+        tunnel = PendingNetTunnelController(ruleSetStore: ruleSets)
         loadPersistedServers()
+        // 共用存储是真源：本机改动、iCloud 推过来的改动，都从这一条流回界面。
+        store.$servers
+            .sink { [weak self] in self?.applyStoreServers($0) }
+            .store(in: &cancellables)
         // `tunnel` / `ruleSetStore` 都是独立的 ObservableObject，它们自己的
         // @Published 变化不会自动冒泡到这里——SwiftUI 视图只订阅了
         // `controller` 的 objectWillChange。转发一下，否则隧道状态变化
@@ -80,29 +63,43 @@ final class PendingNetIOSController: ObservableObject {
             .store(in: &cancellables)
     }
 
-    /// v2 数组优先；没有就把 v1 的单台迁移过来。迁移**不删** v1 的键——万一
-    /// 用户装回旧版，配对不至于凭空消失（Keychain 里的令牌本来就还在）。
+    /// 把 iOS 自己的老存档搬进共用存储（v2 数组优先，没有就看 v1 的单台），
+    /// 再接上共用存储当前的名单。
     private func loadPersistedServers() {
-        if let data = defaults.data(forKey: serversKey),
+        store.adoptLegacy(legacyRecords())
+        applyStoreServers(store.servers)
+    }
+
+    private func legacyRecords() -> [IOSPairedServer] {
+        if let data = defaults.data(forKey: legacyServersKey),
            let decoded = try? JSONDecoder().decode([IOSPairedServer].self, from: data) {
-            servers = decoded
-        } else if let data = defaults.data(forKey: legacyKey),
-                  let legacy = try? JSONDecoder().decode(IOSPairedServer.self, from: data) {
-            servers = [legacy]
-            persistServers()
+            return decoded
         }
-        let remembered = defaults.string(forKey: selectedKey)
+        if let data = defaults.data(forKey: legacyKey),
+           let legacy = try? JSONDecoder().decode(IOSPairedServer.self, from: data) {
+            return [legacy]
+        }
+        return []
+    }
+
+    private func applyStoreServers(_ next: [IOSPairedServer]) {
+        servers = next
+        let remembered = selectedServerID ?? defaults.string(forKey: selectedKey)
         // 记住的那台可能已经不在名单里（存档被改过），退回第一台，别让界面
         // 停在「有服务器但一台都没选中」——那样连接按钮永远是灰的。
         selectedServerID = servers.contains { $0.serverID == remembered }
             ? remembered
             : servers.first?.serverID
+        defaults.set(selectedServerID, forKey: selectedKey)
+    }
+
+    /// App 启动 / 回到前台时叫一次，把 iCloud 那边的改动拉过来。
+    /// iCloud 不可用时是空操作。
+    func refreshFromCloud() {
+        store.refreshFromCloud()
     }
 
     private func persistServers() {
-        if let data = try? JSONEncoder().encode(servers) {
-            defaults.set(data, forKey: serversKey)
-        }
         defaults.set(selectedServerID, forKey: selectedKey)
     }
 
@@ -136,11 +133,7 @@ final class PendingNetIOSController: ObservableObject {
                 nodeProtocols: servers.first { $0.serverID == result.server.serverID }?.nodeProtocols
             )
             // 同一台重新配对就地替换，不追加出一行重复的。
-            if let index = servers.firstIndex(where: { $0.serverID == paired.serverID }) {
-                servers[index] = paired
-            } else {
-                servers.append(paired)
-            }
+            store.upsert(paired)
             selectedServerID = paired.serverID
             persistServers()
             message = "已配对：\(paired.name)"
@@ -211,9 +204,10 @@ final class PendingNetIOSController: ObservableObject {
             }
             nodeProfile = profile
             // 协议名单落进存档，「详情」在没网的时候也有东西可显示。
-            if let index = servers.firstIndex(where: { $0.serverID == server.serverID }) {
-                servers[index].nodeProtocols = profile.protocols.map(\.displayName)
-                persistServers()
+            var updated = server
+            updated.nodeProtocols = profile.protocols.map(\.displayName)
+            if updated != server {
+                store.upsert(updated)
             }
         } catch {
             errorMessage = error.localizedDescription
