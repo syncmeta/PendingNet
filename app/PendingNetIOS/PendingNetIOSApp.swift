@@ -18,11 +18,44 @@ struct PendingNetIOSApp: App {
             }
             .environmentObject(controller)
             .tint(PendingNetTheme.Palette.accent)
+            // 从「文件」、AirDrop 或别的 App 点开一个 .pdn 就直接配对，不用
+            // 先进 App 再点导入。类型声明在 project.yml 的 info 段里；只声明
+            // 不接住的话，PendingNet 会出现在「打开方式」里、点了却什么都不
+            // 发生，比不声明更糟。
+            .onOpenURL { url in
+                Task { await importPairing(from: url) }
+            }
         }
         // 回到前台顺手拉一次 iCloud —— 在 Mac 上配好的 VPS 不用重开 App 就能
         // 出现在列表里。iCloud 用不了时这是空操作。
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { controller.refreshFromCloud() }
         }
+    }
+
+    /// 导入一个从外面点进来的 `.pdn`，并把系统替我们拷进来的那份删掉。
+    ///
+    /// 因为我们声明了不支持就地打开，系统会把文件**拷一份**放进
+    /// `Documents/Inbox/` 再把这个 URL 交给我们。那份拷贝里装着 VPS 的配对
+    /// 凭据，读完必须删——**成功失败都删**：失败时留着最没道理，用户以为
+    /// 这次导入没发生，凭据却已经躺在设备上了。
+    private func importPairing(from url: URL) async {
+        defer { Self.removeInboxCopy(url) }
+        await controller.importAndEnroll(url: url)
+    }
+
+    /// 只删系统拷进 Inbox 的那份，绝不碰用户自己的文件。
+    ///
+    /// 判据是「这个路径在本 App 容器的 Documents/Inbox 底下」。就地打开的原件
+    /// （iCloud 云盘、别的 App 的容器）不在这个目录里，因此永远走不到删除。
+    /// 宁可漏删也不能误删：漏删只是留下一份我们自己的拷贝，误删是把用户的
+    /// 文件弄没了。
+    private static func removeInboxCopy(_ url: URL) {
+        guard url.isFileURL else { return }
+        let inbox = URL.documentsDirectory
+            .appendingPathComponent("Inbox", isDirectory: true)
+            .resolvingSymlinksInPath()
+        guard url.resolvingSymlinksInPath().path.hasPrefix(inbox.path + "/") else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }
