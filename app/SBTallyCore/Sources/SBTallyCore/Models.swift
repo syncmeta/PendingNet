@@ -46,4 +46,21 @@ public struct Proxy: Codable, Hashable {
 public struct ControlState: Codable {
     public let mode: String
     public let proxies: [String: Proxy]
+    /// The modes the running engine will actually accept. Empty when the source
+    /// doesn't report one — a switch to an unlisted mode is silently ignored by
+    /// sing-box, so the GUI needs this to tell the user rather than pretend.
+    public let modeList: [String]
+
+    public init(mode: String, proxies: [String: Proxy], modeList: [String] = []) {
+        self.mode = mode
+        self.proxies = proxies
+        self.modeList = modeList
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(String.self, forKey: .mode)
+        proxies = try container.decode([String: Proxy].self, forKey: .proxies)
+        modeList = try container.decodeIfPresent([String].self, forKey: .modeList) ?? []
+    }
 }

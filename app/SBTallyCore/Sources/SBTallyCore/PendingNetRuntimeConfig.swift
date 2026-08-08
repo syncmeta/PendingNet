@@ -187,11 +187,22 @@ public enum PendingNetLocalConfigComposer {
 /// Pairing material is merged into this document later; the pairing file never
 /// supplies inbounds, routes, DNS policy, the control secret, or cache paths.
 public enum PendingNetProxyOnlyConfig {
+    /// The rule-set files 白名单/黑名单 need, keyed by the sing-box tag the route
+    /// rules reference. Downloaded and cached by the client; the modes only
+    /// exist in the emitted config when every file is on disk.
+    public static let ruleSetFiles: [String: String] = [
+        "geosite-cn": "geosite-cn.srs",
+        "geoip-cn": "geoip-cn.srs",
+        "geosite-noncn": "geosite-geolocation-noncn.srs",
+        "geosite-gfw": "geosite-gfw.srs",
+    ]
+
     public static func make(
         controlSecret: String,
         cachePath: String,
         listenPort: Int = 2080,
-        controlPort: Int = 29090
+        controlPort: Int = 29090,
+        ruleSetDirectory: String? = nil
     ) throws -> Data {
         guard !controlSecret.isEmpty, !cachePath.isEmpty,
               (1024...65535).contains(listenPort),
@@ -211,15 +222,7 @@ public enum PendingNetProxyOnlyConfig {
                 ["type": "selector", "tag": "proxy", "outbounds": ["direct"]],
                 ["type": "direct", "tag": "direct"],
             ],
-            "route": [
-                "auto_detect_interface": true,
-                "final": "proxy",
-                "rules": [
-                    ["action": "sniff"],
-                    ["clash_mode": "Direct", "outbound": "direct"],
-                    ["clash_mode": "Global", "outbound": "proxy"],
-                ],
-            ],
+            "route": route(ruleSetDirectory: ruleSetDirectory),
             "experimental": [
                 "clash_api": [
                     "external_controller": "127.0.0.1:\(controlPort)",
@@ -233,5 +236,70 @@ public enum PendingNetProxyOnlyConfig {
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         ) + Data([0x0a])
+    }
+
+    /// Swaps an existing config's routing section for one built against
+    /// `ruleSetDirectory`, leaving the merged VPS outbounds alone. This is how a
+    /// config applied before the rule-sets finished downloading picks up
+    /// 白名单/黑名单 without re-pairing the VPS.
+    public static func applyingRouteRules(
+        to configData: Data,
+        ruleSetDirectory: String?
+    ) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: configData) as? [String: Any] else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        root["route"] = route(ruleSetDirectory: ruleSetDirectory)
+        return try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ) + Data([0x0a])
+    }
+
+    /// Whether the document already routes by the list modes — i.e. whether
+    /// rewriting it would change anything.
+    public static func declaresListModes(_ configData: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
+              let route = root["route"] as? [String: Any],
+              let rules = route["rules"] as? [[String: Any]] else { return false }
+        return rules.contains { ($0["clash_mode"] as? String) == "Whitelist" }
+    }
+
+    private static func route(ruleSetDirectory: String?) -> [String: Any] {
+        var rules: [[String: Any]] = [
+            ["action": "sniff"],
+            ["clash_mode": "Direct", "outbound": "direct"],
+            ["clash_mode": "Global", "outbound": "proxy"],
+        ]
+        var ruleSets: [[String: Any]] = []
+        // A clash_mode only shows up in the engine's mode list — and can only be
+        // switched to — when some route rule names it. Without these, the GUI's
+        // 白名单/黑名单 were accepted by the Clash API (204) and then silently
+        // ignored, leaving the engine in 全局.
+        if let ruleSetDirectory, !ruleSetDirectory.isEmpty {
+            rules.append(contentsOf: [
+                // 黑名单：只有被墙的域名走代理，其余直连。
+                ["clash_mode": "Blacklist", "rule_set": "geosite-gfw", "outbound": "proxy"],
+                ["clash_mode": "Blacklist", "outbound": "direct"],
+                // 白名单：国内直连，境外走代理（兜底 final 同样是 proxy）。
+                ["clash_mode": "Whitelist", "rule_set": ["geoip-cn", "geosite-cn"], "outbound": "direct"],
+                ["clash_mode": "Whitelist", "rule_set": "geosite-noncn", "outbound": "proxy"],
+            ])
+            ruleSets = ruleSetFiles.keys.sorted().map { tag in
+                [
+                    "type": "local",
+                    "tag": tag,
+                    "format": "binary",
+                    "path": ruleSetDirectory + "/" + ruleSetFiles[tag]!,
+                ]
+            }
+        }
+        var route: [String: Any] = [
+            "auto_detect_interface": true,
+            "final": "proxy",
+            "rules": rules,
+        ]
+        if !ruleSets.isEmpty { route["rule_set"] = ruleSets }
+        return route
     }
 }

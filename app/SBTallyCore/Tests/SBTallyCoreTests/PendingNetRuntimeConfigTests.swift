@@ -51,6 +51,68 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         XCTAssertEqual(check.terminationStatus, 0, String(decoding: data, as: UTF8.self))
     }
 
+    /// 全局以外的模式必须被 route 规则声明，否则 sing-box 会照收 API 请求
+    /// （204）却根本不切 —— 界面上显示白名单，引擎其实还在全局。
+    func testListModesAppearOnlyWithRuleSets() throws {
+        let without = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        XCTAssertFalse(PendingNetProxyOnlyConfig.declaresListModes(without))
+
+        let with = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db",
+            ruleSetDirectory: "/tmp/pendingnet-rule-sets"
+        )
+        XCTAssertTrue(PendingNetProxyOnlyConfig.declaresListModes(with))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: with) as? [String: Any])
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        let modes = Set((route["rules"] as? [[String: Any]] ?? []).compactMap {
+            $0["clash_mode"] as? String
+        })
+        XCTAssertEqual(modes, ["Direct", "Global", "Whitelist", "Blacklist"])
+        let ruleSets = try XCTUnwrap(route["rule_set"] as? [[String: Any]])
+        XCTAssertEqual(ruleSets.count, PendingNetProxyOnlyConfig.ruleSetFiles.count)
+        for set in ruleSets {
+            XCTAssertEqual(set["type"] as? String, "local")
+            XCTAssertTrue((set["path"] as? String ?? "")
+                .hasPrefix("/tmp/pendingnet-rule-sets/"))
+        }
+    }
+
+    /// 名单下载完成后要能就地补上，不能逼用户重新配对 VPS。
+    func testApplyingRouteRulesKeepsMergedOutbounds() throws {
+        let base = try PendingNetProxyOnlyConfig.make(
+            controlSecret: "test-secret",
+            cachePath: "/tmp/pendingnet-cache.db"
+        )
+        let selectorTag = PendingNetRuntimeServer.selectorTag(forServerID: "pns_test")
+        let merged = try PendingNetLocalConfigComposer.merge(
+            baseConfig: base,
+            runtimeServer: PendingNetRuntimeServer(
+                serverID: "pns_test",
+                name: "VPS",
+                selectorTag: selectorTag,
+                proxyOutbounds: Data("""
+                [{"type":"hysteria2","tag":"\(selectorTag)-hy2",\
+                "server":"1.2.3.4","server_port":443,"password":"p"}]
+                """.utf8)
+            )
+        )
+        let upgraded = try PendingNetProxyOnlyConfig.applyingRouteRules(
+            to: merged,
+            ruleSetDirectory: "/tmp/pendingnet-rule-sets"
+        )
+        XCTAssertTrue(PendingNetProxyOnlyConfig.declaresListModes(upgraded))
+        let before = try XCTUnwrap(JSONSerialization.jsonObject(with: merged) as? [String: Any])
+        let after = try XCTUnwrap(JSONSerialization.jsonObject(with: upgraded) as? [String: Any])
+        let tags = { (root: [String: Any]) in
+            (root["outbounds"] as? [[String: Any]] ?? []).compactMap { $0["tag"] as? String }
+        }
+        XCTAssertEqual(tags(before), tags(after))
+    }
+
     func testProxyOnlyBaseSupportsAnIsolatedListenPort() throws {
         let data = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",
