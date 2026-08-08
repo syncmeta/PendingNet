@@ -23,6 +23,22 @@ public enum PendingNetTunnelPaths {
         base.appendingPathComponent("start-options.json")
     }
 
+    /// The removed `direct` route mode produced a snapshot that bypasses every
+    /// proxy. Once the stored preference migrates to `global`, keeping that
+    /// snapshot would let Settings start a direct tunnel while the app displays
+    /// 全局. Delete it so the extension fails visibly until the app supplies a
+    /// fresh configuration.
+    public static func invalidateSnapshotForRemovedDirectMode(
+        storedRouteModeRawValue rawValue: String,
+        in base: URL?,
+        fileManager: FileManager = .default
+    ) {
+        guard rawValue == "direct", let base else { return }
+        let snapshot = snapshotURL(in: base)
+        guard fileManager.fileExists(atPath: snapshot.path) else { return }
+        try? fileManager.removeItem(at: snapshot)
+    }
+
     public static func cacheURL(in base: URL) -> URL {
         base.appendingPathComponent("cache.db")
     }

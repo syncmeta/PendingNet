@@ -551,6 +551,16 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             XCTAssertEqual(error as? PendingNetRuntimeConfigError, .invalidLocalConfiguration)
         }
     }
+
+    func testRemovedDirectSnapshotIsRejectedWithoutMisclassifyingBlacklist() {
+        let removedDirect = Data(#"{"route":{"final":"direct","rules":[]}}"#.utf8)
+        XCTAssertTrue(PendingNetTunnelConfig.isRemovedDirectModeSnapshot(removedDirect))
+
+        let blacklist = Data(#"""
+        {"route":{"final":"direct","rule_set":[{"tag":"geosite-gfw"}],"rules":[]}}
+        """#.utf8)
+        XCTAssertFalse(PendingNetTunnelConfig.isRemovedDirectModeSnapshot(blacklist))
+    }
 }
 
 final class PendingNetTunnelPathsTests: XCTestCase {
@@ -608,5 +618,21 @@ final class PendingNetTunnelPathsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: base) }
         try PendingNetTunnelPaths.prepare(base: base)
         XCTAssertNoThrow(try PendingNetTunnelPaths.prepare(base: base))
+    }
+
+    func testRemovedDirectModeMigrationDeletesTheStartupSnapshot() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-direct-migration-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let snapshot = PendingNetTunnelPaths.snapshotURL(in: base)
+        try Data("legacy-direct".utf8).write(to: snapshot)
+
+        PendingNetTunnelPaths.invalidateSnapshotForRemovedDirectMode(
+            storedRouteModeRawValue: "direct",
+            in: base
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshot.path))
     }
 }

@@ -125,6 +125,18 @@ public enum PendingNetTunnelConfig {
         }
     }
 
+    /// Recognizes a startup snapshot emitted by the removed global-direct mode.
+    /// Blacklist also has `route.final = direct`, but necessarily declares a
+    /// rule-set; the removed mode has no rule-set and would silently bypass all
+    /// proxies if the extension accepted it after an upgrade.
+    public static func isRemovedDirectModeSnapshot(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let route = root["route"] as? [String: Any],
+              route["final"] as? String == "direct" else { return false }
+        let ruleSets = route["rule_set"] as? [[String: Any]]
+        return ruleSets?.isEmpty ?? true
+    }
+
     static func ruleSets(directory: String, mode: PendingNetRouteMode) -> [[String: Any]] {
         ruleSetTags(mode: mode).map { name in
             [
