@@ -63,6 +63,10 @@ final class EngineController: ObservableObject {
         let c = NSXPCConnection(machServiceName: "net.pending.PendingNet.helper",
                                  options: .privileged)
         c.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
+        // Pin the far end to a helper signed like this app. Without it the app
+        // would talk to whatever claims the Mach service name.
+        c.setCodeSigningRequirement(
+            pendingNetCodeRequirement(identifier: "net.pending.PendingNet.helper"))
         c.interruptionHandler = { [weak self] in
             Task { @MainActor in self?.dropConnection() }
         }

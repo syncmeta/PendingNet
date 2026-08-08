@@ -334,6 +334,13 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     }
 
     func listener(_ l: NSXPCListener, shouldAcceptNewConnection c: NSXPCConnection) -> Bool {
+        // This daemon runs as root and every method on it reconfigures the
+        // machine's networking, so an unauthenticated listener let any process
+        // on the box drive it. Only accept a peer signed like we are.
+        let requirement = pendingNetCodeRequirement(identifier: "net.pending.PendingNet")
+        guard pendingNetProcessSatisfies(pid: c.processIdentifier, requirement: requirement) else {
+            return false
+        }
         c.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         c.exportedObject = self
         c.resume()

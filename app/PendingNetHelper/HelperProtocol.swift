@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Bumped whenever `HelperProtocol` gains, drops, or changes a method.
 ///
@@ -48,4 +49,51 @@ public let pendingNetHelperInterfaceVersion = 2
     /// binary on the next connection. One-way by design: the process is gone
     /// before any reply could be delivered.
     func quitForUpgrade()
+}
+
+/// Code-signing requirement one side of the XPC pair demands of the other,
+/// matched to how *this* binary is itself signed.
+///
+/// A Developer ID build insists the peer carries the same Team ID; a locally
+/// signed development build has no team at all, so it can only insist on the
+/// signing identifier. Hard-coding the production team would leave every local
+/// build unable to talk to the helper it was built alongside.
+public func pendingNetCodeRequirement(identifier: String) -> String {
+    let base = "identifier \"\(identifier)\""
+    guard let team = pendingNetSelfTeamIdentifier() else { return base }
+    return base + " and anchor apple generic"
+        + " and certificate leaf[subject.OU] = \"\(team)\""
+}
+
+/// Team ID this binary is signed with, or nil when it carries no team —
+/// ad-hoc/locally signed builds, which is the expected development case.
+private func pendingNetSelfTeamIdentifier() -> String? {
+    var code: SecCode?
+    guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess,
+          let staticCode else { return nil }
+    var information: CFDictionary?
+    guard SecCodeCopySigningInformation(
+        staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &information
+    ) == errSecSuccess else { return nil }
+    return (information as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
+}
+
+/// Whether the process behind `pid` satisfies `requirement`.
+///
+/// Identifying the peer by pid rather than audit token is a deliberate
+/// trade-off: `NSXPCConnection.auditToken` is not public API. The residual
+/// pid-reuse race needs an attacker to land a pid between XPC accepting the
+/// connection and this check, which is a far smaller hole than the one this
+/// closes — before it, any process on the machine could drive a root daemon.
+public func pendingNetProcessSatisfies(pid: pid_t, requirement text: String) -> Bool {
+    var requirement: SecRequirement?
+    guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess,
+          let requirement else { return false }
+    let attributes = [kSecGuestAttributePid as String: pid] as CFDictionary
+    var code: SecCode?
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
+          let code else { return false }
+    return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
 }
