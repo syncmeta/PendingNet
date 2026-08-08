@@ -45,12 +45,12 @@ if test "$identity" = "-"; then
   # changes on every build. Stable explicit requirements let Service
   # Management recognize a locally built PendingNet update as the same pair.
   /usr/bin/codesign --force --sign - \
-    --identifier net.pending.PendingNet.helper \
-    --requirements '=designated => identifier "net.pending.PendingNet.helper"' \
+    --identifier com.pendingname.pendingnet.helper \
+    --requirements '=designated => identifier "com.pendingname.pendingnet.helper"' \
     "$helper"
   /usr/bin/codesign --force --sign - \
-    --identifier net.pending.PendingNet \
-    --requirements '=designated => identifier "net.pending.PendingNet"' \
+    --identifier com.pendingname.pendingnet \
+    --requirements '=designated => identifier "com.pendingname.pendingnet"' \
     "$app"
 else
   if test -d "$sparkle"; then
@@ -70,16 +70,16 @@ else
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp "$sparkle"
   fi
   /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
-    --identifier net.pending.PendingNet.helper "$helper"
+    --identifier com.pendingname.pendingnet.helper "$helper"
   if test -n "$profile"; then
     prepare_entitlements
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
-      --identifier net.pending.PendingNet --entitlements "$expanded" "$app"
+      --identifier com.pendingname.pendingnet --entitlements "$expanded" "$app"
     rm -f "$expanded"
   elif test "${PENDINGNET_ALLOW_NO_PROFILE:-0}" = "1"; then
     echo "warning: 没给描述文件，这个包不带 iCloud/钥匙串 entitlement —— 装上去以后 Mac 与 iPhone 不会同步已配对 VPS" >&2
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
-      --identifier net.pending.PendingNet "$app"
+      --identifier com.pendingname.pendingnet "$app"
   else
     echo "Developer ID 签名需要 PENDINGNET_PROVISION_PROFILE=<Developer ID 描述文件>（含 iCloud 键值存储与钥匙串共享组）；确实要发一个不带同步的包就设 PENDINGNET_ALLOW_NO_PROFILE=1" >&2
     exit 2

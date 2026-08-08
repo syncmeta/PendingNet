@@ -19,7 +19,7 @@ final class EngineController: ObservableObject {
     /// engine still isn't running — signals the GUI should surface `logTail`.
     @Published var startFailed = false
 
-    private let service = SMAppService.daemon(plistName: "net.pending.PendingNet.helper.plist")
+    private let service = SMAppService.daemon(plistName: PendingNetIdentifiers.helperPlistName)
     /// 用户在助手就绪前选中的接管方式。授权成功后自动接着切过去，省得再点一次。
     private var pendingTakeover: String?
     /// The helper's mode is adopted once, at first refresh with a ready helper;
@@ -102,13 +102,13 @@ final class EngineController: ObservableObject {
     /// (and rebuilt on next call) instead of being reused in a broken state.
     private func xpcConnection() -> NSXPCConnection {
         if let existing = connection { return existing }
-        let c = NSXPCConnection(machServiceName: "net.pending.PendingNet.helper",
+        let c = NSXPCConnection(machServiceName: PendingNetIdentifiers.helper,
                                  options: .privileged)
         c.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
         // Pin the far end to a helper signed like this app. Without it the app
         // would talk to whatever claims the Mach service name.
         c.setCodeSigningRequirement(
-            pendingNetCodeRequirement(identifier: "net.pending.PendingNet.helper"))
+            pendingNetCodeRequirement(identifier: PendingNetIdentifiers.helper))
         c.interruptionHandler = { [weak self] in
             Task { @MainActor in self?.dropConnection() }
         }

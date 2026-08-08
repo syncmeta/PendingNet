@@ -1,6 +1,6 @@
 name: PendingNet
 options:
-  bundleIdPrefix: net.pending
+  bundleIdPrefix: com.pendingname
   deploymentTarget:
     macOS: "14.0"
     iOS: "17.0"
@@ -71,9 +71,11 @@ targets:
         com.apple.security.application-groups:
           - group.com.pendingname.pendingnet
         # 已配对 VPS 与设备令牌在 Mac 与 iPhone 之间同步：键值存储标识和
-        # 钥匙串共享组两端必须**逐字相同**（macOS 那个 target 的 bundle id 是
-        # net.pending.PendingNet，所以这里写死 com.pendingname.pendingnet，
-        # 不能用 $(CFBundleIdentifier)）。
+        # 钥匙串共享组两端必须**逐字相同**。两端的 bundle id 现在都是
+        # com.pendingname.pendingnet（2026-08-08 把 macOS 从 net.pending.PendingNet
+        # 归一过来），仍然写字面量而不是 $(CFBundleIdentifier)：这两个值是
+        # 「共享组的名字」，哪天某一端的 bundle id 再变，也不该跟着变——跟着变
+        # 就等于换了一把钥匙，两端立刻互相读不到。
         com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.pendingname.pendingnet
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.pendingname.pendingnet
@@ -106,7 +108,7 @@ targets:
       - path: PendingNetHelper
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet.helper
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet.helper
         PRODUCT_NAME: PendingNetHelper
     dependencies:
       - package: SBTallyCore
@@ -138,9 +140,9 @@ targets:
             CFBundleTypeRole: Editor
             LSHandlerRank: Owner
             LSItemContentTypes:
-              - net.pending.pdn
+              - com.pendingname.pdn
         UTImportedTypeDeclarations:
-          - UTTypeIdentifier: net.pending.pdn
+          - UTTypeIdentifier: com.pendingname.pdn
             UTTypeDescription: PendingNet Pairing
             UTTypeConformsTo:
               - public.json
@@ -157,7 +159,10 @@ targets:
         SUEnableSystemProfiling: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.pending.PendingNet
+        # 和 iOS target 逐字相同 —— 苹果的 App ID 本来就是跨平台的一份，两端同
+        # 一个 id 才能不写死地共用 iCloud 键值存储与钥匙串组。2026-08-08 从
+        # net.pending.PendingNet 改过来，迁移事项见 docs/macos-updates.md。
+        PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet
         PRODUCT_NAME: PendingNet
         # 分层 .icon（Icon Composer）：macOS 26 由系统上圆角/高光/投影，
         # actool 顺带产出传统 .icns 兜底老系统。见 scripts/make-app-icon.py。
@@ -187,6 +192,10 @@ targets:
       - name: Embed helper + daemon plist
         script: |
           APP="$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app"
+          # 先清空再拷：这个目录是脚本自己堆出来的，增量构建不会替我们删东西。
+          # bundle id 改名那次就撞上了 —— 旧的 net.pending.* plist 还躺在里面，
+          # 一个 app 包里出现两个后台服务声明。
+          rm -rf "$APP/Contents/Library/LaunchDaemons"
           mkdir -p "$APP/Contents/Library/LaunchDaemons" "$APP/Contents/MacOS"
           cp "$BUILT_PRODUCTS_DIR/PendingNetHelper" "$APP/Contents/MacOS/"
-          cp "$SRCROOT/PendingNetHelper/net.pending.PendingNet.helper.plist" "$APP/Contents/Library/LaunchDaemons/"
+          cp "$SRCROOT/PendingNetHelper/com.pendingname.pendingnet.helper.plist" "$APP/Contents/Library/LaunchDaemons/"

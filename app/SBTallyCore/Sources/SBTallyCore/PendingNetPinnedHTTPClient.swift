@@ -34,7 +34,7 @@ final class PendingNetPinnedHTTPClient: @unchecked Sendable {
         authorization: String? = nil,
         body: Data? = nil
     ) async throws -> PendingNetPinnedHTTPResponse {
-        let queue = DispatchQueue(label: "net.pending.control.\(UUID().uuidString)")
+        let queue = DispatchQueue(label: "com.pendingname.pendingnet.control.\(UUID().uuidString)")
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, host)
         let expectedFingerprint = expectedFingerprint

@@ -64,6 +64,24 @@ public let pendingNetHelperInterfaceVersion = 3
     func startedAt(reply: @escaping (Double) -> Void)
 }
 
+/// 这一对身份从前是散在 app、助手、launchd plist、签名脚本里的字面量。
+/// 2026-08-08 把 macOS 从 `net.pending.*` 归一到 `com.pendingname.*`（和 iOS 同一个
+/// App ID）时，靠人肉逐处找才不至于漏。Swift 这一侧从此只认这里这一份。
+///
+/// 仍然要手工对齐的只剩两处（都没法引用 Swift 常量）：
+/// `PendingNetHelper/com.pendingname.pendingnet.helper.plist` 与
+/// `scripts/sign-macos-development.sh`。
+public enum PendingNetIdentifiers {
+    public static let app = "com.pendingname.pendingnet"
+    public static let helper = app + ".helper"
+    public static let helperPlistName = helper + ".plist"
+
+    /// 0.3.18 及以前 macOS 版的身份。只用来收拾残留 —— 旧的 launchd job、旧的
+    /// `UserDefaults` 域。任何新代码都不该拿它去注册、签名或连接什么。
+    public static let legacyApp = "net.pending.PendingNet"
+    public static let legacyHelper = legacyApp + ".helper"
+}
+
 /// Code-signing requirement one side of the XPC pair demands of the other,
 /// matched to how *this* binary is itself signed.
 ///

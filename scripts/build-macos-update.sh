@@ -5,8 +5,9 @@
 #
 # PENDINGNET_PROVISION_PROFILE 是 0.3.19 起的新要求：app 带了 iCloud 键值存储与
 # 共享钥匙串组，这类受限 entitlement 要描述文件背书才作数。描述文件从开发者门户
-# 下（App ID net.pending.PendingNet 开 iCloud + Keychain Sharing，配置类型
-# Developer ID）。不带着发会被下面的断言拦住。
+# 下（App ID com.pendingname.pendingnet 开 iCloud + Keychain Sharing，配置类型
+# Developer ID）。不带着发会被下面的断言拦住。注意这就是 iOS 版用的同一个
+# App ID —— 2026-08-08 起 macOS 的 bundle id 也归一到它了。
 #
 # 与 PendingBot 单仓 `scripts/release/build-macos-update.sh` 同构（2026-08-06 收口）：
 # 干净快照（钉 main HEAD）里构建 Release → Developer ID 签名（Sparkle 内嵌件 +
@@ -22,6 +23,9 @@ set -eu
 
 product=pendingnet
 app_name=PendingNet
+# 发布 Mac 本机钥匙串里存 Sparkle EdDSA 私钥的那条 item 的 account，**不是**
+# bundle id。2026-08-08 归一 bundle id 时故意没跟着改：改了就取不到私钥，直接发
+# 不了版。真要改名得先把钥匙串里那条 item 一起改，且只影响这一台发布机。
 key_account=net.pending.PendingNet
 : "${PENDING_NOTARY_PROFILE:?set the notarytool Keychain profile}"
 

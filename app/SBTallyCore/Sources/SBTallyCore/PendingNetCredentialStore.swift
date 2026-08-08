@@ -169,12 +169,19 @@ public struct PendingNetCredentialStoreCore: Sendable {
 }
 
 public enum PendingNetCredentialStore {
+    /// 钥匙串条目的 `kSecAttrService`，**不是 bundle id**。名字长得像纯属历史。
+    ///
+    /// 2026-08-08 把 macOS 的 bundle id 归一到 `com.pendingname.pendingnet` 时，
+    /// 这一个字符串是**故意**留在旧名字上的：service 是查询条件的一部分，改掉
+    /// 就等于所有老用户已经存下的设备令牌再也匹配不到（下面那条候选链只覆盖
+    /// accessGroup 和同步位，不覆盖 service 改名）。要动它得先写一次读旧名、
+    /// 写新名的搬迁，在那之前一个字都别改。
     public static let service = "net.pending.PendingNet.server-token"
 
     /// 两端共用的 keychain access group。entitlements 里写的是
     /// `$(AppIdentifierPrefix)com.pendingname.pendingnet`，展开后就是这个值。
-    /// macOS 与 iOS 的 bundle id 不同（net.pending.PendingNet / com.pendingname.pendingnet），
-    /// 靠这个显式共享组才能读到同一批条目。
+    /// 两端的 bundle id 现在都是 `com.pendingname.pendingnet`，但仍然靠这个显式
+    /// 共享组读同一批条目 —— 共享组的名字和 bundle id 是两回事，不该互相跟着变。
     public static let sharedAccessGroup = "M42BKJN82S.com.pendingname.pendingnet"
 
     /// 从好到差：iCloud 同步 + 共享组 → iCloud 同步 + App 默认组 → 老的本地条目。

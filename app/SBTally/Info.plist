@@ -17,7 +17,7 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>net.pending.pdn</string>
+				<string>com.pendingname.pdn</string>
 			</array>
 		</dict>
 	</array>
@@ -59,7 +59,7 @@
 			<key>UTTypeDescription</key>
 			<string>PendingNet Pairing</string>
 			<key>UTTypeIdentifier</key>
-			<string>net.pending.pdn</string>
+			<string>com.pendingname.pdn</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>

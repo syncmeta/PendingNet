@@ -136,7 +136,7 @@ final class VPSConnectivityTester: ObservableObject {
             port: port,
             using: NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         )
-        let queue = DispatchQueue(label: "net.pending.probe.\(UUID().uuidString)")
+        let queue = DispatchQueue(label: "com.pendingname.pendingnet.probe.\(UUID().uuidString)")
 
         return try await withCheckedThrowingContinuation { continuation in
             let finished = OSAllocatedUnfairLock(initialState: false)

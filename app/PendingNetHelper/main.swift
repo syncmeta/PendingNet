@@ -344,7 +344,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         // This daemon runs as root and every method on it reconfigures the
         // machine's networking, so an unauthenticated listener let any process
         // on the box drive it. Only accept a peer signed like we are.
-        let requirement = pendingNetCodeRequirement(identifier: "net.pending.PendingNet")
+        let requirement = pendingNetCodeRequirement(identifier: PendingNetIdentifiers.app)
         guard pendingNetProcessSatisfies(pid: c.processIdentifier, requirement: requirement) else {
             return false
         }
@@ -360,7 +360,7 @@ func readData(path: String) throws -> Data {
 }
 
 let delegate = Helper()
-let listener = NSXPCListener(machServiceName: "net.pending.PendingNet.helper")
+let listener = NSXPCListener(machServiceName: PendingNetIdentifiers.helper)
 listener.delegate = delegate
 listener.resume()
 RunLoop.main.run()
