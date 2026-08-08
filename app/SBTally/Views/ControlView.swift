@@ -9,9 +9,29 @@ struct ControlView: View {
 
     @State private var showingPairingImporter = false
 
-    private var vpsProxy: Proxy? { state.proxies["proxy"] }
-    private var currentVPS: String { vpsProxy?.now ?? "" }
-    private var protoProxy: Proxy? { state.proxies[currentVPS] }
+    /// The sing-box selector tag the engine currently routes through, if it is
+    /// one of our managed VPS tags (`direct` and friends are engine outbounds,
+    /// not VPS choices).
+    private var appliedSelectorTag: String? { state.proxies["proxy"]?.now }
+
+    /// The paired VPS that tag belongs to — nil when nothing has been applied yet.
+    private var appliedServer: PairedVPSServer? {
+        guard let tag = appliedSelectorTag else { return nil }
+        return vpsPairing.servers.first {
+            PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == tag
+        }
+    }
+
+    /// Per-VPS protocol selector (vless-reality / hysteria2 inside one VPS).
+    private var protoProxy: Proxy? {
+        guard appliedServer != nil, let tag = appliedSelectorTag else { return nil }
+        return state.proxies[tag]
+    }
+
+    private func protocolLabel(_ tag: String) -> String {
+        guard let selector = appliedSelectorTag, tag.hasPrefix(selector + "-") else { return tag }
+        return String(tag.dropFirst(selector.count + 1))
+    }
 
     private var connectionStatus: (String, PendingStatusPill.Kind) {
         if engine.takeover != "local" && !engine.helperReady { return ("等待授权", .neutral) }
@@ -81,20 +101,37 @@ struct ControlView: View {
                         .font(PendingNetTheme.Fonts.body)
                         .foregroundStyle(PendingNetTheme.Palette.ink)
                     Spacer()
-                    if let all = vpsProxy?.all {
+                    if vpsPairing.servers.isEmpty {
+                        Text("尚未导入")
+                            .font(PendingNetTheme.Fonts.caption)
+                            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    } else {
                         Picker("当前 VPS", selection: Binding(
-                            get: { currentVPS },
-                            set: { name in Task { await state.select(selector: "proxy", name: name) } }
+                            get: { appliedServer?.serverID ?? "" },
+                            set: { serverID in
+                                guard let server = vpsPairing.servers.first(where: { $0.serverID == serverID }),
+                                      server.serverID != appliedServer?.serverID else { return }
+                                Task {
+                                    await PendingNetConnectionWorkflow.refreshAndConnect(
+                                        server: server,
+                                        pairing: vpsPairing,
+                                        engine: engine,
+                                        state: state
+                                    )
+                                }
+                            }
                         )) {
-                            ForEach(all, id: \.self) { Text($0).tag($0) }
+                            if appliedServer == nil {
+                                Text("未选择").tag("")
+                            }
+                            ForEach(vpsPairing.servers) { server in
+                                Text("\(server.name) · \(server.endpoint)").tag(server.serverID)
+                            }
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
-                        .frame(maxWidth: 220)
-                    } else {
-                        Text("代理尚未启动")
-                            .font(PendingNetTheme.Fonts.caption)
-                            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                        .frame(maxWidth: 260)
+                        .disabled(vpsPairing.pairing)
                     }
 
                     Button {
@@ -113,13 +150,13 @@ struct ControlView: View {
                     .disabled(vpsPairing.pairing)
                 }
 
-                if let all = protoProxy?.all {
+                if let all = protoProxy?.all, let selector = appliedSelectorTag {
                     selectionRow("当前协议") {
                         Picker("当前协议", selection: Binding(
                             get: { protoProxy?.now ?? "" },
-                            set: { name in Task { await state.select(selector: currentVPS, name: name) } }
+                            set: { name in Task { await state.select(selector: selector, name: name) } }
                         )) {
-                            ForEach(all, id: \.self) { Text($0).tag($0) }
+                            ForEach(all, id: \.self) { Text(protocolLabel($0)).tag($0) }
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
@@ -157,18 +194,11 @@ struct ControlView: View {
                                 }
                             }
                             Spacer()
-                            Button("应用并连接") {
-                                Task {
-                                    await PendingNetConnectionWorkflow.refreshAndConnect(
-                                        server: server,
-                                        pairing: vpsPairing,
-                                        engine: engine,
-                                        state: state
-                                    )
-                                }
+                            // Choosing a VPS lives in the picker above; this list
+                            // only shows what is paired and which one is in use.
+                            if server.serverID == appliedServer?.serverID {
+                                PendingStatusPill(text: "使用中", kind: .success)
                             }
-                            .buttonStyle(PendingPrimaryButtonStyle())
-                            .disabled(vpsPairing.pairing)
                         }
                     }
                 }

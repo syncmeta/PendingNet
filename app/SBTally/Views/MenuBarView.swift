@@ -6,14 +6,30 @@ struct MenuBarView: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var engine: EngineController
     @EnvironmentObject private var updater: PendingNetUpdateController
+    @EnvironmentObject private var vpsPairing: VPSPairingController
     @Environment(\.openWindow) private var openWindow
 
     private var totalUp: Int64 { state.live.reduce(0) { $0 + $1.upRate } }
     private var totalDown: Int64 { state.live.reduce(0) { $0 + $1.downRate } }
 
-    private var vpsProxy: Proxy? { state.proxies["proxy"] }
-    private var currentVPS: String { vpsProxy?.now ?? "" }
-    private var protoProxy: Proxy? { state.proxies[currentVPS] }
+    private var appliedSelectorTag: String? { state.proxies["proxy"]?.now }
+
+    private var appliedServer: PairedVPSServer? {
+        guard let tag = appliedSelectorTag else { return nil }
+        return vpsPairing.servers.first {
+            PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == tag
+        }
+    }
+
+    private var protoProxy: Proxy? {
+        guard appliedServer != nil, let tag = appliedSelectorTag else { return nil }
+        return state.proxies[tag]
+    }
+
+    private func protocolLabel(_ tag: String) -> String {
+        guard let selector = appliedSelectorTag, tag.hasPrefix(selector + "-") else { return tag }
+        return String(tag.dropFirst(selector.count + 1))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -55,19 +71,36 @@ struct MenuBarView: View {
                 set: { m in Task { await state.setMode(m) } })) {
                 Text("全局").tag("Global"); Text("白名单").tag("Whitelist"); Text("黑名单").tag("Blacklist")
             }
-            if let all = vpsProxy?.all {
+            if !vpsPairing.servers.isEmpty {
                 Picker("VPS", selection: Binding(
-                    get: { currentVPS },
-                    set: { name in Task { await state.select(selector: "proxy", name: name) } })) {
-                    ForEach(all, id: \.self) { Text($0).tag($0) }
+                    get: { appliedServer?.serverID ?? "" },
+                    set: { serverID in
+                        guard let server = vpsPairing.servers.first(where: { $0.serverID == serverID }),
+                              server.serverID != appliedServer?.serverID else { return }
+                        Task {
+                            await PendingNetConnectionWorkflow.refreshAndConnect(
+                                server: server,
+                                pairing: vpsPairing,
+                                engine: engine,
+                                state: state
+                            )
+                        }
+                    })) {
+                    if appliedServer == nil {
+                        Text("未选择").tag("")
+                    }
+                    ForEach(vpsPairing.servers) { server in
+                        Text(server.name).tag(server.serverID)
+                    }
                 }
                 .pickerStyle(.menu)
+                .disabled(vpsPairing.pairing)
             }
-            if let all = protoProxy?.all {
+            if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 Picker("协议", selection: Binding(
                     get: { protoProxy?.now ?? "" },
-                    set: { name in Task { await state.select(selector: currentVPS, name: name) } })) {
-                    ForEach(all, id: \.self) { Text($0).tag($0) }
+                    set: { name in Task { await state.select(selector: selector, name: name) } })) {
+                    ForEach(all, id: \.self) { Text(protocolLabel($0)).tag($0) }
                 }
                 .pickerStyle(.menu)
             }
