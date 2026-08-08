@@ -101,13 +101,6 @@ struct SettingsView: View {
                 .font(PendingNetTheme.Fonts.body)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
 
-                Text(engine.allowsLAN
-                     ? "同一个网络里的设备都能通过这台机器上网 —— 在家或办公室方便，在咖啡馆之类的公共 Wi-Fi 就别开。"
-                     : "只有这台电脑自己能用。开了之后同网段的设备也能连，监听地址会变成 0.0.0.0。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 if let portError {
                     Text(portError)
                         .font(PendingNetTheme.Fonts.caption)
