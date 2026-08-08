@@ -100,11 +100,28 @@ public enum PendingNetTunnelConfig {
 
     /// 各档位真正引用到的规则集。只把用得上的写进配置：全局一个都不要，
     /// 白名单看国内名单，黑名单看 GFW 名单。
-    static func ruleSetTags(mode: PendingNetRouteMode) -> [String] {
+    ///
+    /// 这份「按档位」的名单同时也是**下载与就绪判断**的依据（见
+    /// `ruleSetsPresent(mode:directory:)`），不是只给配置生成用的。
+    public static func ruleSetTags(mode: PendingNetRouteMode) -> [String] {
         switch mode {
         case .global: []
         case .whitelist: ["geoip-cn", "geosite-cn"]
         case .blacklist: ["geosite-gfw"]
+        }
+    }
+
+    /// 这一档位需要的规则集是否都在磁盘上、且确实是 `.srs`。
+    ///
+    /// 判据必须按档位收窄，不能是「名单里三份全都在」。白名单只吃
+    /// geoip-cn / geosite-cn，多要一份 geosite-gfw 的后果是：本来白名单用得
+    /// 好好的老用户，升级后点白名单会先去补下那份他根本用不到的名单，而
+    /// `raw.githubusercontent.com` 在墙内本来就够呛——下不来就整个抛错、
+    /// 降级回全局，等于用一份用不上的名单把他原来能用的档位弄没了，
+    /// 而这正是他此刻最需要那一档的时候。
+    public static func ruleSetsPresent(mode: PendingNetRouteMode, directory: String) -> Bool {
+        ruleSetTags(mode: mode).allSatisfy { name in
+            looksLikeRuleSet(at: (directory as NSString).appendingPathComponent("\(name).srs"))
         }
     }
 

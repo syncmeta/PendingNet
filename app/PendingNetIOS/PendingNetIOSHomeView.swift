@@ -200,11 +200,20 @@ struct PendingNetIOSHomeView: View {
         controller.errorMessage = nil
         controller.message = nil
 
+        // 只补这一档用得到的规则集：白名单不该因为它根本不引用的
+        // geosite-gfw 下不来而开不了。
         if mode != .global {
+            var reason: String?
             do {
-                try await controller.ruleSetStore.ensureAvailable()
+                try await controller.ruleSetStore.ensureAvailable(for: mode)
+                if !controller.ruleSetStore.isReady(for: mode) {
+                    reason = "规则集文件不完整或不是有效的 .srs"
+                }
             } catch {
-                controller.errorMessage = "规则集不可用，已保持全局：\(error.localizedDescription)"
+                reason = error.localizedDescription
+            }
+            if let reason {
+                controller.errorMessage = "规则集不可用，已保持全局：\(reason)"
                 // 降级：确保隧道（如果在位）确实跑在全局上，而不是停在
                 // 「用户点了白名单，但没人知道最终生效的是哪个模式」这种
                 // 界面选中项和隧道实际配置对不上的状态。

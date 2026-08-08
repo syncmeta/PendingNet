@@ -250,18 +250,21 @@ final class PendingNetTunnelController: ObservableObject {
     /// 内核拒收的配置，隧道干脆起不来——正是那条规则要避免的结果。黑名单
     /// 同样吃规则集（geosite-gfw），所以判据是「不是全局」而不是某一档。
     ///
-    /// 判据是 `ensureAvailable()` 之后的 `isReady`，而不是它有没有抛错：
-    /// `isReady` 是照磁盘上的文件（含 `.srs` 魔数）重新算出来的，就算下载
-    /// 那一步「成功」了却没落下有效文件，这里也拦得住。
+    /// 判据是 `ensureAvailable(for:)` 之后的 `isReady(for:)`，而不是它有没有
+    /// 抛错：那是照磁盘上的文件（含 `.srs` 魔数）重新算出来的，就算下载
+    /// 那一步「成功」了却没落下有效文件，这里也拦得住。两者都**按档位**取，
+    /// 不看整体的 `isReady`——白名单不该因为它用不到的 geosite-gfw 缺失
+    /// 而被降级。
     private func ensureRouteModeIsRunnable(
         profile: PendingNetNodeProfile,
         serverName: String
     ) async {
         guard routeMode != .global else { return }
+        let mode = routeMode
         var reason: String?
         do {
-            try await ruleSetStore.ensureAvailable()
-            if !ruleSetStore.isReady { reason = "规则集文件不完整或不是有效的 .srs" }
+            try await ruleSetStore.ensureAvailable(for: mode)
+            if !ruleSetStore.isReady(for: mode) { reason = "规则集文件不完整或不是有效的 .srs" }
         } catch {
             reason = error.localizedDescription
         }

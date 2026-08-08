@@ -228,6 +228,79 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         )
     }
 
+    /// 就绪判断必须按档位收窄。加进名单的 geosite-gfw 只有黑名单用得到，
+    /// 它下不来（`raw.githubusercontent.com` 在墙内本来就够呛）不能把老用户
+    /// 一直在用的白名单也一起挡掉——那恰恰是他最需要开代理的时候。
+    func testWhitelistIsReadyWithoutTheBlacklistRuleSet() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-ready-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        func write(_ name: String) throws {
+            try Data(PendingNetTunnelConfig.ruleSetMagicBytes + [0x03, 0x00])
+                .write(to: directory.appendingPathComponent("\(name).srs"))
+        }
+
+        // 全局什么都不需要，空目录就该是就绪的。
+        XCTAssertTrue(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .global, directory: directory.path)
+        )
+        XCTAssertFalse(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .whitelist, directory: directory.path)
+        )
+
+        // 老用户磁盘上的样子：只有白名单那两份，没有 geosite-gfw。
+        try write("geoip-cn")
+        try write("geosite-cn")
+        XCTAssertTrue(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .whitelist, directory: directory.path),
+            "白名单不该因为它根本不引用的 geosite-gfw 缺失而被判为未就绪"
+        )
+        XCTAssertFalse(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .blacklist, directory: directory.path)
+        )
+
+        try write("geosite-gfw")
+        XCTAssertTrue(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .blacklist, directory: directory.path)
+        )
+    }
+
+    /// 反过来也一样：黑名单只吃 geosite-gfw，国内名单缺失不该挡住它。
+    func testBlacklistIsReadyWithoutTheDomesticRuleSets() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-ready-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try Data(PendingNetTunnelConfig.ruleSetMagicBytes + [0x03, 0x00])
+            .write(to: directory.appendingPathComponent("geosite-gfw.srs"))
+        XCTAssertTrue(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .blacklist, directory: directory.path)
+        )
+        XCTAssertFalse(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .whitelist, directory: directory.path)
+        )
+    }
+
+    /// 落地的是被中间设备换掉的 HTML 而不是 `.srs` 时，那一档必须判为未就绪
+    /// 并重下——「文件在」不等于「能用」。
+    func testRuleSetPresenceRejectsPoisonedFiles() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-ready-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try Data(PendingNetTunnelConfig.ruleSetMagicBytes + [0x03, 0x00])
+            .write(to: directory.appendingPathComponent("geoip-cn.srs"))
+        try Data("<!DOCTYPE html><html><body>blocked</body></html>".utf8)
+            .write(to: directory.appendingPathComponent("geosite-cn.srs"))
+        XCTAssertFalse(
+            PendingNetTunnelConfig.ruleSetsPresent(mode: .whitelist, directory: directory.path)
+        )
+    }
+
     func testEveryRouteModePassesInstalledSingBoxCheck() throws {
         let candidates = ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
         guard let binary = candidates.first(where: {
