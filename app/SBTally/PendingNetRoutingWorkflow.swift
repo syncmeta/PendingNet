@@ -44,9 +44,9 @@ enum PendingNetRoutingWorkflow {
             state.modeNote = mode == "Global" ? nil : "已记住，连接后生效。"
             return
         }
-        if listModes.contains(mode), !engine.listModesAvailable {
+        if listModes.contains(mode), !engine.listModeAvailable(mode) {
             state.modeNote = "正在准备分流名单…"
-            guard await engine.enableListModes() else {
+            guard await engine.enableListMode(mode) else {
                 state.modeNote = "分流名单还没下载到（要能访问 GitHub，通常连上代理后就能拿到）。"
                     + "已记住你的选择，下次连接会自动再试，在那之前按全局走。"
                 return

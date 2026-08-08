@@ -57,18 +57,30 @@ final class EngineController: ObservableObject {
         }
     }
 
-    /// Whether the app-run engine's config declares 白名单/黑名单 at all. Only
+    /// Whether the app-run engine's config declares this exact list mode. Only
     /// meaningful in 「仅端口」 — the helper runs its own config.
-    var listModesAvailable: Bool { userEngine.configDeclaresListModes }
+    func listModeAvailable(_ name: String) -> Bool {
+        guard let mode = routeMode(named: name) else { return false }
+        return userEngine.configDeclaresListMode(mode)
+    }
 
     /// Fetches the geosite/geoip lists and rewrites the config to route by them,
     /// restarting the engine if it was up. Returns whether the list modes exist
     /// afterwards.
-    func enableListModes() async -> Bool {
-        let ok = await userEngine.enableListModes()
+    func enableListMode(_ name: String) async -> Bool {
+        guard let mode = routeMode(named: name) else { return false }
+        let ok = await userEngine.enableListMode(mode)
         running = userEngine.isRunning
         logTail = userEngine.logTail()
         return ok
+    }
+
+    private func routeMode(named name: String) -> PendingNetRouteMode? {
+        switch name {
+        case "Whitelist": .whitelist
+        case "Blacklist": .blacklist
+        default: nil
+        }
     }
 
     /// A single, cached XPC connection — reused across calls instead of
