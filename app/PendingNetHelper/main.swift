@@ -317,6 +317,22 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         let (_, tail) = sh(["/usr/bin/tail", "-n", "5", "/var/log/sbtally-singbox.log"])
         reply(engineRunning(), currentMode(), tail)
     }
+
+    func interfaceVersion(reply: @escaping (Int) -> Void) {
+        reply(pendingNetHelperInterfaceVersion)
+    }
+
+    /// Exits so launchd relaunches this job from the app bundle currently on
+    /// disk. Replacing the app leaves the previously launched helper resident
+    /// and serving its old code forever; this is how a newly installed app
+    /// retires it without the user having to re-approve anything.
+    ///
+    /// The reply is the caller's own connection tearing down, so drain briefly
+    /// first and let the exit happen off the incoming message's thread.
+    func quitForUpgrade() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { exit(0) }
+    }
+
     func listener(_ l: NSXPCListener, shouldAcceptNewConnection c: NSXPCConnection) -> Bool {
         c.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         c.exportedObject = self

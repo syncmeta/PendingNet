@@ -64,14 +64,22 @@ final class EngineController: ObservableObject {
                                  options: .privileged)
         c.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
         c.interruptionHandler = { [weak self] in
-            Task { @MainActor in self?.connection = nil; self?.helperReady = false }
+            Task { @MainActor in self?.dropConnection() }
         }
         c.invalidationHandler = { [weak self] in
-            Task { @MainActor in self?.connection = nil; self?.helperReady = false }
+            Task { @MainActor in self?.dropConnection() }
         }
         c.resume()
         connection = c
         return c
+    }
+
+    /// Forgets the current connection along with everything only true of it —
+    /// including which helper build was on the other end.
+    private func dropConnection() {
+        connection = nil
+        helperReady = false
+        helperInterfaceOK = nil
     }
 
     /// Calls `body` with the helper proxy, delivering exactly one result:
@@ -118,18 +126,125 @@ final class EngineController: ObservableObject {
         }
     }
 
+    /// Whether the helper answering on the current connection was built from
+    /// this app's `HelperProtocol`. Nil until probed; reset whenever the
+    /// connection is dropped, since a new one may reach a different build.
+    private var helperInterfaceOK: Bool?
+    /// Guards against re-registering the daemon on every refresh when recovery
+    /// doesn't take: one attempt per connect-and-fail cycle, not a loop.
+    private var didAttemptHelperRecovery = false
+
+    /// Same as `withHelper`, but only after confirming the helper on the other
+    /// end speaks this app's protocol — retiring it first if it doesn't.
+    ///
+    /// Every call goes through here. Sending even a long-standing method to a
+    /// leftover helper is not harmless: it is the *old* code that would run,
+    /// still carrying whichever bugs this version fixed.
+    private func withCompatibleHelper<T: Sendable>(
+        _ fallback: T,
+        timeout: Duration,
+        _ body: @escaping (HelperProtocol, @escaping (T) -> Void) -> Void
+    ) async -> T {
+        guard await ensureHelperCompatible() else { return fallback }
+        return await withHelper(fallback, timeout: timeout, body)
+    }
+
+    /// Replaces a helper left over from a previous install.
+    ///
+    /// Replacing the app bundle does not replace the running daemon: it is
+    /// resident, launchd has no reason to restart it, and `register()` on an
+    /// already-enabled service is a no-op. So an updated app keeps talking to
+    /// the old binary until something here retires it — and the moment it calls
+    /// a method that binary doesn't know, XPC drops the connection and the GUI
+    /// falls back to 「等待授权」 forever.
+    private func ensureHelperCompatible() async -> Bool {
+        if let known = helperInterfaceOK { return known }
+        var version = await probeHelperInterfaceVersion()
+        if version != pendingNetHelperInterfaceVersion, !didAttemptHelperRecovery {
+            didAttemptHelperRecovery = true
+            if version > 0 {
+                // New enough to retire itself: launchd relaunches the current
+                // bundle's binary on the next connection, and the user's
+                // existing approval is left untouched.
+                await requestHelperQuit()
+            } else {
+                // Too old to even report a version — the only lever left is
+                // re-registering the job, which boots the stale one out.
+                await reregisterHelperService()
+            }
+            version = await probeHelperInterfaceVersion()
+        }
+        let ok = version == pendingNetHelperInterfaceVersion
+        helperInterfaceOK = ok
+        if ok {
+            didAttemptHelperRecovery = false
+            lastError = nil
+        } else {
+            helperReady = false
+            // Re-registering can land the daemon back in the approval queue —
+            // that needs the user to flip a switch, not to retry.
+            helperNeedsApproval = service.status == .requiresApproval
+            lastError = helperNeedsApproval
+                ? "后台服务已更新，请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet"
+                : "后台服务是旧版本且没能自动更新，请退出并重新打开 PendingNet；仍然如此的话，在系统设置 → 通用 → 登录项与扩展里把 PendingNet 关掉再打开"
+        }
+        return ok
+    }
+
+    /// The running helper's interface version, or -1 when it can't tell us —
+    /// which is itself the answer for helpers predating `interfaceVersion`,
+    /// since they drop the message and tear the connection down.
+    private func probeHelperInterfaceVersion() async -> Int {
+        await withHelper(-1, timeout: Self.quickTimeout) { p, reply in
+            p.interfaceVersion { reply($0) }
+        }
+    }
+
+    private func requestHelperQuit() async {
+        let conn = xpcConnection()
+        (conn.remoteObjectProxyWithErrorHandler { _ in } as? HelperProtocol)?.quitForUpgrade()
+        dropConnection()
+        conn.invalidate()
+        // Let launchd reap the exiting daemon before the next connect, or it
+        // may hand back the process that is already on its way out.
+        try? await Task.sleep(for: .milliseconds(600))
+    }
+
+    private func reregisterHelperService() async {
+        // Capture before `dropConnection` clears it, or the stale connection is
+        // never actually torn down.
+        let stale = connection
+        dropConnection()
+        stale?.invalidate()
+        try? await service.unregister()
+        // `unregister()` returns before launchd has finished tearing the job
+        // down; registering into that window re-adopts the job we just booted.
+        for _ in 0..<20 {
+            if service.status != .enabled { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        try? service.register()
+        helperNeedsApproval = service.status == .requiresApproval
+    }
+
     func registerHelper() {
         Task {
             // A fresh authorization attempt starts from a clean slate — the
             // previous attempt's error must not outlive it.
             lastError = nil
+            // Pressing 授权 is the user's explicit retry, so let recovery run
+            // again even if an earlier attempt this session gave up.
+            didAttemptHelperRecovery = false
+            helperInterfaceOK = nil
             do {
                 // An already-approved helper must be left alone: unregistering
                 // it here knocked it back to 「待批准」, so pressing 授权 made
-                // things strictly worse.
+                // things strictly worse. It may still be a leftover build
+                // though, so it has to clear the version handshake.
                 if service.status == .enabled {
-                    helperReady = true
                     helperNeedsApproval = false
+                    guard await ensureHelperCompatible() else { return }
+                    helperReady = true
                     if let pending = pendingTakeover {
                         pendingTakeover = nil
                         await setTakeover(pending)
@@ -175,7 +290,7 @@ final class EngineController: ObservableObject {
         if helperReady {
             // A helper-owned system proxy with no engine behind it leaves the
             // whole machine unable to reach anything — clean it up on sight.
-            _ = await withHelper(false, timeout: Self.quickTimeout) { p, reply in
+            _ = await withCompatibleHelper(false, timeout: Self.quickTimeout) { p, reply in
                 p.repairSystemProxy(reply: reply)
             }
         }
@@ -204,13 +319,13 @@ final class EngineController: ObservableObject {
     }
 
     private func helperStatus() async -> (Bool, String, String)? {
-        await withHelper(nil, timeout: Self.quickTimeout) { p, reply in
+        await withCompatibleHelper(nil, timeout: Self.quickTimeout) { p, reply in
             p.status { run, mode, tail in reply((run, mode, tail)) }
         }
     }
 
     private func call(_ f: @escaping (HelperProtocol, @escaping (String?) -> Void) -> Void) async {
-        let err: String? = await withHelper("助手连接失败", timeout: Self.engineTimeout) { p, reply in
+        let err: String? = await withCompatibleHelper("助手连接失败", timeout: Self.engineTimeout) { p, reply in
             f(p) { reply($0) }
         }
         if let err { lastError = err }
@@ -292,7 +407,7 @@ final class EngineController: ObservableObject {
                 return false
             }
         }
-        let err: String? = await withHelper("特权助手尚未就绪", timeout: Self.engineTimeout) { p, reply in
+        let err: String? = await withCompatibleHelper("特权助手尚未就绪", timeout: Self.engineTimeout) { p, reply in
             p.applyServerConfiguration(
                 runtime.serverID,
                 name: runtime.name,
