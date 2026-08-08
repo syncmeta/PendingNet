@@ -168,6 +168,14 @@ targets:
         # 发布仍是 Developer ID + 手工 codesign（构建时 CODE_SIGNING_ALLOWED=NO），
         # 这里补 team 是为了能在门户/Xcode 侧给这个 App ID 配 iCloud 与钥匙串共享。
         DEVELOPMENT_TEAM: M42BKJN82S
+        # 这个 target 从来不由 Xcode 签名 —— 构建完一律交给
+        # scripts/sign-macos-development.sh（本地 ad-hoc / 发布 Developer ID +
+        # 描述文件）。不显式关掉的话，自从 app 带上 iCloud 与钥匙串共享
+        # entitlement，自动签名会去找一份含 iCloud 能力的 Mac 描述文件，
+        # README 里那条最普通的 `xcodebuild ... -scheme PendingNet build`
+        # 就直接失败——而发布路径因为一直显式传 CODE_SIGNING_ALLOWED=NO，
+        # 反而看不出问题。
+        CODE_SIGNING_ALLOWED: "NO"
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
