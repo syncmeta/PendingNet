@@ -28,12 +28,28 @@ func networkServices() -> [String] { // active-ish: all listed services minus '*
     let (_, out) = sh(["/usr/sbin/networksetup", "-listallnetworkservices"])
     return out.split(separator: "\n").dropFirst().map(String.init).filter { !$0.hasPrefix("*") }
 }
+/// The port the currently active config actually listens on for proxied
+/// traffic. Hard-coding 2080 here meant the system proxy could be pointed at a
+/// port nothing was bound to whenever the config used a different one.
+func activeProxyPort() -> Int {
+    guard let data = try? readData(path: "\(ETC)/master.json"),
+          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let inbounds = root["inbounds"] as? [[String: Any]] else { return 2080 }
+    for type in ["mixed", "socks", "http"] {
+        if let port = inbounds.first(where: { $0["type"] as? String == type })?["listen_port"] as? Int {
+            return port
+        }
+    }
+    return 2080
+}
+
 func setSystemProxy(_ on: Bool) {
+    let port = String(activeProxyPort())
     for s in networkServices() {
         if on {
-            _ = sh(["/usr/sbin/networksetup", "-setwebproxy", s, "127.0.0.1", "2080"])
-            _ = sh(["/usr/sbin/networksetup", "-setsecurewebproxy", s, "127.0.0.1", "2080"])
-            _ = sh(["/usr/sbin/networksetup", "-setsocksfirewallproxy", s, "127.0.0.1", "2080"])
+            _ = sh(["/usr/sbin/networksetup", "-setwebproxy", s, "127.0.0.1", port])
+            _ = sh(["/usr/sbin/networksetup", "-setsecurewebproxy", s, "127.0.0.1", port])
+            _ = sh(["/usr/sbin/networksetup", "-setsocksfirewallproxy", s, "127.0.0.1", port])
         } else {
             _ = sh(["/usr/sbin/networksetup", "-setwebproxystate", s, "off"])
             _ = sh(["/usr/sbin/networksetup", "-setsecurewebproxystate", s, "off"])
@@ -172,13 +188,21 @@ func activatePendingSelector(configData: Data) -> String? {
 
 final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     func startEngine(reply: @escaping (String?) -> Void) {
+        // Invariant: the system proxy is only ever left enabled when the engine
+        // is actually running. Every failure path below must therefore tear it
+        // down — otherwise the machine is left pointing at a dead port and all
+        // proxied traffic fails with "Connection refused".
+        func fail(_ message: String?) {
+            disableOwnedSystemProxy()
+            reply(message)
+        }
         _ = launchctl(["bootout", LABEL])   // idempotent
         let err = launchctl(["bootstrap", "system", "/Library/LaunchDaemons/io.sbtally.singbox.plist"])
-        guard err == nil else { return reply(err) }
-        guard waitForEngine() else { return reply("sing-box 启动后未进入运行状态") }
+        guard err == nil else { return fail(err) }
+        guard waitForEngine() else { return fail("sing-box 启动后未进入运行状态") }
         let configData = try? readData(path: "\(ETC)/master.json")
         if let configData, let selectionError = activatePendingSelector(configData: configData) {
-            return reply(selectionError)
+            return fail(selectionError)
         }
         if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
         reply(nil)
@@ -196,9 +220,25 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             try data.write(to: URL(fileURLWithPath: "\(ETC)/master.json"))
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
-        if mode == "sysproxy" { enableOwnedSystemProxy() } else { disableOwnedSystemProxy() }
+        // Turning the system proxy on before the engine is up (or when it isn't
+        // running at all) points the whole machine at a dead port. Enable it
+        // only once the engine is confirmed running, and roll back otherwise.
+        disableOwnedSystemProxy()
         guard wasRunning else { return reply(nil) }
-        reply(launchctl(["kickstart", "-k", LABEL]))
+        if let error = launchctl(["kickstart", "-k", LABEL]) { return reply(error) }
+        guard waitForEngine() else { return reply("sing-box 重启后未进入运行状态") }
+        if mode == "sysproxy" { enableOwnedSystemProxy() }
+        reply(nil)
+    }
+
+    /// Clears a system proxy this helper owns but that no longer has a live
+    /// engine behind it — the state a crashed or half-failed start leaves the
+    /// machine in, where every proxied connection is refused.
+    func repairSystemProxy(reply: @escaping (Bool) -> Void) {
+        guard FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER),
+              !engineRunning() else { return reply(false) }
+        disableOwnedSystemProxy()
+        reply(true)
     }
     func applyServerConfiguration(
         _ serverID: String,
