@@ -23,6 +23,12 @@ struct PendingNetIOSApp: App {
             // 不接住的话，PendingNet 会出现在「打开方式」里、点了却什么都不
             // 发生，比不声明更糟。
             .onOpenURL { url in
+                // 与 macOS 同一句守卫（SBTallyApp）。今天 iOS 只可能收到 .pdn
+                // 文件 URL（没声明自定义 scheme、也没有 universal link），但
+                // `importAndEnroll` 里是 `Data(contentsOf:)`——真收到一个 http
+                // URL 就成了一次同步网络请求。两端对「什么算可导入」的判断
+                // 不一致，正是这一轮在消灭的那类东西。
+                guard url.pathExtension.lowercased() == "pdn" else { return }
                 Task { await importPairing(from: url) }
             }
         }
