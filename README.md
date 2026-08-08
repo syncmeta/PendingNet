@@ -71,6 +71,16 @@ sudo pendingnet-server provision \
 
 切换过程会先验证新配置；若启动失败，会尝试恢复原有 `xray.service` 和 `hysteria-server.service`。旧配置不会被删除。
 
+只接管控制面本身就是一个**可以长期保持的终态**，不是必须往下走的中间步骤。两种终态对客户端完全等价：`.pdn`、配对、节点下发和 app 里的使用体验都一样，区别只在底层由谁扛流量、密钥由谁生成。
+
+| | 只接管控制面（`import-singb`） | 完全接管（`provision --replace-existing`） |
+| --- | --- | --- |
+| TCP/443、UDP/443 | 原有 `xray.service` / `hysteria-server.service` | `pendingnet-xray.service` / `pendingnet-hysteria.service` |
+| 连接密钥 | 沿用旧服务已有的 | PendingNet 重新生成 |
+| 对旧客户端 | 不受影响 | **立即失效，需要重新配置** |
+
+因为完全接管会让仍在使用旧节点的设备立刻断线，且密钥不可回滚，所以只在确认没有客户端还在用旧服务之后再做。拿不准就停在只接管控制面，随时可以补做后面这一步。
+
 将 `/root/my-vps.pdn` 安全复制到 Mac 或 iPhone 后导入。文件默认十分钟过期且只能使用一次；每台设备应单独生成一份。
 
 ## 开发与验证
