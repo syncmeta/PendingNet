@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **历史文档，别照抄标识符。** 这是当时的实施计划/设计，按原样留存。
+> 里面的 bundle id、App Group、helper 标签都是**旧的** —— 2026-08-08 macOS 已从
+> `net.pending.*` 归一到 `com.pendingname.pendingnet`（iOS 更早就换过）。当前值
+> 以 `app/project.yml` 和 `PendingNetIdentifiers` 为准，迁移见 `docs/macos-updates.md`。
+
 **Goal:** 把 SBTally GUI 升级为 PendingNet：免密启停、三接管模式（TUN/系统代理/仅端口）、三规则（全局/白名单/黑名单，零重启切换）、规则集自动更新、菜单栏全功能。
 
 **Architecture:** GUI(PendingNet.app) —XPC→ 特权助手(SMAppService daemon, root, 启停引擎/切接管模式/系统代理) + —HTTP→ sbtally daemon :7777(统计/Clash API 中转/规则集更新)。三规则做成 sing-box 自定义 clash_mode（Global/Whitelist/Blacklist），切换零重启。接管模式 = 预生成 tun/notun 两份配置，助手拷贝激活 + kickstart。

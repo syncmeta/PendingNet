@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **历史文档，别照抄标识符。** 这是当时的实施计划/设计，按原样留存。
+> 里面的 bundle id、App Group、helper 标签都是**旧的** —— 2026-08-08 macOS 已从
+> `net.pending.*` 归一到 `com.pendingname.pendingnet`（iOS 更早就换过）。当前值
+> 以 `app/project.yml` 和 `PendingNetIdentifiers` 为准，迁移见 `docs/macos-updates.md`。
+
 **Goal:** 让 PendingNet iOS 的 Packet Tunnel Extension 真正联网——内嵌 sing-box libbox 内核，把已配对 VPS 的节点资料转成隧道运行配置，支持全局代理、协议手选/自动测速与三档规则分流。
 
 **Architecture:** 配置生成全部收进 `SBTallyCore` 的纯函数，由 `swift test` + `sing-box check` 双重验证；主 App 负责刷新节点资料、下载规则集、生成配置并通过 `startTunnel` options 下发；扩展只消费本地数据，用 libbox 的 `CommandServer` 驱动内核，`PlatformInterface.openTun` 负责把 libbox 的 tun 参数翻译成 `NEPacketTunnelNetworkSettings`。

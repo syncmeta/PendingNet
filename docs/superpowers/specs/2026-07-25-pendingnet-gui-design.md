@@ -2,6 +2,11 @@
 
 2026-07-25。阶段 B（VPS 服务端统一配置协议）另行设计；本设计不含它，但不做与它冲突的决定。
 
+> **历史文档，别照抄标识符。** 这是当时的实施计划/设计，按原样留存。
+> 里面的 bundle id、App Group、helper 标签都是**旧的** —— 2026-08-08 macOS 已从
+> `net.pending.*` 归一到 `com.pendingname.pendingnet`（iOS 更早就换过）。当前值
+> 以 `app/project.yml` 和 `PendingNetIdentifiers` 为准，迁移见 `docs/macos-updates.md`。
+
 ## 目标
 
 把现有 SBTally GUI 升级为 PendingNet：
