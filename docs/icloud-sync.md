@@ -34,6 +34,12 @@
 
 代码和构建配置已经就位，下面这几步必须由人在门户 / Xcode 里点，之后才能真跑：
 
+0. **先看一眼 App ID `com.pendingname.pendingnet` 的「平台」字段包不包含 macOS。**
+   这个 App ID 当初是给 iPhone 注册的，早年注册的很可能是「仅 iOS」。如果是，
+   就签不出 Mac 版要用的那份 Developer ID 描述文件 —— 而且这事要到第 2 步才暴露，
+   到时候只会告诉你「没有可用的描述文件」，不会告诉你原因。是「仅 iOS」的话，
+   先在门户里把平台补上（App ID 详情页里改，或者按门户提示重建成 macOS + iOS
+   通用），再往下走。
 1. App ID `com.pendingname.pendingnet`：开 **iCloud**（Key-value storage）和
    **Keychain Sharing**，钥匙串组填 `com.pendingname.pendingnet`。
    两端**共用这一个 App ID** —— 2026-08-08 把 macOS 的 bundle id 从

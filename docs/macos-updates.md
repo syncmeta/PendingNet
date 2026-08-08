@@ -18,7 +18,9 @@ PendingNet 0.3.9 起使用 Sparkle 2。更新链包含四层：HTTPS 传输、�
      PendingBot 仓的 `node_modules/.bin/wrangler`；两个仓都不在时才需要显式指定
    - `PENDINGNET_PROVISION_PROFILE`：Developer ID 描述文件（必填）。app 带
      iCloud 键值存储与共享钥匙串组，这类受限 entitlement 只有描述文件背书才
-     作数，不给会被脚本拦下。怎么申请见 [icloud-sync.md](icloud-sync.md)
+     作数，不给会被脚本拦下。怎么申请见 [icloud-sync.md](icloud-sync.md) ——
+     第一次申请前先确认 App ID `com.pendingname.pendingnet` 的平台字段含 macOS，
+     它原本是给 iPhone 注册的，是「仅 iOS」的话这份描述文件根本签不出来
 
    feed 地址与下载前缀不再从环境变量传入 —— 它们由产品名推导（`.../pendingnet/`），
    构建产物里的 `SUFeedURL` 解析不出 https 地址时脚本直接拒绝发布。
