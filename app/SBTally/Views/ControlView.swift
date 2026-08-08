@@ -9,7 +9,7 @@ struct ControlView: View {
     @StateObject private var tester = VPSConnectivityTester()
 
     @State private var showingPairingImporter = false
-    @Namespace private var scrollNamespace
+    @State private var detailServerID: String?
 
     /// The sing-box selector tag the engine currently routes through, if it is
     /// one of our managed VPS tags (`direct` and friends are engine outbounds,
@@ -58,16 +58,11 @@ struct ControlView: View {
     }
 
     var body: some View {
-        ScrollViewReader { scroll in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    connectionCard(scroll: scroll)
-                    vpsListCard
-                }
+        ScrollView {
+            connectionCard
                 .padding(PendingNetTheme.Metrics.gutter)
                 .frame(maxWidth: PendingNetTheme.Metrics.readableWidth)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
         }
         .background(PendingNetTheme.Palette.canvas)
         .task {
@@ -95,102 +90,82 @@ struct ControlView: View {
         }
     }
 
-    // MARK: - One card: switch, takeover, routing, current VPS, protocol
+    // MARK: - One card, one kind of control: pills all the way down
 
-    private func connectionCard(scroll: ScrollViewProxy) -> some View {
+    private var connectionCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                PendingStatusPill(text: connectionStatus.0, kind: connectionStatus.1)
-                if engine.takeover == "local" {
-                    // verbatim: 端口是标识符不是数量，走 LocalizedStringKey 会被加上千分位（"2,080"）
-                    Text(verbatim: "127.0.0.1:\(engine.localProxyPort)")
-                        .font(PendingNetTheme.Fonts.caption.monospaced())
-                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                }
-                Spacer()
-                if engine.takeover != "local" && !engine.helperReady {
-                    Button("授权后台服务…") { engine.registerHelper() }
-                        .buttonStyle(PendingPrimaryButtonStyle())
-                } else {
-                    Toggle("连接", isOn: Binding(
-                        get: { engine.running },
-                        set: { on in Task { on ? await engine.start() : await engine.stop() } }
-                    ))
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                }
-            }
+            header
 
-            Picker("接管方式", selection: Binding(
-                get: { engine.takeover },
-                set: { mode in Task { await engine.setTakeover(mode) } }
-            )) {
-                Text("仅端口").tag("local")
-                Text("系统代理").tag("sysproxy")
-                Text("TUN").tag("tun")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            Picker("路由模式", selection: Binding(
-                get: { state.mode },
-                set: { mode in Task { await state.setMode(mode) } }
-            )) {
-                Text("全局").tag("Global")
-                Text("白名单").tag("Whitelist")
-                Text("黑名单").tag("Blacklist")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(state.proxies.isEmpty || engine.takeover == "local")
-
-            Divider().overlay(PendingNetTheme.Palette.hairline)
-
-            // Read-only: picking a VPS happens in the list below.
-            Button {
-                withAnimation { scroll.scrollTo("vps-list", anchor: .top) }
-            } label: {
-                HStack {
-                    Text("当前 VPS")
-                        .font(PendingNetTheme.Fonts.body)
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
-                    Spacer()
-                    if let server = appliedServer {
-                        Text("\(server.name) · \(server.endpoint)")
-                            .font(PendingNetTheme.Fonts.bodyEmphasized)
-                            .foregroundStyle(PendingNetTheme.Palette.ink)
-                    } else {
-                        Text(vpsPairing.servers.isEmpty ? "尚未导入" : "未选择")
-                            .font(PendingNetTheme.Fonts.body)
-                            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            if engine.takeover == "local" || engine.helperReady {
+                PendingPillPicker(
+                    label: "连接",
+                    options: [.init(true, "开"), .init(false, "关")],
+                    selection: engine.running
+                ) { on in
+                    Task {
+                        await PendingNetConnectionWorkflow.setConnected(
+                            on, engine: engine, state: state
+                        )
                     }
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+
+            PendingPillPicker(
+                label: "接管方式",
+                options: [
+                    .init("local", "仅端口"),
+                    .init("sysproxy", "系统代理"),
+                    .init("tun", "TUN"),
+                ],
+                selection: engine.takeover
+            ) { mode in
+                Task {
+                    await engine.setTakeover(mode)
+                    await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                PendingPillPicker(
+                    label: "路由",
+                    options: [
+                        .init("Global", "全局"),
+                        .init("Whitelist", "白名单"),
+                        .init("Blacklist", "黑名单"),
+                    ],
+                    selection: state.mode
+                ) { mode in
+                    Task {
+                        await PendingNetRoutingWorkflow.select(
+                            mode: mode, engine: engine, state: state
+                        )
+                    }
+                }
+                if let note = state.modeNote {
+                    Text(note)
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            vpsPills
 
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
-                HStack {
-                    Text("协议")
-                        .font(PendingNetTheme.Fonts.body)
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
-                    Spacer()
-                    Picker("协议", selection: Binding(
-                        get: { protoProxy?.now ?? "" },
-                        set: { name in Task { await state.select(selector: selector, name: name) } }
-                    )) {
-                        ForEach(all, id: \.self) { Text(protocolLabel($0)).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: 200)
+                PendingPillPicker(
+                    label: "协议",
+                    options: all.map { .init($0, protocolLabel($0)) },
+                    selection: protoProxy?.now
+                ) { name in
+                    Task { await state.select(selector: selector, name: name) }
                 }
             }
 
             if let error = friendlyEngineError {
+                messageBanner(error, kind: .danger)
+            }
+
+            if let error = vpsPairing.lastError {
                 messageBanner(error, kind: .danger)
             }
 
@@ -220,14 +195,31 @@ struct ControlView: View {
         }
     }
 
-    // MARK: - VPS list: pick one, test reachability
+    private var header: some View {
+        HStack(spacing: 10) {
+            PendingStatusPill(text: connectionStatus.0, kind: connectionStatus.1)
+            if engine.takeover == "local" {
+                // verbatim: 端口是标识符不是数量，走 LocalizedStringKey 会被加上千分位（"2,080"）
+                Text(verbatim: "127.0.0.1:\(engine.localProxyPort)")
+                    .font(PendingNetTheme.Fonts.caption.monospaced())
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            }
+            Spacer()
+            if engine.takeover != "local" && !engine.helperReady {
+                Button("授权后台服务…") { engine.registerHelper() }
+                    .buttonStyle(PendingPrimaryButtonStyle())
+            }
+        }
+    }
 
-    private var vpsListCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
+    // MARK: - VPS: one pill per server, showing its IP
+
+    private var vpsPills: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
                 Text("VPS")
-                    .font(PendingNetTheme.Fonts.sectionTitle("VPS"))
-                    .foregroundStyle(PendingNetTheme.Palette.ink)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 Spacer()
                 if vpsPairing.servers.count > 1 {
                     Button("测试全部") { testAll() }
@@ -251,77 +243,88 @@ struct ControlView: View {
             }
 
             if vpsPairing.servers.isEmpty {
-                PendingEmptyState(
-                    icon: "server.rack",
-                    title: "还没有配对 VPS",
-                    detail: "导入 .pdn 文件后，这里会列出你的 VPS。"
-                )
-                .frame(maxWidth: .infinity)
+                Text("还没有配对 VPS，导入 .pdn 后这里会出现一排可选的服务器。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             } else {
-                ForEach(Array(vpsPairing.servers.enumerated()), id: \.element.id) { index, server in
-                    if index > 0 { Divider().overlay(PendingNetTheme.Palette.hairline) }
-                    serverRow(server)
+                PendingWrapLayout {
+                    ForEach(vpsPairing.servers) { server in
+                        vpsPill(server)
+                    }
                 }
             }
-
-            if let message = vpsPairing.lastMessage {
-                Label(message, systemImage: "checkmark.circle.fill")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.success)
-            }
-
-            if let error = vpsPairing.lastError {
-                messageBanner(error, kind: .danger)
-            }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PendingNetTheme.Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: PendingNetTheme.Metrics.cardRadius, style: .continuous)
-                .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-        }
-        .id("vps-list")
     }
 
-    private func serverRow(_ server: PairedVPSServer) -> some View {
+    private func vpsPill(_ server: PairedVPSServer) -> some View {
         let selected = server.serverID == appliedServer?.serverID
-        return HStack(spacing: 14) {
-            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 16))
-                .foregroundStyle(selected
-                    ? PendingNetTheme.Palette.success
-                    : PendingNetTheme.Palette.hairline)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(server.name)
-                    .font(PendingNetTheme.Fonts.bodyEmphasized)
-                    .foregroundStyle(PendingNetTheme.Palette.ink)
-                Text(server.endpoint)
-                    .font(PendingNetTheme.Fonts.caption.monospaced())
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                if let protocols = server.nodeProtocols, !protocols.isEmpty {
-                    Text(protocols.joined(separator: " · "))
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.accent)
+        return PendingPill(
+            title: server.address,
+            selected: selected,
+            monospacedTitle: true,
+            action: {
+                guard !selected, !vpsPairing.pairing else { return }
+                Task {
+                    await PendingNetConnectionWorkflow.refreshAndConnect(
+                        server: server,
+                        pairing: vpsPairing,
+                        engine: engine,
+                        state: state
+                    )
                 }
-                switch tester.results[server.serverID] {
-                case .reachable(let milliseconds, let detail):
-                    Text("通 · \(milliseconds) ms · \(detail)")
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.success)
-                case .failed(let reason):
-                    Text(reason)
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                default:
-                    EmptyView()
+            },
+            accessory: {
+                Button {
+                    detailServerID = server.serverID
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(selected
+                            ? PendingNetTheme.Palette.onAccent
+                            : PendingNetTheme.Palette.inkMuted)
+                }
+                .buttonStyle(.plain)
+                .help("详情")
+                .popover(isPresented: Binding(
+                    get: { detailServerID == server.serverID },
+                    set: { if !$0 { detailServerID = nil } }
+                ), arrowEdge: .bottom) {
+                    serverDetail(server)
                 }
             }
+        )
+    }
 
-            Spacer()
+    /// 端口、支持的协议、连通性测试 —— 主界面只放 IP，细节都在这里。
+    private func serverDetail(_ server: PairedVPSServer) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(server.name)
+                .font(PendingNetTheme.Fonts.bodyEmphasized)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+
+            detailRow("地址", server.address, monospaced: true)
+            if let port = server.controlPort {
+                // verbatim: 端口是标识符不是数量（否则 7443 会被显示成 "7,443"）
+                detailRow("端口", port, monospaced: true)
+            }
+            if let protocols = server.nodeProtocols, !protocols.isEmpty {
+                detailRow("支持的协议", protocols.joined(separator: " · "))
+            }
+
+            switch tester.results[server.serverID] {
+            case .reachable(let milliseconds, let detail):
+                Text(verbatim: "通 · \(milliseconds) ms · \(detail)")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.success)
+                    .fixedSize(horizontal: false, vertical: true)
+            case .failed(let reason):
+                Text(reason)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            default:
+                EmptyView()
+            }
 
             Button {
                 Task { await test(server) }
@@ -338,18 +341,22 @@ struct ControlView: View {
             .buttonStyle(PendingQuietButtonStyle())
             .disabled(tester.isTesting(server.serverID))
         }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            guard !selected, !vpsPairing.pairing else { return }
-            Task {
-                await PendingNetConnectionWorkflow.refreshAndConnect(
-                    server: server,
-                    pairing: vpsPairing,
-                    engine: engine,
-                    state: state
-                )
-            }
+        .padding(16)
+        .frame(width: 280, alignment: .leading)
+    }
+
+    private func detailRow(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(PendingNetTheme.Fonts.caption)
+                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            Spacer()
+            // verbatim: 地址/端口都是标识符，不能被本地化成千分位数字
+            Text(verbatim: value)
+                .font(monospaced
+                    ? PendingNetTheme.Fonts.caption.monospaced()
+                    : PendingNetTheme.Fonts.caption)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
         }
     }
 

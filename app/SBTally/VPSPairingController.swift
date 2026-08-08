@@ -21,6 +21,23 @@ struct PairedVPSServer: Codable, Identifiable, Equatable {
     var capabilities: [String]
     var nodeProtocols: [String]?
     var pairedAt: Date
+
+    /// 界面上代表这台 VPS 的就是它的 IP（或主机名）—— 不带协议、不带端口。
+    var address: String {
+        if let host = URL(string: endpoint)?.host, !host.isEmpty { return host }
+        var text = endpoint
+        if let range = text.range(of: "://") { text = String(text[range.upperBound...]) }
+        if let colon = text.lastIndex(of: ":") { text = String(text[text.startIndex..<colon]) }
+        return text
+    }
+
+    /// 控制服务端口，只在「详情」里出现。
+    var controlPort: String? {
+        if let port = URL(string: endpoint)?.port { return String(port) }
+        guard let colon = endpoint.lastIndex(of: ":") else { return nil }
+        let tail = String(endpoint[endpoint.index(after: colon)...])
+        return Int(tail) == nil ? nil : tail
+    }
 }
 
 @MainActor
@@ -75,7 +92,6 @@ final class VPSPairingController: ObservableObject {
             ).nodeProfile()
             record.nodeProtocols = nodeProfile.protocols.map(\.type)
             upsert(record)
-            lastMessage = "已配对，正在准备本机配置：\(record.name)"
             return try nodeProfile.runtimeServer(name: record.name)
         } catch {
             // Clear the success line too — otherwise the GUI shows a green
@@ -112,9 +128,11 @@ final class VPSPairingController: ObservableObject {
         }
     }
 
+    /// 切换成功不再留一行「已应用并连接」——点哪台就是切到哪台，选中的那颗
+    /// 药丸和顶部状态药丸已经把状态说完了，中间态文案只是噪音。
     func markApplied(_ runtime: PendingNetRuntimeServer) {
         lastError = nil
-        lastMessage = "已应用并连接：\(runtime.name)"
+        lastMessage = nil
     }
 
     func reportApplyError(_ message: String) {

@@ -31,6 +31,7 @@ struct MenuBarView: View {
         return String(tag.dropFirst(selector.count + 1))
     }
 
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 9) {
@@ -55,54 +56,80 @@ struct MenuBarView: View {
                 Button("授权后台服务…") { engine.registerHelper() }
                     .buttonStyle(PendingPrimaryButtonStyle())
             } else {
-                Toggle(engine.running ? "已连接" : "已停止", isOn: Binding(
-                    get: { engine.running },
-                    set: { on in Task { on ? await engine.start() : await engine.stop() } }))
-                    .toggleStyle(.switch)
+                PendingPillPicker(
+                    label: "连接",
+                    options: [.init(true, "开"), .init(false, "关")],
+                    selection: engine.running
+                ) { on in
+                    Task {
+                        await PendingNetConnectionWorkflow.setConnected(
+                            on, engine: engine, state: state
+                        )
+                    }
+                }
             }
 
-            Picker("接管方式", selection: Binding(
-                get: { engine.takeover },
-                set: { m in Task { await engine.setTakeover(m) } })) {
-                Text("仅端口").tag("local"); Text("系统代理").tag("sysproxy"); Text("TUN").tag("tun")
+            PendingPillPicker(
+                label: "接管方式",
+                options: [
+                    .init("local", "仅端口"),
+                    .init("sysproxy", "系统代理"),
+                    .init("tun", "TUN"),
+                ],
+                selection: engine.takeover
+            ) { mode in
+                Task {
+                    await engine.setTakeover(mode)
+                    await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+                }
             }
-            Picker("路由规则", selection: Binding(
-                get: { state.mode },
-                set: { m in Task { await state.setMode(m) } })) {
-                Text("全局").tag("Global"); Text("白名单").tag("Whitelist"); Text("黑名单").tag("Blacklist")
+
+            PendingPillPicker(
+                label: "路由",
+                options: [
+                    .init("Global", "全局"),
+                    .init("Whitelist", "白名单"),
+                    .init("Blacklist", "黑名单"),
+                ],
+                selection: state.mode
+            ) { mode in
+                Task {
+                    await PendingNetRoutingWorkflow.select(mode: mode, engine: engine, state: state)
+                }
+            }
+            if let note = state.modeNote {
+                Text(note)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if !vpsPairing.servers.isEmpty {
-                Picker("VPS", selection: Binding(
-                    get: { appliedServer?.serverID ?? "" },
-                    set: { serverID in
-                        guard let server = vpsPairing.servers.first(where: { $0.serverID == serverID }),
-                              server.serverID != appliedServer?.serverID else { return }
-                        Task {
-                            await PendingNetConnectionWorkflow.refreshAndConnect(
-                                server: server,
-                                pairing: vpsPairing,
-                                engine: engine,
-                                state: state
-                            )
-                        }
-                    })) {
-                    if appliedServer == nil {
-                        Text("未选择").tag("")
-                    }
-                    ForEach(vpsPairing.servers) { server in
-                        Text(server.name).tag(server.serverID)
+                PendingPillPicker(
+                    label: "VPS",
+                    options: vpsPairing.servers.map { .init($0.serverID, $0.address) },
+                    selection: appliedServer?.serverID
+                ) { serverID in
+                    guard let server = vpsPairing.servers.first(where: { $0.serverID == serverID }),
+                          server.serverID != appliedServer?.serverID,
+                          !vpsPairing.pairing else { return }
+                    Task {
+                        await PendingNetConnectionWorkflow.refreshAndConnect(
+                            server: server,
+                            pairing: vpsPairing,
+                            engine: engine,
+                            state: state
+                        )
                     }
                 }
-                .pickerStyle(.menu)
-                .disabled(vpsPairing.pairing)
             }
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
-                Picker("协议", selection: Binding(
-                    get: { protoProxy?.now ?? "" },
-                    set: { name in Task { await state.select(selector: selector, name: name) } })) {
-                    ForEach(all, id: \.self) { Text(protocolLabel($0)).tag($0) }
+                PendingPillPicker(
+                    label: "协议",
+                    options: all.map { .init($0, protocolLabel($0)) },
+                    selection: protoProxy?.now
+                ) { name in
+                    Task { await state.select(selector: selector, name: name) }
                 }
-                .pickerStyle(.menu)
             }
             if let error = engine.lastError {
                 Text(error)
@@ -152,7 +179,6 @@ struct MenuBarView: View {
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
         }
-        .pickerStyle(.segmented)
         .padding(14)
         .frame(width: 320)
         .background(PendingNetTheme.Palette.canvas)
