@@ -56,21 +56,20 @@ struct MenuBarView: View {
                 Button("授权后台服务…") { engine.registerHelper() }
                     .buttonStyle(PendingPrimaryButtonStyle())
             } else {
-                PendingPillPicker(
-                    label: "连接",
-                    options: [.init(true, "开"), .init(false, "关")],
-                    selection: engine.running
-                ) { on in
-                    Task {
-                        await PendingNetConnectionWorkflow.setConnected(
-                            on, engine: engine, state: state
-                        )
+                Toggle(engine.running ? "已连接" : "已停止", isOn: Binding(
+                    get: { engine.running },
+                    set: { on in
+                        Task {
+                            await PendingNetConnectionWorkflow.setConnected(
+                                on, engine: engine, state: state
+                            )
+                        }
                     }
-                }
+                ))
+                .toggleStyle(.switch)
             }
 
             PendingPillPicker(
-                label: "接管方式",
                 options: [
                     .init("local", "仅端口"),
                     .init("sysproxy", "系统代理"),
@@ -85,7 +84,6 @@ struct MenuBarView: View {
             }
 
             PendingPillPicker(
-                label: "路由",
                 options: [
                     .init("Global", "全局"),
                     .init("Whitelist", "白名单"),
@@ -105,7 +103,6 @@ struct MenuBarView: View {
             }
             if !vpsPairing.servers.isEmpty {
                 PendingPillPicker(
-                    label: "VPS",
                     options: vpsPairing.servers.map { .init($0.serverID, $0.address) },
                     selection: appliedServer?.serverID
                 ) { serverID in
@@ -124,7 +121,6 @@ struct MenuBarView: View {
             }
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 PendingPillPicker(
-                    label: "协议",
                     options: all.map { .init($0, protocolLabel($0)) },
                     selection: protoProxy?.now
                 ) { name in

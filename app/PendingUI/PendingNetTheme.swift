@@ -340,7 +340,8 @@ extension PendingPill where Accessory == EmptyView {
     }
 }
 
-/// A labelled row of pills — the one selection control this app uses.
+/// A row of pills — the one multiple-choice control this app uses. No group
+/// title: the pills carry their own meaning.
 struct PendingPillPicker<Value: Hashable>: View {
     struct Option: Identifiable {
         let value: Value
@@ -353,25 +354,17 @@ struct PendingPillPicker<Value: Hashable>: View {
         }
     }
 
-    let label: String
     let options: [Option]
     let selection: Value?
     let select: (Value) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if !label.isEmpty {
-                Text(label)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            }
-            PendingWrapLayout {
-                ForEach(options) { option in
-                    PendingPill(
-                        title: option.title,
-                        selected: option.value == selection
-                    ) { select(option.value) }
-                }
+        PendingWrapLayout {
+            ForEach(options) { option in
+                PendingPill(
+                    title: option.title,
+                    selected: option.value == selection
+                ) { select(option.value) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

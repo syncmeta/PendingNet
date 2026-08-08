@@ -96,22 +96,7 @@ struct ControlView: View {
         VStack(alignment: .leading, spacing: 16) {
             header
 
-            if engine.takeover == "local" || engine.helperReady {
-                PendingPillPicker(
-                    label: "连接",
-                    options: [.init(true, "开"), .init(false, "关")],
-                    selection: engine.running
-                ) { on in
-                    Task {
-                        await PendingNetConnectionWorkflow.setConnected(
-                            on, engine: engine, state: state
-                        )
-                    }
-                }
-            }
-
             PendingPillPicker(
-                label: "接管方式",
                 options: [
                     .init("local", "仅端口"),
                     .init("sysproxy", "系统代理"),
@@ -127,7 +112,6 @@ struct ControlView: View {
 
             VStack(alignment: .leading, spacing: 7) {
                 PendingPillPicker(
-                    label: "路由",
                     options: [
                         .init("Global", "全局"),
                         .init("Whitelist", "白名单"),
@@ -153,7 +137,6 @@ struct ControlView: View {
 
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 PendingPillPicker(
-                    label: "协议",
                     options: all.map { .init($0, protocolLabel($0)) },
                     selection: protoProxy?.now
                 ) { name in
@@ -198,16 +181,23 @@ struct ControlView: View {
     private var header: some View {
         HStack(spacing: 10) {
             PendingStatusPill(text: connectionStatus.0, kind: connectionStatus.1)
-            if engine.takeover == "local" {
-                // verbatim: 端口是标识符不是数量，走 LocalizedStringKey 会被加上千分位（"2,080"）
-                Text(verbatim: "127.0.0.1:\(engine.localProxyPort)")
-                    .font(PendingNetTheme.Fonts.caption.monospaced())
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            }
             Spacer()
             if engine.takeover != "local" && !engine.helperReady {
                 Button("授权后台服务…") { engine.registerHelper() }
                     .buttonStyle(PendingPrimaryButtonStyle())
+            } else {
+                Toggle("连接", isOn: Binding(
+                    get: { engine.running },
+                    set: { on in
+                        Task {
+                            await PendingNetConnectionWorkflow.setConnected(
+                                on, engine: engine, state: state
+                            )
+                        }
+                    }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
             }
         }
     }
@@ -217,9 +207,6 @@ struct ControlView: View {
     private var vpsPills: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
-                Text("VPS")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 Spacer()
                 if vpsPairing.servers.count > 1 {
                     Button("测试全部") { testAll() }
