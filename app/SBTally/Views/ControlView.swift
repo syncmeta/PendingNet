@@ -34,6 +34,11 @@ struct ControlView: View {
     private var friendlyEngineError: String? {
         guard let error = engine.lastError else { return nil }
         if error.localizedCaseInsensitiveContains("operation not permitted") {
+            // Pending approval is the common case; a leftover legacy
+            // registration is only plausible once approval is done.
+            if engine.helperNeedsApproval {
+                return "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目。"
+            }
             return "旧版后台服务仍在系统中。请先在系统设置里关闭 PendingNet 后台项目，再回来重新授权。"
         }
         if error.localizedCaseInsensitiveContains("could not connect") ||

@@ -8,6 +8,11 @@ final class EngineController: ObservableObject {
     @Published var running = false
     @Published var takeover = "local"
     @Published var helperReady = false
+    /// True while Service Management has the daemon registered but the user
+    /// hasn't approved it yet in 系统设置 → 登录项与扩展. XPC calls fail with
+    /// "Operation not permitted" in this state — that's pending approval,
+    /// not a leftover legacy helper.
+    @Published var helperNeedsApproval = false
     @Published var lastError: String?
     @Published var logTail: String = ""
     /// Set after a `start()` attempt whose post-refresh status shows the
@@ -104,6 +109,9 @@ final class EngineController: ObservableObject {
 
     func registerHelper() {
         Task {
+            // A fresh authorization attempt starts from a clean slate — the
+            // previous attempt's error must not outlive it.
+            lastError = nil
             do {
                 // Ad-hoc development builds created before 0.3.5 had a
                 // version-specific code identity. Remove that stale Service
@@ -118,6 +126,7 @@ final class EngineController: ObservableObject {
                 }
                 try service.register()
                 helperReady = service.status == .enabled
+                helperNeedsApproval = service.status == .requiresApproval
                 if helperReady {
                     lastError = nil
                     if let pending = pendingTakeover {
@@ -137,7 +146,14 @@ final class EngineController: ObservableObject {
     }
 
     func refresh() async {
+        let wasReady = helperReady
         helperReady = service.status == .enabled
+        helperNeedsApproval = service.status == .requiresApproval
+        if helperReady, !wasReady {
+            // The helper just became approved — whatever failed while it
+            // wasn't no longer describes the current state.
+            lastError = nil
+        }
         if takeover == "local" {
             running = userEngine.isRunning
             logTail = userEngine.logTail()
