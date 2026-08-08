@@ -4,13 +4,24 @@ import SBTallyCore
 
 @main
 struct SBTallyApp: App {
-    @StateObject private var state = AppState(
-        provider: PendingNetLocalAPIProvider())
-    @StateObject private var engine = EngineController()
-    @StateObject private var vpsPairing = VPSPairingController()
+    @StateObject private var state: AppState
+    @StateObject private var engine: EngineController
+    @StateObject private var vpsPairing: VPSPairingController
     @StateObject private var updater = PendingNetUpdateController()
     @StateObject private var navigation = PendingNetNavigation()
     @Environment(\.openWindow) private var openWindow
+
+    /// 每个 controller 都在自己的 init 里读 `UserDefaults`，所以旧域的搬迁必须
+    /// 赶在它们被构造出来之前跑完 —— 晚一步，读到的就是空的新域，用户的端口和
+    /// 已配对 VPS 看上去就像被升级抹掉了。这也是这些 `@StateObject` 不写默认值、
+    /// 改成在 init 里显式赋值的唯一原因。
+    init() {
+        let legacyServers = PendingNetLegacyDefaultsMigration.run()
+        _state = StateObject(wrappedValue: AppState(provider: PendingNetLocalAPIProvider()))
+        _engine = StateObject(wrappedValue: EngineController())
+        _vpsPairing = StateObject(
+            wrappedValue: VPSPairingController(legacyServers: legacyServers))
+    }
 
     var body: some Scene {
         Window("PendingNet", id: "main") {

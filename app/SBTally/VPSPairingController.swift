@@ -26,9 +26,13 @@ final class VPSPairingController: ObservableObject {
     private let store: PairedVPSStore
     private var cancellables = Set<AnyCancellable>()
 
-    init(store: PairedVPSStore? = nil) {
+    /// `legacyServers` 是从旧 bundle id 那个 `UserDefaults` 域里搬出来的存档
+    /// （见 `PendingNetLegacyDefaultsMigration`）。走 `adoptLegacy` 而不是直接写
+    /// key：那批记录得和 iCloud 那边按 `updatedAt` 合并，而且老记录不该盖新时间戳。
+    init(store: PairedVPSStore? = nil, legacyServers: [PairedVPSRecord] = []) {
         let store = store ?? PairedVPSStore()
         self.store = store
+        store.adoptLegacy(legacyServers)
         servers = store.servers
         // 存储层是真源：本机改动、iCloud 推过来的改动，都从这一条流回界面。
         store.$servers
