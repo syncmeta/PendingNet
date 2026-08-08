@@ -72,29 +72,42 @@ struct SettingsView: View {
         }
     }
 
-    /// 本机代理端口。连接页不再显示它，要看要改都在这里。
+    /// 端口与监听范围。连接页不再显示它们，要看要改都在这里。
     private var localPortCard: some View {
-        PendingSectionCard(
-            "本地端口",
-            subtitle: "浏览器等程序按 127.0.0.1 加这个端口走代理。"
-        ) {
+        PendingSectionCard("端口") {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
-                    // verbatim: 端口是标识符不是数量，别被本地化成 "2,080"
-                    Text(verbatim: "127.0.0.1 :")
+                    // verbatim: 地址和端口都是标识符，别被本地化成 "2,080"
+                    Text(verbatim: "\(engine.localListenAddress) :")
                         .font(PendingNetTheme.Fonts.body.monospaced())
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     TextField("", text: $portField)
                         .textFieldStyle(.roundedBorder)
                         .font(PendingNetTheme.Fonts.body.monospaced())
                         .frame(width: 92)
-                        .onSubmit { savePort() }
-                    Button("保存") { savePort() }
+                        .onSubmit { saveInbound() }
+                    Button("保存") { saveInbound() }
                         .buttonStyle(PendingQuietButtonStyle())
                         .disabled(portSaving || portField == String(engine.localProxyPort))
                     if portSaving { ProgressView().controlSize(.small) }
                     Spacer()
                 }
+
+                Toggle("允许局域网访问", isOn: Binding(
+                    get: { engine.allowsLAN },
+                    set: { on in saveInbound(allowLAN: on) }
+                ))
+                .toggleStyle(.switch)
+                .font(PendingNetTheme.Fonts.body)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+
+                Text(engine.allowsLAN
+                     ? "同一个网络里的设备都能通过这台机器上网 —— 在家或办公室方便，在咖啡馆之类的公共 Wi-Fi 就别开。"
+                     : "只有这台电脑自己能用。开了之后同网段的设备也能连，监听地址会变成 0.0.0.0。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 if let portError {
                     Text(portError)
                         .font(PendingNetTheme.Fonts.caption)
@@ -102,8 +115,8 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else if portSaved {
                     Text(engine.running
-                         ? "已改好，引擎已经在新端口上重开了。"
-                         : "已改好，下次连接就用这个端口。")
+                         ? "已改好，引擎已经按新设置重开了。"
+                         : "已改好，下次连接生效。")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.success)
                 }
@@ -111,7 +124,7 @@ struct SettingsView: View {
         }
     }
 
-    private func savePort() {
+    private func saveInbound(allowLAN: Bool? = nil) {
         portSaved = false
         guard let port = Int(portField.trimmingCharacters(in: .whitespaces)) else {
             portError = "端口只能是数字，比如 2080。"
@@ -120,7 +133,10 @@ struct SettingsView: View {
         portError = nil
         portSaving = true
         Task {
-            let failure = await engine.setLocalProxyPort(port)
+            let failure = await engine.setLocalInbound(
+                port: port,
+                allowLAN: allowLAN ?? engine.allowsLAN
+            )
             portSaving = false
             portError = failure
             portSaved = failure == nil
@@ -171,23 +187,39 @@ struct SettingsView: View {
     }
 
     private var appUpdateCard: some View {
-        PendingSectionCard("应用更新") {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("当前版本 \(updater.currentVersion)")
+        PendingSectionCard("更新") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 12) {
+                    // verbatim: 版本号是标识符，不是数量
+                    Text(verbatim: "当前版本 \(updater.currentVersion)")
                         .font(PendingNetTheme.Fonts.bodyEmphasized)
                         .foregroundStyle(PendingNetTheme.Palette.ink)
-                    Text(updater.isConfigured
-                         ? "已启用自动检查与后台下载"
-                         : "更新发布地址尚未配置")
+                    Spacer()
+                    Button("检查更新…") { updater.checkForUpdates() }
+                        .buttonStyle(PendingQuietButtonStyle())
+                        .disabled(!updater.canCheckForUpdates)
+                }
+
+                if updater.isConfigured {
+                    Toggle("自动检查更新", isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.automaticallyChecksForUpdates = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    Toggle("有更新时后台下载好", isOn: Binding(
+                        get: { updater.automaticallyDownloadsUpdates },
+                        set: { updater.automaticallyDownloadsUpdates = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    .disabled(!updater.automaticallyChecksForUpdates)
+                } else {
+                    Text("更新发布地址尚未配置")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 }
-                Spacer()
-                Button("检查更新…") { updater.checkForUpdates() }
-                    .buttonStyle(PendingQuietButtonStyle())
-                    .disabled(!updater.canCheckForUpdates)
             }
+            .font(PendingNetTheme.Fonts.body)
+            .foregroundStyle(PendingNetTheme.Palette.ink)
         }
     }
 }
