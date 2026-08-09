@@ -7,3 +7,6 @@
 /.local-backups/
 /dist/
 /app/Vendor/
+
+# Developer ID 描述文件：本机发版用，别进仓库
+*.provisionprofile
