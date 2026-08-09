@@ -194,12 +194,14 @@ struct ControlView: View {
     // MARK: - VPS: 竖排列表，选中的那行前面打勾
 
     private var vpsList: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Spacer()
                 if vpsPairing.servers.count > 1 {
                     Button("测试全部") { testAll() }
-                        .buttonStyle(PendingQuietButtonStyle())
+                        .buttonStyle(PendingQuietButtonStyle(
+                            fill: PendingNetTheme.Palette.surface
+                        ))
                         .disabled(tester.busy || vpsPairing.pairing)
                 }
                 Button {
@@ -214,7 +216,9 @@ struct ControlView: View {
                         Label("导入 .pdn", systemImage: "square.and.arrow.down")
                     }
                 }
-                .buttonStyle(PendingQuietButtonStyle())
+                .buttonStyle(PendingQuietButtonStyle(
+                    fill: PendingNetTheme.Palette.surface
+                ))
                 .disabled(vpsPairing.pairing)
             }
 

@@ -26,18 +26,6 @@ struct PendingConnectionCard<Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PendingNetTheme.Palette.surface)
-        .clipShape(RoundedRectangle(
-            cornerRadius: PendingNetTheme.Metrics.cardRadius,
-            style: .continuous
-        ))
-        .overlay {
-            RoundedRectangle(
-                cornerRadius: PendingNetTheme.Metrics.cardRadius,
-                style: .continuous
-            )
-            .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
-        }
     }
 }
 
@@ -121,7 +109,7 @@ struct PendingVPSList: View {
                     row(item)
                 }
             }
-            .background(PendingNetTheme.Palette.surfaceMuted)
+            .background(PendingNetTheme.Palette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
