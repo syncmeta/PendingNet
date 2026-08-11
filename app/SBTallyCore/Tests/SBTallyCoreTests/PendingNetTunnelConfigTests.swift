@@ -58,7 +58,7 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         let inbounds = try XCTUnwrap(root["inbounds"] as? [[String: Any]])
-        XCTAssertEqual(inbounds.count, 1)
+        XCTAssertEqual(inbounds.count, 2, "tun + 本机混合入站")
         let tun = try XCTUnwrap(inbounds.first)
         XCTAssertEqual(tun["type"] as? String, "tun")
         XCTAssertEqual(tun["stack"] as? String, "gvisor")
@@ -100,6 +100,55 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         )
     }
 
+    /// 手机上的「端口」和「允许局域网访问」是真开关，不是摆设：它们落到
+    /// 隧道配置里的这个混合入站上。
+    func testLocalMixedInboundFollowsTheSettings() throws {
+        let server = try Self.sampleRuntimeServer()
+
+        func localInbound(_ inbound: PendingNetLocalInbound) throws -> [String: Any] {
+            let data = try PendingNetTunnelConfig.make(
+                runtimeServer: server,
+                routeMode: .global,
+                ruleSetDirectory: "/tmp/rs",
+                cachePath: "/tmp/pendingnet-cache.db",
+                localInbound: inbound
+            )
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let inbounds = try XCTUnwrap(root["inbounds"] as? [[String: Any]])
+            return try XCTUnwrap(inbounds.first { $0["tag"] as? String == "pendingnet-local" })
+        }
+
+        // 默认：只给本机，2080。
+        let loopback = try localInbound(PendingNetLocalInbound())
+        XCTAssertEqual(loopback["type"] as? String, "mixed")
+        XCTAssertEqual(loopback["listen"] as? String, "127.0.0.1")
+        XCTAssertEqual(loopback["listen_port"] as? Int, 2080)
+
+        // 打开局域网访问 + 换端口：两样都要真的落到配置里，否则界面上那两个
+        // 控件就是假的。
+        let lan = try localInbound(PendingNetLocalInbound(port: 3128, allowsLAN: true))
+        XCTAssertEqual(lan["listen"] as? String, "0.0.0.0")
+        XCTAssertEqual(lan["listen_port"] as? Int, 3128)
+    }
+
+    /// 非法端口在生成配置这一层也要挡住。界面那层已经挡过一遍，但快照是
+    /// 直接拿存档生成的，存档被写坏时不能产出一份内核拒收的配置——那等于
+    /// 下一次自启隧道整个起不来。
+    func testLocalInboundPortOutsideTheRangeIsRefused() throws {
+        for port in [80, 1023, 65536] {
+            XCTAssertThrowsError(
+                try PendingNetTunnelConfig.make(
+                    runtimeServer: Self.sampleRuntimeServer(),
+                    routeMode: .global,
+                    ruleSetDirectory: "/tmp/rs",
+                    cachePath: "/tmp/cache.db",
+                    localInbound: PendingNetLocalInbound(port: port)
+                ),
+                "\(port) 不该被接受"
+            )
+        }
+    }
+
     func testServerMaterialCannotInfluenceClientPolicy() throws {
         let server = try Self.sampleRuntimeServer()
         let data = try PendingNetTunnelConfig.make(
@@ -116,8 +165,10 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             XCTAssertNil(outbound["inbounds"])
             XCTAssertNil(outbound["route"])
         }
-        let tun = try XCTUnwrap((root["inbounds"] as? [[String: Any]])?.first)
-        XCTAssertNil(tun["server"], "tun inbound 不得携带任何服务端字段")
+        for inbound in try XCTUnwrap(root["inbounds"] as? [[String: Any]]) {
+            XCTAssertNil(inbound["server"], "inbound 不得携带任何服务端字段")
+            XCTAssertNil(inbound["users"], "本机入站不设账号密码，服务端也无从塞")
+        }
     }
 
     func testWhitelistRoutesDomesticTrafficDirect() throws {
@@ -337,28 +388,38 @@ final class PendingNetTunnelConfigTests: XCTestCase {
             )
         }
 
+        // 每个分流档位 × 本机入站的两种监听范围。「允许局域网访问」改的是
+        // inbound.listen，内核对它同样有 schema 约束，只测一种等于没测。
+        let inbounds: [(String, PendingNetLocalInbound)] = [
+            ("loopback", PendingNetLocalInbound(port: 2080, allowsLAN: false)),
+            ("lan", PendingNetLocalInbound(port: 3128, allowsLAN: true)),
+        ]
         for mode in PendingNetRouteMode.allCases {
-            let configURL = directory.appendingPathComponent("config-\(mode.rawValue).json")
-            try PendingNetTunnelConfig.make(
-                runtimeServer: Self.sampleRuntimeServer(),
-                routeMode: mode,
-                ruleSetDirectory: directory.path,
-                cachePath: directory.appendingPathComponent("cache-\(mode.rawValue).db").path
-            ).write(to: configURL)
+            for (label, inbound) in inbounds {
+                let name = "\(mode.rawValue)-\(label)"
+                let configURL = directory.appendingPathComponent("config-\(name).json")
+                try PendingNetTunnelConfig.make(
+                    runtimeServer: Self.sampleRuntimeServer(),
+                    routeMode: mode,
+                    ruleSetDirectory: directory.path,
+                    cachePath: directory.appendingPathComponent("cache-\(name).db").path,
+                    localInbound: inbound
+                ).write(to: configURL)
 
-            let check = Process()
-            check.executableURL = URL(fileURLWithPath: binary)
-            check.arguments = ["check", "-c", configURL.path]
-            let output = Pipe()
-            check.standardOutput = output
-            check.standardError = output
-            try check.run()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            check.waitUntilExit()
-            XCTAssertEqual(
-                check.terminationStatus, 0,
-                "\(mode.rawValue): \(String(decoding: data, as: UTF8.self))"
-            )
+                let check = Process()
+                check.executableURL = URL(fileURLWithPath: binary)
+                check.arguments = ["check", "-c", configURL.path]
+                let output = Pipe()
+                check.standardOutput = output
+                check.standardError = output
+                try check.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                check.waitUntilExit()
+                XCTAssertEqual(
+                    check.terminationStatus, 0,
+                    "\(name): \(String(decoding: data, as: UTF8.self))"
+                )
+            }
         }
     }
 

@@ -224,9 +224,12 @@ public enum PendingNetTunnelConfig {
         runtimeServer: PendingNetRuntimeServer,
         routeMode: PendingNetRouteMode,
         ruleSetDirectory: String,
-        cachePath: String
+        cachePath: String,
+        localInbound: PendingNetLocalInbound = PendingNetLocalInbound()
     ) throws -> Data {
-        guard !cachePath.isEmpty, !ruleSetDirectory.isEmpty else {
+        guard !cachePath.isEmpty, !ruleSetDirectory.isEmpty,
+              PendingNetLocalInbound.portRange.contains(localInbound.port),
+              PendingNetLocalInbound.isValidListenAddress(localInbound.listenAddress) else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
 
@@ -256,15 +259,25 @@ public enum PendingNetTunnelConfig {
 
         let root: [String: Any] = [
             "log": ["level": "warn", "timestamp": true],
-            "inbounds": [[
-                "type": "tun",
-                "tag": tunTag,
-                "address": tunAddresses,
-                "mtu": tunMTU,
-                "auto_route": true,
-                "strict_route": false,
-                "stack": "gvisor",
-            ]],
+            "inbounds": [
+                [
+                    "type": "tun",
+                    "tag": tunTag,
+                    "address": tunAddresses,
+                    "mtu": tunMTU,
+                    "auto_route": true,
+                    "strict_route": false,
+                    "stack": "gvisor",
+                ],
+                // 本机混合入站。手机自己的流量走 tun，用不着它；它是给同一个
+                // 局域网里的别的设备当代理用的（「允许局域网访问」打开时监听
+                // 0.0.0.0），以及给本机上想显式走代理的东西留个口子。
+                //
+                // 它和 tun 一样是内核的一部分：端口被别人占着的话，整条隧道
+                // 都起不来。所以端口在保存那一刻就要探过（见
+                // PendingNetLocalInbound.resolvePort），不能等到起隧道才炸。
+                localInbound.configuration,
+            ],
             "outbounds": outbounds,
             "route": route,
             "dns": dnsSection(selectorTag: runtimeServer.selectorTag, mode: routeMode),
