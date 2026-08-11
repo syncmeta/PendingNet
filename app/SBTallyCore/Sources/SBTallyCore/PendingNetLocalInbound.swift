@@ -50,14 +50,17 @@ public struct PendingNetLocalInbound: Equatable, Sendable {
     ///   - text: 输入框里的原文。
     ///   - current: 现在用的端口。和它相同就跳过占用探测——正在跑的引擎
     ///     自己占着那个端口，探它只会把用户自己报成「被别的程序占用」。
+    ///   - listenAddress: 要监听在哪。探占用就探这个地址——允许局域网访问时
+    ///     我们真正要占的是 0.0.0.0，只探 127.0.0.1 会漏掉冲突。
     ///   - reservedPort: 本端另有别用、不能被抢走的端口（macOS 是 sing-box
     ///     的控制端口 29090）。iOS 的隧道没有这种端口，传 nil。
     ///   - isFree: 占用探测。测试里换掉，别真去 bind。
     public static func resolvePort(
         from text: String,
         current: Int,
+        listenAddress: String = PendingNetLocalInbound.loopbackListen,
         reservedPort: Int? = nil,
-        isFree: (Int) -> Bool = PendingNetLocalInbound.portIsFree
+        isFree: (Int, String) -> Bool = PendingNetLocalInbound.portIsFree
     ) throws -> Int {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let port = Int(trimmed), String(port) == trimmed else {
@@ -67,22 +70,33 @@ public struct PendingNetLocalInbound: Equatable, Sendable {
         if let reservedPort, port == reservedPort {
             throw PendingNetLocalInboundError.reserved(reservedPort)
         }
-        if port != current, !isFree(port) { throw PendingNetLocalInboundError.inUse(port) }
+        if port != current, !isFree(port, listenAddress) {
+            throw PendingNetLocalInboundError.inUse(port)
+        }
         return port
     }
 
-    /// 此刻有没有别人占着 127.0.0.1 的这个端口。
+    /// 此刻有没有别人占着这个地址上的这个端口。
     ///
     /// 探的是 bind 而不是 connect：端口可能被一个拒绝连接的进程占着，那种
     /// connect 探不出来，但我们照样起不来。
-    public static func portIsFree(_ port: Int) -> Bool {
+    ///
+    /// 带 `SO_REUSEADDR` 是为了和内核真正要做的事一致（Go 的监听器默认就带
+    /// 它）：不带的话，上一轮跑在这个端口上、还处在 TIME_WAIT 的连接会让
+    /// bind 失败，我们就会把用户自己刚用过的端口报成「被别的程序占用」。
+    public static func portIsFree(
+        _ port: Int,
+        listenAddress: String = PendingNetLocalInbound.loopbackListen
+    ) -> Bool {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { return true }
         defer { close(descriptor) }
+        var yes: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
         var address = sockaddr_in()
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = UInt16(truncatingIfNeeded: port).bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        address.sin_addr.s_addr = inet_addr(listenAddress)
         let bound = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))

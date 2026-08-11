@@ -51,7 +51,7 @@ final class PendingNetLocalInboundTests: XCTestCase {
         // 没有任何端口该被保留 —— 那边传 nil，29090 就是个普通端口。
         XCTAssertEqual(
             try? PendingNetLocalInbound.resolvePort(
-                from: "29090", current: 2080, reservedPort: nil, isFree: { _ in true }
+                from: "29090", current: 2080, reservedPort: nil, isFree: { _, _ in true }
             ),
             29090
         )
@@ -60,12 +60,26 @@ final class PendingNetLocalInboundTests: XCTestCase {
     func testOccupiedPortIsNamed() {
         XCTAssertThrowsError(
             try PendingNetLocalInbound.resolvePort(
-                from: "2081", current: 2080, isFree: { _ in false }
+                from: "2081", current: 2080, isFree: { _, _ in false }
             )
         ) { error in
             XCTAssertEqual(error as? PendingNetLocalInboundError, .inUse(2081))
             XCTAssertEqual(error.localizedDescription, "端口 2081 已经被别的程序占用了，换一个再试。")
         }
+    }
+
+    /// 探占用要探这次真正要监听的那个地址。开着「允许局域网访问」时要占的是
+    /// 0.0.0.0，只探 127.0.0.1 会把一个真冲突放过去，然后隧道 / 引擎在起的时候
+    /// 才炸——那时用户已经离开设置页了。
+    func testOccupancyProbeUsesTheAddressWeWillActuallyListenOn() throws {
+        var probedAddress: String?
+        _ = try PendingNetLocalInbound.resolvePort(
+            from: "2081",
+            current: 2080,
+            listenAddress: PendingNetLocalInbound.anyListen,
+            isFree: { _, address in probedAddress = address; return true }
+        )
+        XCTAssertEqual(probedAddress, "0.0.0.0")
     }
 
     /// 占用检查只对「换一个端口」有意义。保持原端口不动（比如只是拨一下
@@ -76,7 +90,7 @@ final class PendingNetLocalInboundTests: XCTestCase {
         let port = try PendingNetLocalInbound.resolvePort(
             from: "2080",
             current: 2080,
-            isFree: { _ in probed = true; return false }
+            isFree: { _, _ in probed = true; return false }
         )
         XCTAssertEqual(port, 2080)
         XCTAssertFalse(probed, "端口没变就不该去探占用")
