@@ -6,7 +6,9 @@ struct ControlView: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var engine: EngineController
     @EnvironmentObject private var vpsPairing: VPSPairingController
-    @StateObject private var tester = VPSConnectivityTester()
+    /// 每台 VPS 一个延迟数，语义和 iOS 那边完全一样（见
+    /// `PendingNetLatencyTarget`）：到这台 VPS 代理入口的 TCP 握手往返时间。
+    @StateObject private var latency = PendingNetLatencyTester()
 
     @State private var showingPairingImporter = false
     @State private var detailServerID: String?
@@ -197,12 +199,14 @@ struct ControlView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Spacer()
-                if vpsPairing.servers.count > 1 {
-                    Button("测试全部") { testAll() }
+                if !vpsPairing.servers.isEmpty {
+                    // 名字得说清它在测什么：以前那个「测试全部」谁也不知道
+                    // 测的是哪一项。
+                    Button("测每台延迟") { testAll() }
                         .buttonStyle(PendingQuietButtonStyle(
                             fill: PendingNetTheme.Palette.surface
                         ))
-                        .disabled(tester.busy || vpsPairing.pairing)
+                        .disabled(latency.busy || vpsPairing.pairing)
                 }
                 Button {
                     showingPairingImporter = true
@@ -226,6 +230,7 @@ struct ControlView: View {
                 items: vpsPairing.servers,
                 selectedID: appliedServer?.serverID,
                 unpairedIDs: vpsPairing.unpairedServerIDs,
+                latencies: latency.results,
                 detailID: $detailServerID
             ) { serverID in
                 guard !vpsPairing.pairing,
@@ -244,63 +249,48 @@ struct ControlView: View {
             } detailPopover: { server in
                 AnyView(serverDetail(server))
             }
+
+            if !vpsPairing.servers.isEmpty {
+                Text("延迟是本机到这台 VPS 代理入口的一次 TCP 握手往返时间，越小越好；直连测量，不经隧道。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
-    /// 端口、支持的协议、连通性测试 —— 主界面只放 IP，细节都在这里。
+    /// 端口、支持的协议、延迟 —— 主界面只放 IP，细节都在这里。
     private func serverDetail(_ server: PairedVPSServer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             PendingVPSDetails(
                 server: server,
                 nameStyle: .heading,
-                spacing: 10
+                spacing: 10,
+                latency: latency.outcome(for: server.serverID)
             )
 
-            switch tester.results[server.serverID] {
-            case .reachable(let milliseconds, let detail):
-                Text(verbatim: "通 · \(milliseconds) ms · \(detail)")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.success)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .failed(let reason):
-                Text(reason)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-            default:
-                EmptyView()
-            }
-
             Button {
-                Task { await test(server) }
+                Task { await latency.measure(server) }
             } label: {
-                if tester.isTesting(server.serverID) {
+                if latency.isMeasuring(server.serverID) {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        Text("测试中…")
+                        Text("正在测延迟…")
                     }
                 } else {
-                    Text("测试")
+                    Text("测这台的延迟")
                 }
             }
             .buttonStyle(PendingQuietButtonStyle())
-            .disabled(tester.isTesting(server.serverID))
+            .disabled(latency.isMeasuring(server.serverID))
         }
         .padding(16)
         .frame(width: 280, alignment: .leading)
     }
 
-    private func test(_ server: PairedVPSServer) async {
-        let tag = server.serverID == appliedServer?.serverID && engine.running
-            ? appliedSelectorTag
-            : nil
-        await tester.test(server, throughProxyTag: tag)
-    }
-
+    /// 逐台测一遍。每台都是同一个测点、同一种算法，测完可以直接横向比较。
     private func testAll() {
-        for server in vpsPairing.servers {
-            Task { await test(server) }
-        }
+        Task { await latency.measureAll(vpsPairing.servers) }
     }
 
     private func messageBanner(_ text: String, kind: PendingStatusPill.Kind) -> some View {

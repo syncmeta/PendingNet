@@ -105,6 +105,8 @@ final class VPSPairingController: ObservableObject {
                 accessToken: result.accessToken
             ).nodeProfile()
             record.nodeProtocols = nodeProfile.protocols.map(\.type)
+            // 代理入口的 TCP 端口跟着记录一起存，延迟才知道该测哪里。
+            record.adoptProxyEntry(from: nodeProfile)
             upsert(record)
             return try nodeProfile.runtimeServer(name: record.name)
         } catch {
@@ -131,6 +133,7 @@ final class VPSPairingController: ObservableObject {
             ).nodeProfile()
             var updated = record
             updated.nodeProtocols = nodeProfile.protocols.map(\.type)
+            updated.adoptProxyEntry(from: nodeProfile)
             upsert(updated)
             return try nodeProfile.runtimeServer(name: record.name)
         } catch {

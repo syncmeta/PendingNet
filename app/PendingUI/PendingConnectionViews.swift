@@ -98,6 +98,9 @@ struct PendingVPSList: View {
     /// 打上勾，点下去才在页面底部弹一条红字，用户对着一排看着能用的死条目
     /// 完全无从下手。
     var unpairedIDs: Set<String> = []
+    /// 每台 VPS 一个延迟数（`serverID -> 结果`）。语义只有一种：本机到这台
+    /// VPS 代理入口的 TCP 握手往返时间，见 `PendingNetLatencyTarget`。
+    var latencies: [String: PendingNetLatencyOutcome] = [:]
     var detailID: Binding<String?>? = nil
     let onSelect: (String) -> Void
     let onShowDetails: (String) -> Void
@@ -149,6 +152,12 @@ struct PendingVPSList: View {
                     Text("这台设备还没配对，导入这台 VPS 的 .pdn 就能用")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                } else if let reason = latencies[item.id]?.failureText {
+                    // 「不通」两个字说不清是被拒还是解析不了，原因就摆在这行下面。
+                    Text(reason)
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()
@@ -166,7 +175,10 @@ struct PendingVPSList: View {
                         Capsule().stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
                     }
             } else {
-                detailButton(item)
+                HStack(spacing: 10) {
+                    latencyLabel(item)
+                    detailButton(item)
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -178,6 +190,27 @@ struct PendingVPSList: View {
         .onTapGesture {
             guard !selected, !unpaired else { return }
             onSelect(item.id)
+        }
+    }
+
+    /// 延迟贴在行右边：测量中转圈，测完就是「延迟 42 ms」，不通就是「不通」
+    /// （原因在地址那行下面）。
+    @ViewBuilder
+    private func latencyLabel(_ item: PairedVPSRecord) -> some View {
+        switch latencies[item.id] {
+        case .measuring:
+            ProgressView().controlSize(.small)
+        case .some(let outcome):
+            if let text = outcome.rowText {
+                // verbatim: 毫秒数是测量值，不该被本地化成千分位
+                Text(verbatim: text)
+                    .font(PendingNetTheme.Fonts.caption.monospaced())
+                    .foregroundStyle(outcome.failureText == nil
+                        ? PendingNetTheme.Palette.inkMuted
+                        : PendingNetTheme.Palette.danger)
+            }
+        case .none:
+            EmptyView()
         }
     }
 
@@ -213,6 +246,8 @@ struct PendingVPSDetails: View {
     let server: PairedVPSRecord
     let nameStyle: NameStyle
     let spacing: CGFloat
+    /// 这台 VPS 的延迟。详情是唯一说得下「测的到底是哪个端点」的地方。
+    var latency: PendingNetLatencyOutcome? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
@@ -233,6 +268,35 @@ struct PendingVPSDetails: View {
             if let protocols = server.nodeProtocols, !protocols.isEmpty {
                 detailRow("支持的协议", protocols.joined(separator: " · "))
             }
+            latencyBlock
+        }
+    }
+
+    /// 延迟单独成块，不塞进 detailRow：右边那一栏放不下「测的是哪个端点」
+    /// 这句话，而这句话正是这个数字有没有意义的关键。
+    @ViewBuilder
+    private var latencyBlock: some View {
+        switch latency {
+        case .measuring:
+            detailRow("延迟", "正在测…")
+        case .ok(let milliseconds, let target):
+            VStack(alignment: .leading, spacing: 4) {
+                detailRow("延迟", "\(milliseconds) ms", monospaced: true)
+                Text(target.explanation)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .failed(let reason):
+            VStack(alignment: .leading, spacing: 4) {
+                detailRow("延迟", "不通")
+                Text(reason)
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .none:
+            EmptyView()
         }
     }
 
