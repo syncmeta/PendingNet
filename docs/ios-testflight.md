@@ -10,9 +10,11 @@ macOS 那条发版链（Developer ID + 公证 + Sparkle，见 `docs/macos-update
 - App 记录已存在：`PendingNet` / `com.pendingname.pendingnet`（id `6800257398`）
 - `com.pendingname.pendingnet` 已开 App Groups、iCloud、Network Extensions
 - `com.pendingname.pendingnet.extension` 已开 App Groups、Network Extensions
-- 整条链已经跑通到上传前的最后一步：0.3.27(327) 的 `.ipa` 完整导出，主 App 和隧道
-  扩展都是 `Apple Distribution: Yanze Tan (M42BKJN82S)` 签的，`beta-reports-active`
-  在，苹果服务端预校验 **VERIFY SUCCEEDED with no errors**。只差 `--upload-app`。
+- 整条链已经真跑通：0.3.27(327) 已上传，苹果处理**通过（VALID）**，没有任何
+  ITMS 退回。主 App 和隧道扩展都是 `Apple Distribution: Yanze Tan (M42BKJN82S)`
+  签的，`beta-reports-active` 在。
+- 那个构建现在卡在**出口合规未答**上（第 4 步），而且账号下**还没有任何测试
+  群组**（第 5 步）—— 这两件就是下面要主人点的。
 
 > 顺带记一笔：`scripts/asc-api.py certs` / `profiles` 里看不到分发证书和 App Store
 > 描述文件，**这不代表缺**。Xcode 云托管签名用的是 `DISTRIBUTION_MANAGED` 类型，
