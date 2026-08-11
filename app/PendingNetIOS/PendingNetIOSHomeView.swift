@@ -270,7 +270,8 @@ struct PendingNetIOSHomeView: View {
             PendingVPSList(
                 items: controller.servers,
                 selectedID: controller.selectedServerID,
-                switchingID: controller.switchingServerID
+                switchingID: controller.switchingServerID,
+                unpairedIDs: controller.unpairedServerIDs
             ) { serverID in
                 guard controller.switchingServerID == nil,
                       !controller.working,

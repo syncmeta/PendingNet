@@ -225,6 +225,7 @@ struct ControlView: View {
             PendingVPSList(
                 items: vpsPairing.servers,
                 selectedID: appliedServer?.serverID,
+                unpairedIDs: vpsPairing.unpairedServerIDs,
                 detailID: $detailServerID
             ) { serverID in
                 guard !vpsPairing.pairing,

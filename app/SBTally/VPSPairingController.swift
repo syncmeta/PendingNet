@@ -20,6 +20,10 @@ typealias PairedVPSServer = PairedVPSRecord
 final class VPSPairingController: ObservableObject {
     @Published private(set) var servers: [PairedVPSServer] = []
     @Published private(set) var pairing = false
+    /// iCloud 把 VPS 记录同步过来了、但这台设备上没有对应访问凭据的那几台。
+    /// 列表靠它把行标成「未配对」——记录走 iCloud 键值存储、凭据走 iCloud
+    /// 钥匙串，两条链各走各的，只到了一半是常态。
+    @Published private(set) var unpairedServerIDs: Set<String> = []
     @Published var lastError: String?
     @Published var lastMessage: String?
 
@@ -34,16 +38,35 @@ final class VPSPairingController: ObservableObject {
         self.store = store
         store.adoptLegacy(legacyServers)
         servers = store.servers
+        refreshCredentialState()
         // 存储层是真源：本机改动、iCloud 推过来的改动，都从这一条流回界面。
         store.$servers
-            .sink { [weak self] in self?.servers = $0 }
+            .sink { [weak self] in
+                self?.servers = $0
+                self?.refreshCredentialState()
+            }
             .store(in: &cancellables)
+    }
+
+    /// 把还躺在老位置上的令牌搬到能经 iCloud 同步的位置，顺带记下这台设备
+    /// 缺哪几台的凭据。
+    ///
+    /// 搬迁本来只搭在读令牌那条路上，而读只发生在用户点某台 VPS 的时候；
+    /// 主动跑一遍，同步才不用等用户先做点什么。
+    private func refreshCredentialState() {
+        let outcomes = PendingNetCredentialStore.promoteAll(serverIDs: servers.map(\.serverID))
+        // 只把「确实没有」标成未配对。钥匙串读不了时说不准，标了就是把用户支去
+        // 做一次白费的重新配对。
+        unpairedServerIDs = Set(outcomes.filter { $0.value == .notStored }.keys)
     }
 
     /// App 启动 / 回到前台时叫一次，把 iCloud 那边的改动拉过来。
     /// iCloud 不可用时是空操作。
     func refreshFromCloud() {
         store.refreshFromCloud()
+        // iCloud 钥匙串可能比键值存储晚到：记录先到、凭据后到时，回到前台
+        // 这一下就是那几行从「未配对」转正的时机。
+        refreshCredentialState()
     }
 
     func importAndEnroll(url: URL) async -> PendingNetRuntimeServer? {

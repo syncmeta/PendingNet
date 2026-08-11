@@ -15,6 +15,10 @@ final class PendingNetIOSController: ObservableObject {
     @Published private(set) var working = false
     /// 正在切换到哪一台（列表行上转圈用）。
     @Published private(set) var switchingServerID: String?
+    /// iCloud 把 VPS 记录同步过来了、但这台设备上没有对应访问凭据的那几台。
+    /// 列表靠它把行标成「未配对」——记录走 iCloud 键值存储、凭据走 iCloud
+    /// 钥匙串，两条链各走各的，只到了一半是常态。
+    @Published private(set) var unpairedServerIDs: Set<String> = []
     @Published var message: String?
     @Published var errorMessage: String?
 
@@ -84,19 +88,37 @@ final class PendingNetIOSController: ObservableObject {
 
     private func applyStoreServers(_ next: [IOSPairedServer]) {
         servers = next
+        refreshCredentialState()
         let remembered = selectedServerID ?? defaults.string(forKey: selectedKey)
         // 记住的那台可能已经不在名单里（存档被改过），退回第一台，别让界面
         // 停在「有服务器但一台都没选中」——那样连接按钮永远是灰的。
-        selectedServerID = servers.contains { $0.serverID == remembered }
+        // 本机没凭据的那几台跳过：选中它等于让连接按钮指着一台注定失败的 VPS。
+        let usable = servers.filter { !unpairedServerIDs.contains($0.serverID) }
+        selectedServerID = usable.contains { $0.serverID == remembered }
             ? remembered
-            : servers.first?.serverID
+            : usable.first?.serverID
         defaults.set(selectedServerID, forKey: selectedKey)
+    }
+
+    /// 把还躺在老位置上的令牌搬到能经 iCloud 同步的位置，顺带记下这台设备
+    /// 缺哪几台的凭据。
+    ///
+    /// 搬迁本来只搭在读令牌那条路上，而读只发生在用户点某台 VPS 的时候；
+    /// 主动跑一遍，同步才不用等用户先做点什么。
+    private func refreshCredentialState() {
+        let outcomes = PendingNetCredentialStore.promoteAll(serverIDs: servers.map(\.serverID))
+        // 只把「确实没有」标成未配对。钥匙串读不了时说不准，标了就是把用户支去
+        // 做一次白费的重新配对。
+        unpairedServerIDs = Set(outcomes.filter { $0.value == .notStored }.keys)
     }
 
     /// App 启动 / 回到前台时叫一次，把 iCloud 那边的改动拉过来。
     /// iCloud 不可用时是空操作。
     func refreshFromCloud() {
         store.refreshFromCloud()
+        // iCloud 钥匙串可能比键值存储晚到：记录先到、凭据后到时，回到前台
+        // 这一下就是那几行从「未配对」转正的时机。
+        refreshCredentialState()
     }
 
     private func persistServers() {
@@ -134,6 +156,10 @@ final class PendingNetIOSController: ObservableObject {
             )
             // 同一台重新配对就地替换，不追加出一行重复的。
             store.upsert(paired)
+            // upsert 会经 applyStoreServers 重算未配对名单，但那一趟发生在
+            // 存储回调里、顺序不由这里保证；刚存完凭据的这一台必须当场转正，
+            // 否则下面把它设成选中项时它可能还挂着「未配对」。
+            unpairedServerIDs.remove(paired.serverID)
             selectedServerID = paired.serverID
             persistServers()
             message = "已配对：\(paired.name)"
@@ -192,7 +218,7 @@ final class PendingNetIOSController: ObservableObject {
         guard let server else { return }
         do {
             guard let token = try PendingNetCredentialStore.load(serverID: server.serverID) else {
-                throw PendingNetPairingError.serverRejected("此设备没有找到 VPS 访问凭据，请重新配对")
+                throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，导入它的 .pdn 就能用")
             }
             let profile = try await PendingNetServerClient(
                 endpoint: server.endpoint,

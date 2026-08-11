@@ -235,7 +235,7 @@ final class PendingNetTunnelController: ObservableObject {
         serverID: String
     ) async throws {
         guard try PendingNetCredentialStore.load(serverID: serverID) != nil else {
-            throw PendingNetPairingError.serverRejected("此设备没有找到 VPS 访问凭据，请重新配对")
+            throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，导入它的 .pdn 就能用")
         }
         // 控制通道要在隧道连上的那一刻就知道该订阅哪个 selector，不能等
         // 界面那边的绑定先跑。

@@ -90,6 +90,14 @@ struct PendingVPSList: View {
     let items: [PairedVPSRecord]
     let selectedID: String?
     var switchingID: String? = nil
+    /// 这台设备上没有访问凭据的那几台。
+    ///
+    /// VPS 记录走 iCloud 键值存储，访问凭据走 iCloud 钥匙串——两条链是分开的，
+    /// 记录到了而凭据没到是常态（换了新设备、iCloud 钥匙串没开、还没同步完）。
+    /// 这几行必须一眼看得出来是打不开的：以前它们和能用的长得一模一样，还能
+    /// 打上勾，点下去才在页面底部弹一条红字，用户对着一排看着能用的死条目
+    /// 完全无从下手。
+    var unpairedIDs: Set<String> = []
     var detailID: Binding<String?>? = nil
     let onSelect: (String) -> Void
     let onShowDetails: (String) -> Void
@@ -121,21 +129,42 @@ struct PendingVPSList: View {
     private func row(_ item: PairedVPSRecord) -> some View {
         let selected = item.id == selectedID
         let switching = item.id == switchingID
+        let unpaired = unpairedIDs.contains(item.id)
         return HStack(spacing: 10) {
             Image(systemName: "checkmark")
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(PendingNetTheme.Palette.accent)
-                .opacity(selected ? 1 : 0)
+                .opacity(selected && !unpaired ? 1 : 0)
                 .frame(width: 14)
-            // verbatim: 地址是标识符，不能被本地化
-            Text(verbatim: item.address)
-                .font(selected
-                    ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
-                    : PendingNetTheme.Fonts.body.monospaced())
-                .foregroundStyle(PendingNetTheme.Palette.ink)
+            VStack(alignment: .leading, spacing: 3) {
+                // verbatim: 地址是标识符，不能被本地化
+                Text(verbatim: item.address)
+                    .font(selected && !unpaired
+                        ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
+                        : PendingNetTheme.Fonts.body.monospaced())
+                    .foregroundStyle(unpaired
+                        ? PendingNetTheme.Palette.inkMuted
+                        : PendingNetTheme.Palette.ink)
+                if unpaired {
+                    Text("这台设备还没配对，导入这台 VPS 的 .pdn 就能用")
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                }
+            }
             Spacer()
             if switching {
                 ProgressView().controlSize(.small)
+            } else if unpaired {
+                Text("未配对")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(PendingNetTheme.Palette.canvas)
+                    .clipShape(Capsule())
+                    .overlay {
+                        Capsule().stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
+                    }
             } else {
                 detailButton(item)
             }
@@ -144,8 +173,10 @@ struct PendingVPSList: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+        // 没凭据的行点了也只会失败，不给点——「未配对」那个标记已经把该做的事
+        // 说清楚了，让它可点只会换来一条红字。
         .onTapGesture {
-            guard !selected else { return }
+            guard !selected, !unpaired else { return }
             onSelect(item.id)
         }
     }
