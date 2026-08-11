@@ -57,6 +57,25 @@ final class EngineController: ObservableObject {
         }
     }
 
+    /// 每一份规则集在不在本机。设置页按份显示，切分流档位也吃这份判断。
+    @Published private(set) var ruleSetPresence: [String: Bool] = [:]
+
+    /// 照磁盘重算一遍规则集状态。下载完、设置页出现时叫一次。
+    func refreshRuleSetPresence() {
+        ruleSetPresence = userEngine.ruleSets.presence
+    }
+
+    /// 设置页那个「下载 / 重新下载」。引擎在跑就借道本机代理下载——需要这几份
+    /// 名单的机器，多半正是没有它们就上不了 GitHub 的那种。
+    /// 返回 nil 表示成功，否则是给用户看的人话。
+    func refreshRuleSets() async -> String? {
+        let failure = await userEngine.ruleSets.refresh(
+            throughLocalProxyPort: running ? localProxyPort : nil
+        )
+        refreshRuleSetPresence()
+        return failure
+    }
+
     /// Whether the app-run engine's config declares this exact list mode. Only
     /// meaningful in 「仅端口」 — the helper runs its own config.
     func listModeAvailable(_ name: String) -> Bool {
@@ -72,6 +91,7 @@ final class EngineController: ObservableObject {
         let ok = await userEngine.enableListMode(mode)
         running = userEngine.isRunning
         logTail = userEngine.logTail()
+        refreshRuleSetPresence()
         return ok
     }
 

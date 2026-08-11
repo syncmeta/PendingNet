@@ -7,9 +7,6 @@ enum PendingNetUserEngineError: LocalizedError {
     case noConfiguration
     case validationFailed(String)
     case startFailed(String)
-    case portOutOfRange
-    case portReserved
-    case portInUse(Int)
 
     var errorDescription: String? {
         switch self {
@@ -21,54 +18,48 @@ enum PendingNetUserEngineError: LocalizedError {
             "本机代理配置校验失败：\(detail)"
         case .startFailed(let detail):
             "本机代理启动失败：\(detail)"
-        case .portOutOfRange:
-            "端口要在 1024 到 65535 之间。"
-        case .portReserved:
-            "29090 是 PendingNet 自己的控制端口，换一个。"
-        case .portInUse(let port):
-            "端口 \(port) 已经被别的程序占用了，换一个再试。"
         }
     }
 }
 
 @MainActor
 final class PendingNetUserEngine {
-    nonisolated static let controlURL = URL(string: "http://127.0.0.1:29090")!
+    nonisolated static let controlURL = URL(string: "http://127.0.0.1:\(controlPort)")!
 
-    static let portKey = "pendingnet.local-proxy-port"
-    static let lanKey = "pendingnet.allow-lan"
-    static let defaultProxyPort = 2080
+    /// 控制端口。端口设置里抢不走它，见 `PendingNetLocalInbound.resolvePort`。
+    static let controlPort = 29090
 
-    private(set) var proxyPort: Int
-    /// 开着就监听 0.0.0.0，同网段的设备也能用这个代理。
-    private(set) var allowsLAN: Bool
+    /// 本机入站（端口 + 允许局域网）。校验、文案、存档键名都在 SBTallyCore 里
+    /// 与 iOS 共用一份，见 `PendingNetLocalInbound`。
+    private(set) var localInbound: PendingNetLocalInbound
     private(set) var process: Process?
     private var logHandle: FileHandle?
 
     private let fileManager = FileManager.default
-    private let defaults: UserDefaults
+    private let inboundStore: PendingNetLocalInboundStore
 
     init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        let configured = defaults.integer(forKey: Self.portKey)
-        proxyPort = (1024...65535).contains(configured) ? configured : Self.defaultProxyPort
-        allowsLAN = defaults.bool(forKey: Self.lanKey)
+        inboundStore = PendingNetLocalInboundStore(defaults: defaults)
+        localInbound = inboundStore.load()
     }
 
-    var listenAddress: String {
-        allowsLAN ? PendingNetProxyOnlyConfig.anyListen : PendingNetProxyOnlyConfig.loopbackListen
-    }
+    var proxyPort: Int { localInbound.port }
+    var allowsLAN: Bool { localInbound.allowsLAN }
+    var listenAddress: String { localInbound.listenAddress }
 
-    /// 改本机入站（端口 / 是否允许局域网）：校验、落盘、改写已应用的配置，
-    /// 正在跑就顺手重启。配置里的 VPS 出站原样保留 —— 换个端口不该让用户重新配对。
+    /// 改本机入站（端口 / 是否允许局域网）：落盘、改写已应用的配置，正在跑就
+    /// 顺手重启。配置里的 VPS 出站原样保留 —— 换个端口不该让用户重新配对。
+    ///
+    /// 端口本身的四种不合格由调用方在保存那一刻用
+    /// `PendingNetLocalInbound.resolvePort` 判掉（与 iOS 同一份判断）；这里只
+    /// 兜一次范围，防的是存档被写坏这类非用户输入的路径。
     func setLocalInbound(port: Int, allowLAN: Bool) async throws {
-        guard (1024...65535).contains(port) else { throw PendingNetUserEngineError.portOutOfRange }
-        guard port != 29090 else { throw PendingNetUserEngineError.portReserved }
-        if port != proxyPort, !portIsFree(port) { throw PendingNetUserEngineError.portInUse(port) }
+        let next = PendingNetLocalInbound(port: port, allowsLAN: allowLAN)
+        guard PendingNetLocalInbound.portRange.contains(port), port != Self.controlPort else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
 
-        let address = allowLAN
-            ? PendingNetProxyOnlyConfig.anyListen
-            : PendingNetProxyOnlyConfig.loopbackListen
+        let address = next.listenAddress
         if fileManager.fileExists(atPath: configURL.path) {
             let updated = try PendingNetProxyOnlyConfig.applyingLocalInbound(
                 to: try Data(contentsOf: configURL),
@@ -80,39 +71,16 @@ final class PendingNetUserEngine {
             if wasRunning { await stop() }
             try updated.write(to: configURL, options: .atomic)
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
-            persist(port: port, allowLAN: allowLAN)
+            persist(next)
             if wasRunning { try await start() }
             return
         }
-        persist(port: port, allowLAN: allowLAN)
+        persist(next)
     }
 
-    private func persist(port: Int, allowLAN: Bool) {
-        proxyPort = port
-        allowsLAN = allowLAN
-        defaults.set(port, forKey: Self.portKey)
-        defaults.set(allowLAN, forKey: Self.lanKey)
-    }
-
-    /// Whether nothing else is listening on 127.0.0.1:port right now. A bind
-    /// test, not a connect test: a port can be held by a process that refuses
-    /// connections and still be unusable for us.
-    private func portIsFree(_ port: Int) -> Bool {
-        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
-        guard descriptor >= 0 else { return true }
-        defer { close(descriptor) }
-        var yes: Int32 = 1
-        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-        var address = sockaddr_in()
-        address.sin_family = sa_family_t(AF_INET)
-        address.sin_port = UInt16(port).bigEndian
-        address.sin_addr.s_addr = inet_addr("127.0.0.1")
-        let bound = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-        return bound == 0
+    private func persist(_ inbound: PendingNetLocalInbound) {
+        localInbound = inbound
+        inboundStore.save(inbound)
     }
 
     var isRunning: Bool { process?.isRunning == true }
@@ -230,7 +198,7 @@ final class PendingNetUserEngine {
         }
         await stop()
         throw PendingNetUserEngineError.startFailed(logTail().isEmpty
-            ? "控制端口没有响应，请确认 \(proxyPort) 或 29090 未被其它程序占用。"
+            ? "控制端口没有响应，请确认 \(proxyPort) 或 \(Self.controlPort) 未被其它程序占用。"
             : logTail())
     }
 

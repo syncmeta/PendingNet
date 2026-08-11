@@ -9,14 +9,13 @@ import SBTallyCore
 /// one unreachable GitHub would leave the user with an engine that refuses to
 /// start at all — including for 全局, which needs no rule-set.
 struct PendingNetRouteRuleSets {
-    private static let sources: [String: String] = [
-        "geosite-cn":
-            "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-        "geoip-cn":
-            "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-        "geosite-gfw":
-            "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/gfw.srs",
-    ]
+    /// 名字与下载地址取自 SBTallyCore 里那份**全项目唯一**的名单
+    /// （`PendingNetTunnelConfig.requiredRuleSets`，iOS 侧用的是同一份）。
+    /// 这里曾经另抄一份，两处只要有一边多/少一个名字，表现就是 sing-box
+    /// 启动时报 rule-set not found。
+    private static var sources: [PendingNetTunnelConfig.RuleSetSource] {
+        PendingNetTunnelConfig.requiredRuleSets
+    }
 
     let directory: URL
     private let fileManager = FileManager.default
@@ -49,12 +48,35 @@ struct PendingNetRouteRuleSets {
     /// Path to hand the config builder once at least one list mode is usable.
     var configuredDirectory: String? { availableModes.isEmpty ? nil : directory.path }
 
+    /// 每一份规则集此刻在不在本机。设置页按份显示，别让用户对着一个笼统的
+    /// 「未下载」猜是哪一份没下来。
+    var presence: [String: Bool] {
+        Dictionary(uniqueKeysWithValues: PendingNetTunnelConfig.requiredRuleSetNames.map { name in
+            (name, url(forTag: name).map {
+                PendingNetTunnelConfig.looksLikeRuleSet(at: $0.path)
+            } ?? false)
+        })
+    }
+
     /// Fetches whatever is missing, preferring the local proxy when the engine
     /// is up — a machine that needs these lists is usually one that can't reach
     /// GitHub without them. Best effort: returns the readiness afterwards.
     @discardableResult
     func download(throughLocalProxyPort port: Int?) async -> Bool {
         if isReady { return true }
+        _ = await fetch(force: false, throughLocalProxyPort: port)
+        return configuredDirectory != nil
+    }
+
+    /// 设置页那个「下载 / 重新下载」按钮走这里：用户明确要求刷新时不跳过
+    /// 任何一份。返回 nil 表示全都拿到了，否则是给用户看的人话。
+    func refresh(throughLocalProxyPort port: Int?) async -> String? {
+        await fetch(force: true, throughLocalProxyPort: port)
+    }
+
+    /// 返回 nil 表示这一轮要拿的都拿到了，否则是第一条失败的人话。失败也
+    /// 不中断——能落下一份是一份，白名单不该因为 GFW 名单下不来而拿不到。
+    private func fetch(force: Bool, throughLocalProxyPort port: Int?) async -> String? {
         try? fileManager.createDirectory(
             at: directory,
             withIntermediateDirectories: true,
@@ -75,19 +97,28 @@ struct PendingNetRouteRuleSets {
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
-        for (tag, source) in Self.sources {
-            guard let destination = url(forTag: tag),
-                  !PendingNetTunnelConfig.looksLikeRuleSet(at: destination.path),
-                  let remote = URL(string: source) else { continue }
-            guard let (data, response) = try? await session.data(from: remote),
+        var failure: String?
+        for source in Self.sources {
+            guard let destination = url(forTag: source.name) else { continue }
+            if !force, PendingNetTunnelConfig.looksLikeRuleSet(at: destination.path) { continue }
+            guard let (data, response) = try? await session.data(from: source.url),
                   let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  data.count > 64,
-                  // .srs files start with "SRS" — an HTML error page must not be
-                  // written to the cache and then fail config validation.
-                  data.prefix(3) == Data("SRS".utf8) else { continue }
-            try? data.write(to: destination, options: .atomic)
+                  (200..<300).contains(http.statusCode) else {
+                failure = failure ?? "规则集下载失败：\(source.name)"
+                continue
+            }
+            // .srs files start with "SRS" — an HTML error page must not be
+            // written to the cache and then fail config validation.
+            guard data.count > 64, data.prefix(3) == Data("SRS".utf8) else {
+                failure = failure ?? "规则集内容不是有效的 .srs（可能被网络中间设备替换）：\(source.name)"
+                continue
+            }
+            do {
+                try data.write(to: destination, options: .atomic)
+            } catch {
+                failure = failure ?? "规则集写入失败：\(source.name)"
+            }
         }
-        return configuredDirectory != nil
+        return failure
     }
 }
