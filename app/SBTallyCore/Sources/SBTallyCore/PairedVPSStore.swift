@@ -12,6 +12,11 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
     public var capabilities: [String]
     /// 节点资料拉到之后填上，供「详情」展示。可选，老版本存档里没有这一项。
     public var nodeProtocols: [String]?
+    /// 代理入口的 TCP 端点（Reality），节点资料拉到之后填上。延迟就测这里 ——
+    /// 用户的 TCP 流量真正落在这个端口上（见 `PendingNetLatencyTarget`）。
+    /// 可选：老存档里没有，只有 Hysteria2 的 VPS 也不会有。
+    public var proxyTCPHost: String?
+    public var proxyTCPPort: Int?
     public var pairedAt: Date
     /// 这条记录最后一次被改动的时刻，跨设备合并时用它做 last-writer-wins。
     /// 老存档里没有这一项，解码时退回 `pairedAt`。
@@ -25,6 +30,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         deviceID: String,
         capabilities: [String],
         nodeProtocols: [String]? = nil,
+        proxyTCPHost: String? = nil,
+        proxyTCPPort: Int? = nil,
         pairedAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -35,6 +42,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         self.deviceID = deviceID
         self.capabilities = capabilities
         self.nodeProtocols = nodeProtocols
+        self.proxyTCPHost = proxyTCPHost
+        self.proxyTCPPort = proxyTCPPort
         self.pairedAt = pairedAt
         self.updatedAt = updatedAt
     }
@@ -48,6 +57,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         deviceID = try container.decode(String.self, forKey: .deviceID)
         capabilities = try container.decodeIfPresent([String].self, forKey: .capabilities) ?? []
         nodeProtocols = try container.decodeIfPresent([String].self, forKey: .nodeProtocols)
+        proxyTCPHost = try container.decodeIfPresent(String.self, forKey: .proxyTCPHost)
+        proxyTCPPort = try container.decodeIfPresent(Int.self, forKey: .proxyTCPPort)
         // iOS 的老记录连 pairedAt 都没有；给个最早的时刻，让任何带真实时间戳的
         // 记录都能赢过它，而不是把老记录当成「刚刚改过」压住对面的新数据。
         pairedAt = try container.decodeIfPresent(Date.self, forKey: .pairedAt) ?? .distantPast
