@@ -206,7 +206,6 @@ final class PendingNetIOSController: ObservableObject {
             // 订阅的是扩展里**已经生效**的那个分组。
             tunnel.bindSelector(profile: profile, serverName: target.name)
             persistServers()
-            message = "已切换到：\(target.name)"
         } catch {
             selectedServerID = previousID
             nodeProfile = previousProfile

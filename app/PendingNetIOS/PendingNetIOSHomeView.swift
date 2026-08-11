@@ -217,15 +217,15 @@ struct PendingNetIOSHomeView: View {
                 // 「用户点了白名单，但没人知道最终生效的是哪个模式」这种
                 // 界面选中项和隧道实际配置对不上的状态。
                 if previous != .global {
-                    _ = await applyRouteMode(.global, previous: previous, profile: profile, serverName: serverName)
+                    await applyRouteMode(.global, previous: previous, profile: profile, serverName: serverName)
                 }
                 return
             }
         }
 
-        if await applyRouteMode(mode, previous: previous, profile: profile, serverName: serverName) {
-            controller.message = "已切换到「\(mode.pendingTitle)」"
-        }
+        // 切成功了不报喜：选中的那颗药丸自己就是回执，再弹一条「已切换到 xx」
+        // 只是多一行要用户去读的字。失败仍然要说（见 applyRouteMode）。
+        await applyRouteMode(mode, previous: previous, profile: profile, serverName: serverName)
     }
 
     /// 落地 `routeMode` 并在隧道在位时 `reload`。`reload` 现在会一直等到
@@ -237,16 +237,14 @@ struct PendingNetIOSHomeView: View {
         previous: PendingNetRouteMode,
         profile: PendingNetNodeProfile,
         serverName: String
-    ) async -> Bool {
+    ) async {
         controller.tunnel.setRouteMode(mode, profile: profile, serverName: serverName)
-        guard controller.tunnel.isTunnelLive else { return true }
+        guard controller.tunnel.isTunnelLive else { return }
         do {
             try await controller.tunnel.reload(profile: profile, serverName: serverName)
-            return true
         } catch {
             controller.tunnel.setRouteMode(previous, profile: profile, serverName: serverName)
             controller.errorMessage = "切换分流模式失败，已回退：\(error.localizedDescription)"
-            return false
         }
     }
 
