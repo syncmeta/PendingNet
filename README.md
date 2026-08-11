@@ -20,6 +20,10 @@ macOS 0.3.9 可以直接导入或双击 `.pdn`。应用只把 VPS 下发的协�
 
 0.3.9 起内置 Sparkle 2 更新器。PendingNet 与 PendingCrew 共用 `updates.pendingname.com` + Cloudflare R2 的发布基础设施，并分别使用 `pendingnet/`、`pendingcrew/` 产品目录和独立签名密钥。客户端会按计划检查更新、验证 appcast、更新包签名与 Developer ID 身份，并原子替换应用。发布包还必须完成 Apple notarization，具体流程见 `docs/macos-updates.md`。
 
+iOS 版走的是另一条完全独立的通道：App Store Connect / TestFlight。打包与上传用
+`scripts/build-ios-testflight.sh`（默认只导出、不上传），账号那边还差什么用
+`scripts/asc-api.py preflight` 查，哪几步只能在浏览器里点见 `docs/ios-testflight.md`。
+
 ## 全新 VPS 试用
 
 构建 Linux 二进制并上传到 VPS 后：

@@ -193,17 +193,21 @@ for b in "$signed_app" "$signed_appex"; do
   test -f "$b/embedded.mobileprovision" \
     || { echo "$name 里没有描述文件 —— 网络扩展这类受限 entitlement 等于没有" >&2; exit 2; }
 
-  ents=$(codesign -d --entitlements - --xml "$b" 2>/dev/null || true)
+  ents_plist="$snap/$name.entitlements.plist"
+  codesign -d --entitlements - --xml "$b" 2>/dev/null | plutil -convert xml1 -o "$ents_plist" - \
+    || { echo "$name 的 entitlements 读不出来" >&2; exit 2; }
+  ents=$(cat "$ents_plist")
   # 未展开的构建变量。macOS 那条就栽过：$(AppIdentifierPrefix) 被原样签进钥匙串
   # 组，签名有效、一切正常，只是两端再也读不到对方的数据。
   case "$ents" in
-    *'$('*) echo "$name 的 entitlements 里还有没展开的构建变量" >&2;
-            printf '%s' "$ents" | plutil -convert xml1 -o - - >&2; exit 2 ;;
+    *'$('*) echo "$name 的 entitlements 里还有没展开的构建变量" >&2; cat "$ents_plist" >&2; exit 2 ;;
   esac
-  # get-task-allow = 可被调试 = 开发包。苹果在处理阶段以 ITMS-90339 退回。
-  case "$ents" in
-    *get-task-allow*) echo "$name 带着 get-task-allow —— 这是开发签名，不是分发签名" >&2; exit 2 ;;
-  esac
+  # get-task-allow=true 就是可被调试的开发包，苹果以 ITMS-90339 退回。
+  # 注意查的是**值**不是键的有无：分发包里这个键照样在，只不过是 false。
+  if [ "$(/usr/libexec/PlistBuddy -c 'Print :get-task-allow' "$ents_plist" 2>/dev/null || echo false)" = "true" ]; then
+    echo "$name 的 get-task-allow 是 true —— 这是开发签名，不是分发签名" >&2
+    exit 2
+  fi
   case "$ents" in
     *networking.networkextension*) ;;
     *) echo "$name 的 entitlements 里没有 networkextension —— 装上去连不了" >&2; exit 2 ;;

@@ -4,22 +4,40 @@ macOS 那条发版链（Developer ID + 公证 + Sparkle，见 `docs/macos-update
 毫无关系：Mac 版自己发自己的更新，iPhone 版只能走苹果的商店通道。两条互不影响，
 改一条不用管另一条。
 
-命令行这边能自动的都自动了，剩下**四处只能在浏览器里点**，下面第一节按顺序写清了。
+命令行这边能自动的都自动了。**账号那边的前置条件已经用接口核过一遍，都是好的**
+（2026-08-11，`scripts/asc-api.py preflight`）：
+
+- App 记录已存在：`PendingNet` / `com.pendingname.pendingnet`（id `6800257398`）
+- `com.pendingname.pendingnet` 已开 App Groups、iCloud、Network Extensions
+- `com.pendingname.pendingnet.extension` 已开 App Groups、Network Extensions
+- 分发签名已经跑通：0.3.27(327) 的 `.ipa` 完整导出过一次，主 App 和隧道扩展都是
+  `Apple Distribution: Yanze Tan (M42BKJN82S)` 签的，`beta-reports-active` 也在
+
+> 顺带记一笔：`scripts/asc-api.py certs` / `profiles` 里看不到分发证书和 App Store
+> 描述文件，**这不代表缺**。Xcode 云托管签名用的是 `DISTRIBUTION_MANAGED` 类型，
+> 走 `appstoreconnect.apple.com/xcbuild` 那套内部接口，公开 API 一概不列。能不能
+> 签成只有导出那一步说了算。
+
+**所以真正还要主人动手的只剩两处**：第 4 步的出口合规问卷（每个构建一次），
+和第 5 步拉内部测试群组。下面第 1~3 步留着是给「以后换账号 / 建第二个 App」
+用的参照，现在不用做。
 
 ---
 
-## 一、只能主人在浏览器里点的（按顺序）
+## 一、浏览器里的步骤（按顺序）
 
-### 第 1 步：确认协议已签
+### 第 1 步：确认协议已签 —— *大概率已经好了*
 
 <https://appstoreconnect.apple.com> →「业务」（协议、税务和银行业务）。
 
-「免费 App」那份协议状态必须是**生效中**。没生效的话下一步建不了 App 记录，
-而且报错含糊。第一次用这个账号发 App 时最容易卡在这里。
+「免费 App」那份协议状态必须是**生效中**。没生效的话建不了 App 记录，而且报错
+含糊。这个账号下 App 记录已经建出来了，所以这一关多半早就过了；万一上传时被
+「协议未生效」挡住，回这里看一眼。
 
-### 第 2 步：新建 App 记录
+### 第 2 步：新建 App 记录 —— *已完成，不用做*
 
-App Store Connect 的接口不提供「新建 App」，这一步只能手点，一次就够。
+接口不提供「新建 App」这个动作，所以它只能手点。这个 App 的记录已经在了
+（`PendingNet`，id `6800257398`），下面留作以后的参照。
 
 1. <https://appstoreconnect.apple.com/apps> → 左上角 **+** →「新建 App」
 2. 平台勾 **iOS**
@@ -34,11 +52,11 @@ App Store Connect 的接口不提供「新建 App」，这一步只能手点，�
 7. **用户访问权限**：完全访问
 8. 点「创建」
 
-### 第 3 步：核对 App ID 的能力
+### 第 3 步：核对 App ID 的能力 —— *已核过，都齐了*
 
 <https://developer.apple.com/account/resources/identifiers/list>
 
-这两个标识符都要看：
+这两个标识符都要看（接口查过的结果见文首，现在两个都齐）：
 
 | 标识符 | 必须打开的能力 |
 | --- | --- |
@@ -55,7 +73,7 @@ App Store Connect 的接口不提供「新建 App」，这一步只能手点，�
 
 想省事的话直接跑 `scripts/asc-api.py preflight`，缺什么它会指名道姓地列出来。
 
-### 第 4 步：构建传上去之后 —— 答出口合规问卷
+### 第 4 步：构建传上去之后 —— 答出口合规问卷 · **每次都要做**
 
 **每个新构建都要答一次**，不答就只是挂在那里，连内部测试员都收不到，而且没有
 任何报错，只有一个黄色叹号。
@@ -74,7 +92,7 @@ TestFlight 页面 → 找到刚上传的构建 → 「管理」/「提供出口�
 
 > 这一问涉及法律申报，不是技术选择。真要改成别的答法，得主人自己定。
 
-### 第 5 步（发内部测试）
+### 第 5 步：拉内部测试群组 · **第一次要做**
 
 TestFlight →「内部测试」→ 新建群组 → 把人加进去（内部测试员必须是这个 App Store
 Connect 账号下的用户）→ 勾上构建。**不需要**审核，答完第 4 步几分钟内就到。
@@ -122,9 +140,10 @@ PENDINGNET_IOS_UPLOAD=1 scripts/build-ios-testflight.sh
 
 ### 证书和描述文件不用手动准备
 
-本机现在只有一张 Apple Development 证书，够用。缺的 **Apple Distribution 证书**和
+本机钥匙串里只有一张 Apple Development 证书，够用。**Apple Distribution 证书**和
 两份 **App Store 描述文件**（主 App + 隧道扩展）由导出那一步的
-`-allowProvisioningUpdates` + 同一把 API 密钥自动建，不用去网页上点。
+`-allowProvisioningUpdates` + 同一把 API 密钥自动取用或新建，不用去网页上点，
+本机也不用装分发证书。
 
 分工是这样的：`archive` 用开发签名（和真机调试同一套），`-exportArchive` 再拿
 分发身份**重签**一遍。这是 Xcode 的既定流程，不是将就。
@@ -149,7 +168,8 @@ App Store Connect 查这个 build 号是不是已经传过 —— 重号苹果�
 - `Assets.car` 里没有 1024×1024 的商店图标
 - 重签后不是 Apple Distribution 签的 / 没有描述文件
 - entitlements 里还有没展开的构建变量（`$(AppIdentifierPrefix)` 这种）
-- 带着 `get-task-allow`（那是开发包）
+- `get-task-allow` 是 `true`（那是开发包；分发包里这个键照样在，只是 `false`，
+  所以查的是值不是键的有无）
 - 缺 `beta-reports-active`（说明用的不是 App Store 描述文件）
 - 缺网络扩展 / 共享组 / iCloud 键值存储 / 钥匙串组 entitlement
 - `application-identifier` 和预期的 bundle id 对不上

@@ -314,7 +314,12 @@ def cmd_preflight(args, bearer):
         for c in dist:
             print("  ✓ %s（到期 %s）" % (c["attributes"].get("name"), c["attributes"].get("expirationDate")))
     else:
-        print("  ! 账号下还没有 Apple Distribution 证书 —— 导出那一步会自动建，不用手点")
+        # 这里空着**不代表缺证书**。Xcode 的云托管签名用的是 DISTRIBUTION_MANAGED
+        # 类型的证书和描述文件，走的是 appstoreconnect.apple.com/xcbuild 那套内部
+        # 接口，公开的 /v1/certificates 和 /v1/profiles 一概看不到它们。
+        # 能不能签成，只有导出那一步说了算 —— 所以这条不当作阻塞项。
+        print("  · 公开接口里没有自建的分发证书；Xcode 云托管的那张这里看不见，")
+        print("    导出时会自动取用或新建，不用手点")
 
     print("== TestFlight 构建 ==")
     if app is not None:
