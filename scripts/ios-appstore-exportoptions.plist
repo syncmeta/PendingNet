@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  `xcodebuild -exportArchive` 的导出配置，走 App Store Connect / TestFlight 这条。
+  由 scripts/build-ios-testflight.sh 使用。
+
+  为什么不在这里列 provisioningProfiles：signingStyle=automatic 配上命令行的
+  `-allowProvisioningUpdates` + App Store Connect API 密钥，Xcode 会自己去门户
+  建 Apple Distribution 证书和 App Store 描述文件（主 App 和隧道扩展各一份），
+  不需要人去网页上点、也不需要本机预先有分发证书。手工列描述文件名反而会在
+  证书轮换时静默失配。
+
+  archive 那一步用的是开发签名（和真机调试同一套），分发身份是在这一步**重签**
+  上去的 —— 这是 Xcode 的既定分工，不是将就。
+-->
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>destination</key>
+	<string>export</string>
+	<key>teamID</key>
+	<string>M42BKJN82S</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<!-- 上传 dSYM：崩溃日志没有它就是一堆十六进制地址。 -->
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<!-- 关键：默认是 YES，Xcode 会自作主张改 build 号，于是产物里的版本号和
+	     app/project.yml 里的对不上，脚本的版本断言也就形同虚设。版本号这里
+	     只认仓库里那一份。 -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
