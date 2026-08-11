@@ -129,7 +129,11 @@ struct PendingLocalInboundCard: View {
             saving = false
             errorMessage = failure
             saved = failure == nil
-            portField = String(self.port)
+            // 成功就把输入框对齐到刚存下的那个端口；失败**不动**它——调用方
+            // 已经把设置退回原值了，此刻把用户刚敲的数字也抹掉，他连改错了
+            // 什么都看不见。（不能写 `String(self.port)`：这个 View 实例的
+            // `port` 还是这一帧渲染时的旧值。）
+            if failure == nil { portField = String(port) }
         }
     }
 }
