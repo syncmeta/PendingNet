@@ -317,8 +317,8 @@ struct PendingVPSDetails: View {
         }
     }
 
-    /// 延迟单独成块，不塞进 detailRow：右边那一栏放不下「测的是哪个端点」
-    /// 这句话，而这句话正是这个数字有没有意义的关键。
+    /// 延迟单独成块，不塞进 detailRow：底下那行要放测的是哪个端点（不通时
+    /// 换成原因），一行摆不下。只报事实，不解释这个数字是怎么来的。
     @ViewBuilder
     private var latencyBlock: some View {
         switch latency {

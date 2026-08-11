@@ -132,14 +132,13 @@ struct PendingNetTunnelLogView: View {
             )
             .frame(maxWidth: .infinity)
         } else {
+            // 截断是事实、不是解释，得留着——否则看到的是半截日志却不知道
+            // 它是半截的。分享导出在右上角，用户找得到。
             if truncated {
-                Text("文件较大，只显示末尾 \(Self.maxTailBytes / 1024) KB。完整内容请用右上角分享导出。")
+                Text("只显示末尾 \(Self.maxTailBytes / 1024) KB")
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
-            Text("这里只有扩展自己写的诊断行，没有 sing-box 的内核日志。")
-                .font(PendingNetTheme.Fonts.caption)
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             monospaced(tail.isEmpty ? "（日志为空）" : tail)
         }
     }

@@ -33,9 +33,9 @@ public struct PendingNetLatencyTarget: Equatable, Sendable {
     public var explanation: String {
         switch kind {
         case .proxyEntry:
-            "测的是代理入口 \(host):\(port)（TCP 握手，直连不经隧道）"
+            "代理入口 \(host):\(port)"
         case .controlPort:
-            "测的是控制端口 \(host):\(port)（还没拉到节点资料，先测这里）"
+            "控制端口 \(host):\(port)"
         }
     }
 

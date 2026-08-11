@@ -23,8 +23,6 @@ struct PendingLocalInboundCard: View {
     let listenAddress: String
     let port: Int
     let allowsLAN: Bool
-    /// 引擎 / 隧道此刻是否在跑——决定保存成功之后那句话。
-    let isLive: Bool
     /// 本端另有别用、不能被抢走的端口。macOS 是 sing-box 控制端口 29090；
     /// iOS 的隧道没有这种端口，传 nil。
     var reservedPort: Int?
@@ -34,7 +32,6 @@ struct PendingLocalInboundCard: View {
     @State private var portField = ""
     @State private var saving = false
     @State private var errorMessage: String?
-    @State private var saved = false
 
     var body: some View {
         PendingSectionCard("端口") {
@@ -62,15 +59,12 @@ struct PendingLocalInboundCard: View {
                 .foregroundStyle(PendingNetTheme.Palette.ink)
                 .disabled(saving)
 
+                // 存成功不报喜：输入框里就是刚存下的那个端口，它自己是回执。
+                // 只有失败才说话。
                 if let errorMessage {
                     Text(errorMessage)
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else if saved {
-                    Text(isLive ? "已改好，引擎已经按新设置重开了。" : "已改好，下次连接生效。")
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.success)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -101,7 +95,6 @@ struct PendingLocalInboundCard: View {
 
     /// 校验 → 交给调用方落地。四种不合格分别说清楚，绝不假装保存成功。
     private func commit(allowLAN: Bool? = nil) {
-        saved = false
         let nextLAN = allowLAN ?? allowsLAN
         let port: Int
         do {
@@ -123,7 +116,6 @@ struct PendingLocalInboundCard: View {
             let failure = await save(port, nextLAN)
             saving = false
             errorMessage = failure
-            saved = failure == nil
             // 成功就把输入框对齐到刚存下的那个端口；失败**不动**它——调用方
             // 已经把设置退回原值了，此刻把用户刚敲的数字也抹掉，他连改错了
             // 什么都看不见。（不能写 `String(self.port)`：这个 View 实例的
@@ -160,7 +152,6 @@ struct PendingRuleSetCard: View {
     let refresh: () async -> String?
 
     @State private var refreshing = false
-    @State private var message: String?
     @State private var errorMessage: String?
 
     private var isReady: Bool { !items.isEmpty && items.allSatisfy(\.ready) }
@@ -169,15 +160,11 @@ struct PendingRuleSetCard: View {
         PendingSectionCard("规则集") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("白名单 / 黑名单所需的 geoip / geosite 数据")
-                        .font(PendingNetTheme.Fonts.body)
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 10)
                     PendingStatusPill(
                         text: isReady ? "已就绪" : "未下载",
                         kind: isReady ? .success : .neutral
                     )
+                    Spacer(minLength: 0)
                 }
 
                 ForEach(items) { item in
@@ -201,12 +188,12 @@ struct PendingRuleSetCard: View {
                 Button {
                     Task {
                         refreshing = true
-                        message = nil
                         errorMessage = nil
                         let failure = await refresh()
                         refreshing = false
+                        // 下好了不报喜：上面每一份的「已就绪 / 缺失」和那颗
+                        // 状态药丸自己会翻，只有失败才说话。
                         errorMessage = failure
-                        message = failure == nil ? "规则集已更新" : nil
                     }
                 } label: {
                     if refreshing {
@@ -221,12 +208,6 @@ struct PendingRuleSetCard: View {
                 .buttonStyle(PendingQuietButtonStyle())
                 .disabled(refreshing)
 
-                if let message {
-                    Text(message)
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.success)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 if let errorMessage {
                     Text(errorMessage)
                         .font(PendingNetTheme.Fonts.caption)

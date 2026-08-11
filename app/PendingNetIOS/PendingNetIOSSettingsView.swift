@@ -20,7 +20,6 @@ struct PendingNetIOSSettingsView: View {
                         listenAddress: controller.tunnel.localInbound.listenAddress,
                         port: controller.tunnel.localInbound.port,
                         allowsLAN: controller.tunnel.localInbound.allowsLAN,
-                        isLive: controller.tunnel.isTunnelLive,
                         // 隧道里没有 clash_api，控制通道走 App Group 里的 unix
                         // socket，没有哪个端口需要被保留。
                         reservedPort: nil,

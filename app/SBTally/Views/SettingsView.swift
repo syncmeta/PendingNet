@@ -16,7 +16,6 @@ struct SettingsView: View {
                     listenAddress: engine.localListenAddress,
                     port: engine.localProxyPort,
                     allowsLAN: engine.allowsLAN,
-                    isLive: engine.running,
                     reservedPort: PendingNetUserEngine.controlPort,
                     save: { port, allowLAN in
                         await engine.setLocalInbound(port: port, allowLAN: allowLAN)
