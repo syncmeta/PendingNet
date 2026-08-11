@@ -41,7 +41,9 @@ enum PendingNetRoutingWorkflow {
             return
         }
         guard engine.running else {
-            state.modeNote = mode == "Global" ? nil : "已记住，连接后生效。"
+            // 没连接时选路由不是异常：选择已经记住，连上就按它走，
+            // 所以这里不留回执——点亮的那颗药丸自己就是回执。
+            state.modeNote = nil
             return
         }
         if listModes.contains(mode), !engine.listModeAvailable(mode) {
