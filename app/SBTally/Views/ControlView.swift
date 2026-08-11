@@ -196,9 +196,7 @@ struct ControlView: View {
             HStack {
                 Spacer()
                 if !vpsPairing.servers.isEmpty {
-                    // 名字得说清它在测什么：以前那个「测试全部」谁也不知道
-                    // 测的是哪一项。
-                    Button("测每台延迟") { testAll() }
+                    Button("测延迟") { testAll() }
                         .buttonStyle(PendingQuietButtonStyle(
                             fill: PendingNetTheme.Palette.surface
                         ))
@@ -274,7 +272,7 @@ struct ControlView: View {
                         Text("正在测延迟…")
                     }
                 } else {
-                    Text("测这台的延迟")
+                    Text("测延迟")
                 }
             }
             .buttonStyle(PendingQuietButtonStyle())

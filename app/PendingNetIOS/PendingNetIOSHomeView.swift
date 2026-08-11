@@ -255,8 +255,7 @@ struct PendingNetIOSHomeView: View {
             HStack {
                 Spacer()
                 if !controller.servers.isEmpty {
-                    // 名字要说清它在测什么：逐台测一遍延迟，不是「测速」。
-                    Button("测每台延迟") {
+                    Button("测延迟") {
                         Task { await latency.measureAll(controller.servers) }
                     }
                     .buttonStyle(PendingQuietButtonStyle(
@@ -426,7 +425,7 @@ struct PendingNetServerDetailSheet: View {
                                 Text("正在测延迟…")
                             }
                         } else {
-                            Text("测这台的延迟")
+                            Text("测延迟")
                         }
                     }
                     .buttonStyle(PendingQuietButtonStyle(
