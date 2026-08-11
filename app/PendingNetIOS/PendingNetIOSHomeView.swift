@@ -298,13 +298,6 @@ struct PendingNetIOSHomeView: View {
             } onShowDetails: { serverID in
                 detailServerID = serverID
             }
-
-            if !controller.servers.isEmpty {
-                Text("延迟是本机到这台 VPS 代理入口的一次 TCP 握手往返时间，越小越好；直连测量，不经隧道。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
     }
 

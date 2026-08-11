@@ -82,7 +82,9 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
     case failed(String)
 
     /// VPS 列表那一行右边显示的东西。测量中返回 nil——那时候该显示转圈。
-    /// 只给数字，不带「延迟」二字：那一列是什么，列表下面已经写清楚了。
+    /// 只给数字，不带「延迟」二字，列表下面也不再挂一句解释：按钮就叫
+    /// 「测延迟」，这一列是什么不用再说第二遍。要知道测的是哪个端点，
+    /// 进「详情」。
     public var rowText: String? {
         switch self {
         case .measuring: nil
