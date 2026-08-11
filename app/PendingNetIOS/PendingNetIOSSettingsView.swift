@@ -44,14 +44,7 @@ struct PendingNetIOSSettingsView: View {
                             }
                         }
                     )
-                    PendingUpdateCard(version: Self.versionText) {
-                        EmptyView()
-                    } extra: {
-                        Text("iPhone 版由 TestFlight / App Store 更新，App 自己不检查。")
-                            .font(PendingNetTheme.Fonts.caption)
-                            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    PendingUpdateCard(version: Self.versionText)
                 }
                 .padding(PendingNetTheme.Metrics.gutter)
             }

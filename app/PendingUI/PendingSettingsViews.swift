@@ -62,11 +62,6 @@ struct PendingLocalInboundCard: View {
                 .foregroundStyle(PendingNetTheme.Palette.ink)
                 .disabled(saving)
 
-                Text("打开后同一个网络里的设备都能通过这台机器上网，公共 Wi-Fi 别开。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 if let errorMessage {
                     Text(errorMessage)
                         .font(PendingNetTheme.Fonts.caption)
@@ -185,11 +180,6 @@ struct PendingRuleSetCard: View {
                     )
                 }
 
-                Text("「白名单」靠它判断哪些流量直连，「黑名单」靠它判断哪些流量走代理。没有的话切到这两档会自动降级成全局。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline) {
                         Text(item.title)
@@ -251,9 +241,8 @@ struct PendingRuleSetCard: View {
 // MARK: - 更新
 
 /// 更新卡。版本行两端相同；`trailing` 与 `extra` 留给平台专属的东西——
-/// macOS 放 Sparkle 的「检查更新…」和两个自动更新开关，iOS 放一句「更新从
-/// App Store / TestFlight 来」。iOS 上**不给**一个点了没反应的检查按钮：
-/// 那种假控件比没有更糟。
+/// macOS 放 Sparkle 的「检查更新…」和两个自动更新开关，iOS 两处都空着。
+/// iOS 上**不给**一个点了没反应的检查按钮：那种假控件比没有更糟。
 struct PendingUpdateCard<Trailing: View, Extra: View>: View {
     let version: String
     @ViewBuilder let trailing: Trailing
