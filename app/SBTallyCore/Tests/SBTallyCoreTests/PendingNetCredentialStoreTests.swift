@@ -158,6 +158,64 @@ final class PendingNetCredentialStoreTests: XCTestCase {
         XCTAssertEqual(backend.items[syncedKey(backend, "vps1")], Data("new".utf8))
     }
 
+    // MARK: - 主动搬迁（启动时跑，不等用户先去点某台 VPS）
+
+    /// 躺在老位置上的令牌，不用等谁去读就该被搬到能同步的位置上。
+    func testPromoteMovesALegacyTokenOntoTheSynchronizableLocation() throws {
+        let backend = FakeKeychain()
+        backend.items[legacyKey(backend, "vps1")] = Data("legacy-token".utf8)
+
+        XCTAssertEqual(makeCore(backend).promote(serverID: "vps1"), .synchronizable)
+
+        XCTAssertEqual(backend.items[syncedKey(backend, "vps1")], Data("legacy-token".utf8))
+        XCTAssertNil(backend.items[legacyKey(backend, "vps1")])
+    }
+
+    /// 已经在能同步的位置上：什么都不用做，也不许动任何条目。
+    func testPromoteLeavesAnAlreadySynchronizableTokenAlone() throws {
+        let backend = FakeKeychain()
+        backend.items[syncedKey(backend, "vps1")] = Data("token-1".utf8)
+
+        XCTAssertEqual(makeCore(backend).promote(serverID: "vps1"), .synchronizable)
+
+        XCTAssertTrue(backend.deleted.isEmpty)
+        XCTAssertEqual(backend.items[syncedKey(backend, "vps1")], Data("token-1".utf8))
+    }
+
+    /// 这台设备压根没有这一条——iCloud 把 VPS 记录同步过来了，令牌没跟过来，
+    /// 主人手机上那两台就是这个状态。界面要靠它把行标成「本机未配对」。
+    func testPromoteReportsAMissingCredential() {
+        XCTAssertEqual(makeCore(FakeKeychain()).promote(serverID: "vps1"), .notStored)
+    }
+
+    /// 搬不上去时必须**说出来**，而且原地不动：老条目留着，令牌照常读得到。
+    /// 以前这条路径是 `try?` 悄悄吞掉的。
+    func testPromoteReportsWhenTheTokenCannotLeaveThisDevice() throws {
+        let backend = FakeKeychain()
+        backend.items[legacyKey(backend, "vps1")] = Data("legacy-token".utf8)
+        backend.refused = { $0.synchronizable }
+
+        XCTAssertEqual(
+            makeCore(backend).promote(serverID: "vps1"),
+            .localOnly(errSecMissingEntitlement)
+        )
+
+        XCTAssertEqual(backend.items[legacyKey(backend, "vps1")], Data("legacy-token".utf8))
+        XCTAssertEqual(try makeCore(backend).load(serverID: "vps1"), "legacy-token")
+    }
+
+    /// 钥匙串整个读不了 ≠ 没有令牌。报成 `notStored` 会让界面把一台好好的 VPS
+    /// 标成「本机未配对」，把用户支去做一次白费的重新配对。
+    func testPromoteDistinguishesABrokenKeychainFromAMissingCredential() {
+        let backend = FakeKeychain()
+        backend.refused = { _ in true }
+
+        XCTAssertEqual(
+            makeCore(backend).promote(serverID: "vps1"),
+            .unreadable(errSecMissingEntitlement)
+        )
+    }
+
     func testSaveThrowsOnlyWhenEveryLocationIsRefused() {
         let backend = FakeKeychain()
         backend.refused = { _ in true }

@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import os
 
 /// 设备令牌的存放位置。
 ///
@@ -44,6 +45,21 @@ public struct PendingNetKeychainLocation: Equatable, Sendable {
         guard let accessGroup else { return true }
         return accessGroup == other.accessGroup
     }
+}
+
+/// 一台 VPS 的令牌在这台设备上的处境。
+public enum PendingNetCredentialPromotion: Equatable, Sendable {
+    /// 这台设备根本没有这一台的令牌。iCloud 只同步 VPS 记录，令牌走钥匙串，
+    /// 两条链是分开的——记录到了、令牌没到，这一条就是这个状态。
+    case notStored
+    /// 令牌在能经 iCloud 钥匙串同步的位置上（本来就在，或者刚被搬上去）。
+    case synchronizable
+    /// 令牌在，但只能留在本机：这台设备用得了，别的设备看不到。
+    /// 带上钥匙串状态码（`nil` = 没报错，纯粹是这个构建够不着同步位）。
+    case localOnly(OSStatus?)
+    /// 钥匙串读不了，说不准。**不等于没有令牌**——照这个结论去要求用户重新
+    /// 配对，会白丢一次好好的配对。
+    case unreadable(OSStatus?)
 }
 
 /// SecItem 的注入点。真机走 `SecItemKeychainBackend`，单测走内存假实现——
@@ -96,10 +112,16 @@ public struct PendingNetCredentialStoreCore: Sendable {
     // MARK: - 写
 
     public func save(accessToken: String, serverID: String) throws {
-        guard let best = try write(accessToken: accessToken, serverID: serverID) else {
-            return
-        }
-        clearLocations(worseThan: best, serverID: serverID)
+        let outcome = try write(accessToken: accessToken, serverID: serverID)
+        clearLocations(worseThan: outcome.index, serverID: serverID)
+    }
+
+    /// 令牌最终落在哪一档，以及**为什么没能更靠前**。
+    private struct WriteOutcome {
+        var index: Int
+        /// 挡在前面那一档回的状态码。`nil` = 没有更好的一档被拒，写进的就是
+        /// 理论上最好的位置。搬不上同步位时，用户能看见的原因就是它。
+        var blockedBy: OSStatus?
     }
 
     /// 把更差位置上的旧条目清掉，免得读的时候被旧值挡住。
@@ -113,13 +135,17 @@ public struct PendingNetCredentialStoreCore: Sendable {
         }
     }
 
-    /// 返回写成功的位置在 `locations` 里的下标；全都写不进去就抛错。
-    private func write(accessToken: String, serverID: String) throws -> Int? {
+    /// 写进能用的最好位置；全都写不进去就抛错。
+    private func write(accessToken: String, serverID: String) throws -> WriteOutcome {
         let tokenData = Data(accessToken.utf8)
         var lastStatus: OSStatus = errSecSuccess
+        var firstRefusal: OSStatus?
         for (index, location) in locations.enumerated() {
             let status = write(tokenData, serverID: serverID, to: location)
-            if status == errSecSuccess { return index }
+            if status == errSecSuccess {
+                return WriteOutcome(index: index, blockedBy: firstRefusal)
+            }
+            if firstRefusal == nil { firstRefusal = status }
             lastStatus = status
         }
         throw PendingNetPairingError.keychain(lastStatus)
@@ -142,6 +168,15 @@ public struct PendingNetCredentialStoreCore: Sendable {
     // MARK: - 读（顺带迁移）
 
     public func load(serverID: String) throws -> String? {
+        guard let found = try locate(serverID: serverID) else { return nil }
+        if found.index > 0 {
+            migrate(token: found.token, serverID: serverID, foundAt: found.index)
+        }
+        return found.token
+    }
+
+    /// 令牌在哪一档、内容是什么。只读，不迁移。
+    private func locate(serverID: String) throws -> (index: Int, token: String)? {
         var missingEntitlementFailure: OSStatus?
         var hardFailure: OSStatus?
         var foundAccessibleEmptyLocation = false
@@ -164,8 +199,7 @@ public struct PendingNetCredentialStoreCore: Sendable {
                 }
                 continue
             }
-            if index > 0 { migrate(token: token, serverID: serverID, foundAt: index) }
-            return token
+            return (index, token)
         }
         if let hardFailure { throw PendingNetPairingError.keychain(hardFailure) }
         // A development build commonly cannot query the synchronizable slots
@@ -179,15 +213,52 @@ public struct PendingNetCredentialStoreCore: Sendable {
         return nil
     }
 
+    // MARK: - 搬迁（启动时主动跑一次，不等到读）
+
+    /// 把这一台 VPS 的令牌搬到当前能用的最好位置，并说清结果。
+    ///
+    /// 和 `load` 顺带做的那次迁移是同一件事，区别在于**主动**：迁移只在有人读
+    /// 令牌时才发生，而读只发生在用户点某台 VPS 的时候——0.3.21 那批卡在老位置
+    /// 上的令牌因此可以一直卡着，直到用户在这台设备上主动去点一下才被搬。
+    /// 启动时跑一遍，同步这件事才不用等用户先做点什么。
+    public func promote(serverID: String) -> PendingNetCredentialPromotion {
+        let found: (index: Int, token: String)?
+        do {
+            found = try locate(serverID: serverID)
+        } catch {
+            return .unreadable(status(of: error))
+        }
+        guard let found else { return .notStored }
+        if locations[found.index].synchronizable { return .synchronizable }
+
+        // 在够不着 iCloud 的那一档上，试着往上搬。
+        do {
+            let outcome = try write(accessToken: found.token, serverID: serverID)
+            clearLocations(worseThan: outcome.index, serverID: serverID)
+            return locations[outcome.index].synchronizable
+                ? .synchronizable
+                : .localOnly(outcome.blockedBy)
+        } catch {
+            // 无损：写不进去就原地不动，老条目照旧留着，令牌照常读得到。
+            return .localOnly(status(of: error))
+        }
+    }
+
+    private func status(of error: Error) -> OSStatus? {
+        guard case .keychain(let status)? = error as? PendingNetPairingError else { return nil }
+        return status
+    }
+
     /// 把在 `foundAt` 找到的老条目搬到当前能用的最好位置。
     ///
     /// 无损是硬要求：写不进去（没 entitlement 的开发构建就是这样）就原地不动，
     /// 老条目照旧留着，调用方拿到的令牌不受影响。
     private func migrate(token: String, serverID: String, foundAt index: Int) {
-        guard let best = try? write(accessToken: token, serverID: serverID), best < index else {
+        guard let outcome = try? write(accessToken: token, serverID: serverID),
+              outcome.index < index else {
             return
         }
-        clearLocations(worseThan: best, serverID: serverID)
+        clearLocations(worseThan: outcome.index, serverID: serverID)
     }
 
     // MARK: -
@@ -245,5 +316,45 @@ public enum PendingNetCredentialStore {
 
     public static func load(serverID: String) throws -> String? {
         try core.load(serverID: serverID)
+    }
+
+    private static let log = Logger(
+        subsystem: "com.pendingname.pendingnet",
+        category: "credential-store"
+    )
+
+    /// 启动时跑一遍：把还躺在老位置上的令牌搬到能经 iCloud 同步的位置，
+    /// 并回报每一台的处境（界面拿它标出「本机未配对」的那几行）。
+    ///
+    /// **搬不动要能看见。** 以前迁移是 `try?` 悄悄吞掉的：写不进同步位就原地
+    /// 不动，谁也不知道，用户只看到另一台设备上的 VPS 全是死的却查不出原因。
+    /// 现在每一条非正常结果都落一行日志（`log stream --predicate
+    /// 'subsystem == "com.pendingname.pendingnet"'` 看得到），本机没有令牌的那
+    /// 几台还会由界面直接标出来。
+    @discardableResult
+    public static func promoteAll(serverIDs: [String]) -> [String: PendingNetCredentialPromotion] {
+        var results: [String: PendingNetCredentialPromotion] = [:]
+        for serverID in serverIDs {
+            let outcome = core.promote(serverID: serverID)
+            results[serverID] = outcome
+            switch outcome {
+            case .synchronizable:
+                break
+            case .notStored:
+                log.notice("\(serverID, privacy: .public)：本机没有这一台的访问凭据，需要导入 .pdn 配对")
+            case .localOnly(let status):
+                log.error("""
+                    \(serverID, privacy: .public)：访问凭据只能留在本机，搬不上 iCloud 钥匙串\
+                    （Keychain \(status.map(String.init) ?? "无错误码", privacy: .public)）——\
+                    这台设备用得了，别的设备看不到
+                    """)
+            case .unreadable(let status):
+                log.error("""
+                    \(serverID, privacy: .public)：钥匙串读不了，说不准有没有凭据\
+                    （Keychain \(status.map(String.init) ?? "无错误码", privacy: .public)）
+                    """)
+            }
+        }
+        return results
     }
 }
