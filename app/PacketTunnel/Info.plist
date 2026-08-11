@@ -27,5 +27,7 @@
 		<key>NSExtensionPrincipalClass</key>
 		<string>$(PRODUCT_MODULE_NAME).PacketTunnelProvider</string>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。</string>
 </dict>
 </plist>

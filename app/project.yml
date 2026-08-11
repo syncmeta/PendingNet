@@ -30,6 +30,10 @@ targets:
         CFBundleDisplayName: PendingNet Tunnel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 真正监听 0.0.0.0 的是扩展这个进程（本机入站跑在内核这一侧），
+        # 而 Info.plist 的用途说明是按 bundle 走的，主 App 那句盖不到它。
+        # 两边都写，缘由见主 App target 下的同名键。
+        NSLocalNetworkUsageDescription: 打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
@@ -84,6 +88,11 @@ targets:
         # 构建要在 ASC 网页上答一次出口合规问卷；拿到 ERN 之后可以在这里补
         # ITSEncryptionExportComplianceCode，问卷就不再弹。
         ITSAppUsesNonExemptEncryption: true
+        # 设置页那个「允许局域网访问」开关一打开，本机混合入站就从 127.0.0.1
+        # 换成 0.0.0.0，给同网段的电脑 / 电视当代理。iOS 14 起这属于「本地网络」
+        # 隐私范畴：没有这句话系统连授权弹窗都不弹，功能就是打开了也不通，
+        # 而且不报错。审核那边也会问这个功能凭什么要本地网络权限。
+        NSLocalNetworkUsageDescription: 打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor
@@ -131,6 +140,12 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"
         TARGETED_DEVICE_FAMILY: "1,2"
+        # 方向要显式写出来。不写的话运行时行为不变（系统默认就是这几个），
+        # 但构建时 validationUtility 会警告「支持 iPad 就得支持全部方向」，
+        # 而这条在提交时会升级成退回。写的就是 Xcode 模板的那一套默认值，
+        # 所以对 App 的实际表现是零改动。
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
