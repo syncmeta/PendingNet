@@ -13,7 +13,7 @@ enum PendingNetCommandError: LocalizedError, Equatable {
         switch self {
         case .setup(let reason): "无法接入隧道控制通道：\(reason)"
         case .unavailable: "无法创建隧道控制通道"
-        case .notConnected: "隧道未连接，无法切换协议或测速"
+        case .notConnected: "隧道未连接，无法切换协议"
         case .timedOut: "隧道控制通道无响应，请稍后重试"
         case .reloadRejected(let reason): "扩展拒绝了新配置：\(reason)"
         }
@@ -120,7 +120,7 @@ final class PendingNetCommandClient: NSObject {
     /// 不是回调），必须离开主线程，否则连不上扩展时会卡住 UI。
     ///
     /// 底层调用**不可取消**，`withCheckedThrowingContinuation` 也不参与
-    /// 任务取消：真挂住了就再也不会回来，调用方的「切换中/测速中」标志会
+    /// 任务取消：真挂住了就再也不会回来，调用方的「切换中」标志会
     /// 永远留着。所以这里自己设一个超时——超时只代表「不再等它」，后台
     /// 线程仍会自己跑完，`ResumeGate` 保证 continuation 只被 resume 一次。
     private static func perform(
