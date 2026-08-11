@@ -76,6 +76,14 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 出口合规声明。App Store Connect 收到构建后必须知道这个答案，缺了它
+        # 每个构建都会挂在「缺少合规信息」上，连内部测试员都分发不出去。
+        # 这里写 true 是**如实**申报：本 App 内嵌 sing-box(Libbox)，自己实现了
+        # shadowsocks / VMess / TLS 这些加密协议，不属于「只用系统 HTTPS」那类
+        # 豁免。写 false 省事但是假申报。后果见 docs/ios-testflight.md：每个新
+        # 构建要在 ASC 网页上答一次出口合规问卷；拿到 ERN 之后可以在这里补
+        # ITSEncryptionExportComplianceCode，问卷就不再弹。
+        ITSAppUsesNonExemptEncryption: true
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor

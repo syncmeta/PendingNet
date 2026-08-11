@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  隐私清单。2024 年 5 月起 App Store 强制要求：用到「必须说明理由的 API」
+  却不在这里声明，上传后会收到 ITMS-91053 退信。
+
+  这里声明的三类不是拍脑袋填的，是按实际链进去的符号来的：
+    UserDefaults  —— PendingNetIOSController / PendingNetTunnelController /
+                     SBTallyCore 都在读写 UserDefaults.standard。
+    文件时间戳     —— Libbox.xcframework（sing-box 的 Go 静态库）引用了
+                     stat / fstat / lstat，用来读 App 容器与共享组容器里的
+                     配置和缓存文件。（`nm -u` 可复核。）
+    系统启动时间   —— 同一个库引用了 sysctl / sysctlbyname，Go 运行时靠它
+                     算单调时钟。
+
+  真上传之后如果还收到 ITMS-91053，退信里会点名缺哪一类，照着往
+  NSPrivacyAccessedAPITypes 里补即可。
+
+  不采集任何数据：这个 App 不接统计、不接广告，配对信息只存在本机与用户
+  自己的 iCloud 键值存储里，所以 NSPrivacyCollectedDataTypes 是空的。
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
