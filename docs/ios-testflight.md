@@ -81,16 +81,38 @@ macOS 那条发版链（Developer ID + 公证 + Sparkle，见 `docs/macos-update
 TestFlight 页面 → 找到刚上传的构建 → 「管理」/「提供出口合规信息」：
 
 - 「你的 App 是否使用加密？」→ **是**
-  （`ITSAppUsesNonExemptEncryption` 已经在 `app/project.yml` 里写死成 `true`。
-  这是如实申报：本 App 内嵌 sing-box，自己实现了 shadowsocks / VMess / TLS 这些
-  加密协议，不属于「只用系统 HTTPS」那类豁免。写 `false` 省事，但那是假申报。）
+  （如实答：本 App 内嵌 sing-box，自己实现了 shadowsocks / VMess / TLS 这些加密
+  协议，不属于「只用系统 HTTPS」那类豁免。答「否」省事，但那是假申报。）
 - 后面几问按实际情况答。这类「大众市场加密软件」通常走 **5D992.c 自分类**，需要
-  每年向美国 BIS 报一次自分类清单；拿到 ERN 编号之后，可以把它作为
-  `ITSEncryptionExportComplianceCode` 写进 `project.yml` 的 `info.properties`，
-  以后就不再弹问卷了。
+  每年向美国 BIS 报一次自分类清单。
 - 法国另有一份加密声明，App Store Connect 会单独问。
 
 > 这一问涉及法律申报，不是技术选择。真要改成别的答法，得主人自己定。
+
+#### 为什么 `ITSAppUsesNonExemptEncryption` 不写在 `project.yml` 里
+
+按常理，把答案写进 Info.plist 就不用每个构建答一次。三种写法都试过了，**只有
+「不写」能过**：
+
+| 写法 | 结果 |
+| --- | --- |
+| `false` | 假申报，不能用 |
+| `true`（不带 ERN 编号） | **上传前的服务端校验直接拒收**：`Invalid Export Compliance Code ... key value [] ...（90592）` |
+| 不写 | 构建传得上去，之后在 TestFlight 页面按构建答问卷 |
+
+苹果的逻辑是：既然申报了用非豁免加密，就得同时给出 `ITSEncryptionExportComplianceCode`
+（ERN 编号）。这个账号下一份加密申报都还没有（`/v1/appEncryptionDeclarations`
+查出来是空的），填不出这个码，所以 `true` 是死路。
+
+等出口合规手续办完拿到 ERN，把这两行一起加进 `PendingNetIOS` 的 `info.properties`，
+问卷就不再弹：
+
+```yaml
+ITSAppUsesNonExemptEncryption: true
+ITSEncryptionExportComplianceCode: <ERN 编号>
+```
+
+只加第一行不加第二行 = 回到 90592，构建根本传不上去。脚本里有一道断言专门拦这个。
 
 ### 第 5 步：拉内部测试群组 · **第一次要做**
 
@@ -163,7 +185,7 @@ App Store Connect 查这个 build 号是不是已经传过 —— 重号苹果�
 - `project.yml` 里两处版本号漂移
 - 这个 build 号在 App Store Connect 上已经用过
 - 产物版本号和仓库里的对不上（主 App 和扩展都查）
-- 缺 `ITSAppUsesNonExemptEncryption`
+- 申报了 `ITSAppUsesNonExemptEncryption: true` 却没给 ERN 编号（苹果以 90592 拒收）
 - 主 App 或扩展缺 `PrivacyInfo.xcprivacy`
 - `Assets.car` 里没有 1024×1024 的商店图标
 - 重签后不是 Apple Distribution 签的 / 没有描述文件

@@ -80,14 +80,24 @@ targets:
       properties:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        # 出口合规声明。App Store Connect 收到构建后必须知道这个答案，缺了它
-        # 每个构建都会挂在「缺少合规信息」上，连内部测试员都分发不出去。
-        # 这里写 true 是**如实**申报：本 App 内嵌 sing-box(Libbox)，自己实现了
-        # shadowsocks / VMess / TLS 这些加密协议，不属于「只用系统 HTTPS」那类
-        # 豁免。写 false 省事但是假申报。后果见 docs/ios-testflight.md：每个新
-        # 构建要在 ASC 网页上答一次出口合规问卷；拿到 ERN 之后可以在这里补
-        # ITSEncryptionExportComplianceCode，问卷就不再弹。
-        ITSAppUsesNonExemptEncryption: true
+        # 出口合规。这里**故意什么都不写** —— 三种写法都试过，只有「不写」能过：
+        #
+        #   false —— 假申报。本 App 内嵌 sing-box(Libbox)，自己实现了 shadowsocks /
+        #            VMess / TLS 这些加密协议，不属于「只用系统 HTTPS」那类豁免。
+        #   true  —— 上传前的服务端校验直接拒收：
+        #            「Invalid Export Compliance Code ... key value [] ... (90592)」。
+        #            苹果的意思是：既然申报了用非豁免加密，就得同时给出
+        #            ITSEncryptionExportComplianceCode（ERN 编号）。这个账号下
+        #            一份加密申报都还没有（/v1/appEncryptionDeclarations 是空的），
+        #            填不出这个码，于是 true 就是死路。
+        #   不写   —— 构建能传上去，然后在 App Store Connect 的 TestFlight 页面
+        #            按构建答一次出口合规问卷。这是现在唯一走得通的。
+        #
+        # 等主人办完出口合规手续拿到 ERN，再把下面两行一起加回来，问卷就不再弹：
+        #   ITSAppUsesNonExemptEncryption: true
+        #   ITSEncryptionExportComplianceCode: <ERN 编号>
+        # 只加第一行不加第二行 = 回到上面那个 90592，构建根本传不上去。
+        # 详见 docs/ios-testflight.md。
         # 设置页那个「允许局域网访问」开关一打开，本机混合入站就从 127.0.0.1
         # 换成 0.0.0.0，给同网段的电脑 / 电视当代理。iOS 14 起这属于「本地网络」
         # 隐私范畴：没有这句话系统连授权弹窗都不弹，功能就是打开了也不通，

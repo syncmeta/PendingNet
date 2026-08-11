@@ -125,13 +125,15 @@ for b in "$app" "$appex"; do
   fi
 done
 
-# 出口合规声明。缺了它构建能传上去，但每个构建都会挂在「缺少合规信息」上，
-# 连内部测试员都收不到 —— 全程没有一条报错，只有 TestFlight 里一个黄色叹号。
+# 出口合规。规则不是「这个键必须在」，而是「申报了 true 就必须同时给出 ERN 编号」——
+# 只写 true 不给码，苹果在上传前的服务端校验直接以 90592 拒收，而且报错文字
+# （「key value [] 与文档不匹配」）指不到真正的原因上。键不写是合法状态：构建
+# 传得上去，之后在 TestFlight 页面按构建答一次问卷。缘由见 app/project.yml。
 enc=$(plist "$app" :ITSAppUsesNonExemptEncryption)
-case "$enc" in
-  true|false) ;;
-  *) echo "产物 Info.plist 缺 ITSAppUsesNonExemptEncryption（拿到 '$enc'）" >&2; exit 2 ;;
-esac
+if [ "$enc" = "true" ]; then
+  plist "$app" :ITSEncryptionExportComplianceCode >/dev/null \
+    || { echo "Info.plist 里 ITSAppUsesNonExemptEncryption=true 却没有 ITSEncryptionExportComplianceCode —— 苹果会以 90592 拒收。要么补上 ERN 编号，要么把这个键整个去掉" >&2; exit 2; }
+fi
 
 # 隐私清单。2024-05 起是硬要求，缺了先收 ITMS-91053 退信。主 App 和扩展是两个
 # 独立 bundle，各要一份，主 App 那份盖不到扩展。
