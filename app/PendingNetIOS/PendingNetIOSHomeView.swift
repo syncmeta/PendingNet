@@ -14,10 +14,12 @@ struct PendingNetIOSHomeView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingImporter = false
     @State private var showingLog = false
-    @State private var testingOutbounds = false
     @State private var switchingOutbound: String?
     @State private var switchingRouteMode = false
     @State private var detailServerID: String?
+    /// 每台 VPS 一个延迟数，和 macOS 同一套语义、同一份实现
+    /// （见 `PendingNetLatencyTarget`）。
+    @StateObject private var latency = PendingNetLatencyTester()
 
     var body: some View {
         NavigationStack {
@@ -61,7 +63,13 @@ struct PendingNetIOSHomeView: View {
             get: { controller.servers.first { $0.serverID == detailServerID } },
             set: { if $0 == nil { detailServerID = nil } }
         )) { server in
-            PendingNetServerDetailSheet(server: server)
+            PendingNetServerDetailSheet(
+                server: server,
+                latency: latency.outcome(for: server.serverID),
+                isMeasuring: latency.isMeasuring(server.serverID)
+            ) {
+                Task { await latency.measure(server) }
+            }
         }
         .task { await controller.refreshNodeProfile() }
         .task { await controller.tunnel.load() }
@@ -76,13 +84,12 @@ struct PendingNetIOSHomeView: View {
         .onChange(of: scenePhase) { _, phase in
             controller.tunnel.setForeground(phase == .active)
         }
-        // 隧道一旦不在位，两个「进行中」标志必须无条件归位。它们是 @State，
-        // 活得比选择器的显示条件长：靠 RPC 自己返回来清是不够的（挂住的
-        // 调用可能永远不返回），那样重连之后每一行都会是灰的、且没有任何
-        // 用户可见的恢复路径。
+        // 隧道一旦不在位，「切换中」标志必须无条件归位。它是 @State，活得比
+        // 选择器的显示条件长：靠 RPC 自己返回来清是不够的（挂住的调用可能
+        // 永远不返回），那样重连之后每一行都会是灰的、且没有任何用户可见的
+        // 恢复路径。
         .onChange(of: controller.tunnel.isTunnelLive) { _, live in
             guard !live else { return }
-            testingOutbounds = false
             switchingOutbound = nil
         }
     }
@@ -249,6 +256,16 @@ struct PendingNetIOSHomeView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Spacer()
+                if !controller.servers.isEmpty {
+                    // 名字要说清它在测什么：逐台测一遍延迟，不是「测速」。
+                    Button("测每台延迟") {
+                        Task { await latency.measureAll(controller.servers) }
+                    }
+                    .buttonStyle(PendingQuietButtonStyle(
+                        fill: PendingNetTheme.Palette.surface
+                    ))
+                    .disabled(latency.busy || controller.working)
+                }
                 Button {
                     showingImporter = true
                 } label: {
@@ -271,7 +288,8 @@ struct PendingNetIOSHomeView: View {
                 items: controller.servers,
                 selectedID: controller.selectedServerID,
                 switchingID: controller.switchingServerID,
-                unpairedIDs: controller.unpairedServerIDs
+                unpairedIDs: controller.unpairedServerIDs,
+                latencies: latency.results
             ) { serverID in
                 guard controller.switchingServerID == nil,
                       !controller.working,
@@ -283,41 +301,33 @@ struct PendingNetIOSHomeView: View {
             } onShowDetails: { serverID in
                 detailServerID = serverID
             }
+
+            if !controller.servers.isEmpty {
+                Text("延迟是本机到这台 VPS 代理入口的一次 TCP 握手往返时间，越小越好；直连测量，不经隧道。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     // MARK: - 协议
 
-    /// 协议手选与测速。只在隧道在位、且控制通道已经推回分组成员时出现——
-    /// 这两个动作都要经 command client 连扩展里的 command server，隧道没起
-    /// 来时无从谈起。切换与测速都不重启隧道。
+    /// 协议手选。只在隧道在位、且控制通道已经推回分组成员时出现——切换要经
+    /// command client 连扩展里的 command server，隧道没起来时无从谈起。
+    /// 切换不重启隧道。
+    ///
+    /// 这里以前还有一个「测速」按钮，按协议给出各自的 urltest 延迟。撤掉了：
+    /// 同一台 VPS 的两个协议差出来的多半是偶然波动，摆成两个数字只会让人
+    /// 以为要照着它挑协议。延迟现在是「一台 VPS 一个数」，在上面的 VPS
+    /// 列表里。内核自己的 urltest 照旧跑，「自动（最快）」还是它在选。
     private var outboundPills: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Spacer()
-                Button {
-                    Task { await runURLTest() }
-                } label: {
-                    HStack(spacing: 6) {
-                        if testingOutbounds {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Image(systemName: "bolt.horizontal")
-                        }
-                        Text(testingOutbounds ? "测速中…" : "测速")
-                    }
-                }
-                .buttonStyle(PendingQuietButtonStyle())
-                .disabled(testingOutbounds)
+        PendingWrapLayout {
+            ForEach(controller.tunnel.outboundMembers, id: \.self) { tag in
+                outboundPill(tag)
             }
-
-            PendingWrapLayout {
-                ForEach(controller.tunnel.outboundMembers, id: \.self) { tag in
-                    outboundPill(tag)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func outboundPill(_ tag: String) -> some View {
@@ -338,32 +348,10 @@ struct PendingNetIOSHomeView: View {
                 }
             }
         } accessory: {
-            // 延迟贴在药丸里，不另起一行：药丸本身就是这一项的全部信息。
             if switching {
                 ProgressView().controlSize(.small)
-            } else if let delay = controller.tunnel.outboundDelays[tag], delay > 0 {
-                Text(verbatim: "\(delay)ms")
-                    .font(PendingNetTheme.Fonts.caption.monospaced())
-                    .foregroundStyle(selected
-                        ? PendingNetTheme.Palette.onAccent.opacity(0.75)
-                        : PendingNetTheme.Palette.inkMuted)
             }
         }
-    }
-
-    private func runURLTest() async {
-        testingOutbounds = true
-        defer { testingOutbounds = false }
-        let before = controller.tunnel.outboundDelays
-        do {
-            try await controller.tunnel.runURLTest()
-        } catch {
-            controller.errorMessage = error.localizedDescription
-            return
-        }
-        // urlTest 只是触发，延迟随下一轮分组推送才回来。转圈要一直转到数字
-        // 真的变了（或等够了），否则用户会看到「测速完成但一个数字没动」。
-        await controller.tunnel.awaitDelayChange(from: before)
     }
 
     /// 成员 tag 形如 `<selectorTag>-<protocolID>`，外加一个 `-mix`（urltest，
@@ -436,12 +424,40 @@ struct PendingNetIOSHomeView: View {
 /// popover，iPhone 上没有 popover 的位置，用半屏 sheet 是 iOS 的惯例。
 struct PendingNetServerDetailSheet: View {
     let server: IOSPairedServer
+    let latency: PendingNetLatencyOutcome?
+    let isMeasuring: Bool
+    let onMeasure: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                PendingVPSDetails(server: server, nameStyle: .labeledRow, spacing: 12)
+                VStack(alignment: .leading, spacing: 16) {
+                    PendingVPSDetails(
+                        server: server,
+                        nameStyle: .labeledRow,
+                        spacing: 12,
+                        latency: latency
+                    )
+
+                    Button {
+                        onMeasure()
+                    } label: {
+                        if isMeasuring {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("正在测延迟…")
+                            }
+                        } else {
+                            Text("测这台的延迟")
+                        }
+                    }
+                    .buttonStyle(PendingQuietButtonStyle(
+                        fill: PendingNetTheme.Palette.surface
+                    ))
+                    .disabled(isMeasuring)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(PendingNetTheme.Metrics.gutter)
             }
             .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())

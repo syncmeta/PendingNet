@@ -32,8 +32,8 @@ enum PendingNetCommandError: LocalizedError, Equatable {
 /// - 订阅：长连接的 `LibboxCommandClient`，每个实例只订阅一种命令
 ///   （`LibboxCommandGroup` 或 `LibboxCommandLog`），由 `Subscription` 决定。
 /// - 动作：`LibboxNewStandaloneCommandClient()` 的一次性调用，
-///   `selectOutbound:outboundTag:error:` 与 `urlTest:error:` 在本版本
-///   libbox 里是同步阻塞的，所以一律放到后台队列执行。
+///   `selectOutbound:outboundTag:error:` 在本版本 libbox 里是同步阻塞的，
+///   所以放到后台队列执行。
 ///
 /// 一个实例同一时刻只维持一条连接，所以「分组」和「日志」要两个实例。
 /// 分组订阅常驻（隧道在位 + App 在前台），日志订阅只在日志页打开时存在——
@@ -41,7 +41,7 @@ enum PendingNetCommandError: LocalizedError, Equatable {
 final class PendingNetCommandClient: NSObject {
     /// 一个实例订阅什么。
     enum Subscription: Equatable {
-        /// 某个 selector 的分组状态（当前选中项 + 各成员延迟）。
+        /// 某个 selector 的分组状态（成员名单 + 当前选中项）。
         case groups(tag: String)
         /// sing-box 内核日志。
         ///
@@ -59,10 +59,13 @@ final class PendingNetCommandClient: NSObject {
     }
 
     /// selector 的一次快照。成员顺序按内核给出的顺序，不重排。
+    ///
+    /// 刻意**不**带各成员的 urltest 延迟：那是按协议出数，和「一台 VPS 一个
+    /// 延迟」的口径打架（见 `PendingNetLatencyTarget`）。内核自己的 urltest
+    /// 照旧跑，只是不再端到用户面前。
     struct Snapshot: Equatable {
         var members: [String] = []
         var selected: String?
-        var delays: [String: Int] = [:]
     }
 
     // MARK: - 进程级 libbox 初始化
@@ -111,11 +114,6 @@ final class PendingNetCommandClient: NSObject {
     /// 切换 selector 的当前出站。
     static func selectOutbound(groupTag: String, outboundTag: String) async throws {
         try await perform { try $0.selectOutbound(groupTag, outboundTag: outboundTag) }
-    }
-
-    /// 触发一次分组测速。内核测完之后延迟会经分组推送回到 `Snapshot`。
-    static func urlTest(groupTag: String) async throws {
-        try await perform { try $0.urlTest(groupTag) }
     }
 
     /// 本版本 libbox 的这两个调用是同步阻塞的（`BOOL ... error:` 形态，
@@ -388,8 +386,6 @@ final class PendingNetCommandClient: NSObject {
                     while items.hasNext() {
                         guard let item = items.next() else { continue }
                         found.members.append(item.tag)
-                        // 0 表示「还没测过」，交给 UI 区分显示。
-                        found.delays[item.tag] = Int(item.urlTestDelay)
                     }
                 }
                 snapshot = found

@@ -232,6 +232,8 @@ final class PendingNetIOSController: ObservableObject {
             // 协议名单落进存档，「详情」在没网的时候也有东西可显示。
             var updated = server
             updated.nodeProtocols = profile.protocols.map(\.displayName)
+            // 代理入口的 TCP 端口跟着记录一起存，延迟才知道该测哪里。
+            updated.adoptProxyEntry(from: profile)
             if updated != server {
                 store.upsert(updated)
             }

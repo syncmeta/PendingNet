@@ -25,8 +25,12 @@ final class PendingNetTunnelController: ObservableObject {
     @Published private(set) var outboundMembers: [String] = []
     /// selector 当前选中的出站。
     @Published private(set) var currentOutbound: String?
-    /// 各成员最近一次 urltest 的延迟（毫秒）。0 表示还没有测速结果。
-    @Published private(set) var outboundDelays: [String: Int] = [:]
+    // 这里以前还有一份「各出站最近一次 urltest 延迟」。那是**按协议**出数，
+    // 同一台 VPS 的 Reality 和 Hysteria2 各给一个数字，差别多半只是偶然波动，
+    // 摆在用户面前只会让人以为要在两者之间做选择。延迟现在是「一台 VPS 一个
+    // 数」，由 `PendingNetLatencyTester` 直接测代理入口的 TCP 握手，在 VPS
+    // 列表上显示。内核自己的 urltest 照旧跑（「自动（最快）」选路要用），
+    // 只是不再端到用户面前当测速结果。
 
     /// `start()` 因为规则集不可用而降级到全局时留下的提示。UI 取用后
     /// 自行清空——降级不是错误，`start()` 不能因此抛出。
@@ -139,7 +143,7 @@ final class PendingNetTunnelController: ObservableObject {
         )
     }
 
-    // MARK: - 协议手选与测速
+    // MARK: - 协议手选
 
     /// 记下当前 VPS 的 selector tag。tag 只取决于 serverID，两侧算出来的
     /// 结果一致，所以 App 不必向扩展查询「隧道里那个 selector 叫什么」。
@@ -172,41 +176,15 @@ final class PendingNetTunnelController: ObservableObject {
         currentOutbound = tag
     }
 
-    /// 触发一次分组测速。结果不在这里返回——内核测完之后，延迟随分组推送
-    /// 落到 `outboundDelays`。
-    func runURLTest() async throws {
-        guard isTunnelLive, let selectorTag else {
-            throw PendingNetCommandError.notConnected
-        }
-        try await PendingNetCommandClient.urlTest(groupTag: selectorTag)
-    }
-
-    /// 等 `outboundDelays` 真的变了，或者等到超时为止。
-    ///
-    /// `urlTest:` 只负责**触发**，测速结果是随下一轮分组推送异步到达的。
-    /// UI 的「测速中」必须盖住这段等待，否则转圈在 RPC 返回的瞬间就停了、
-    /// 数字却还没变，用户只会以为什么都没发生。
-    func awaitDelayChange(
-        from previous: [String: Int],
-        timeout: TimeInterval = 8
-    ) async {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if outboundDelays != previous { return }
-            try? await Task.sleep(nanoseconds: 200 * NSEC_PER_MSEC)
-        }
-    }
-
     private func apply(_ snapshot: PendingNetCommandClient.Snapshot) {
         outboundMembers = snapshot.members
         currentOutbound = snapshot.selected
-        outboundDelays = snapshot.delays
     }
 
     /// 控制通道的生命周期跟随两件事：隧道是否在位，以及 App 是否在前台。
     ///
     /// - 隧道不在位（或还不知道 selector tag）：拆流**并清空**状态。留着
-    ///   上一次的延迟数字会让断开的隧道看上去还连着。
+    ///   上一次的成员名单会让断开的隧道看上去还连着。
     /// - 隧道在位但 App 在后台：只拆流，**不清空**。回到前台一秒内就会重新
     ///   订上，中间保留最后一次快照，免得切回来先闪一下空列表。
     private func syncCommandChannel() {
@@ -214,7 +192,6 @@ final class PendingNetTunnelController: ObservableObject {
             commandClient?.stop()
             outboundMembers = []
             currentOutbound = nil
-            outboundDelays = [:]
             return
         }
         guard isForeground else {
