@@ -8,7 +8,8 @@
     scripts/asc-api.py certs
     scripts/asc-api.py profiles
     scripts/asc-api.py builds
-    scripts/asc-api.py check-build --version 0.3.27 --build 327
+    scripts/asc-api.py check-build --version 0.3.27 --build 327   # 上传前查重号
+    scripts/asc-api.py wait-build  --version 0.3.27 --build 327   # 上传后盯处理状态
 
 凭据(两样都要):
     Key ID     环境变量 PENDINGNET_ASC_KEY_ID，默认 9PS6Y7K4X9
@@ -209,11 +210,15 @@ def _builds(bearer):
         rel = ((b.get("relationships") or {}).get("preReleaseVersion") or {}).get("data") or {}
         rows.append(
             {
+                "id": b["id"],
                 "version": versions.get(rel.get("id"), "?"),
                 "build": b["attributes"].get("version"),
                 "state": b["attributes"].get("processingState"),
                 "expired": b["attributes"].get("expired"),
                 "uploaded": b["attributes"].get("uploadedDate"),
+                # None = 出口合规还没答。答完之前构建分发不出去，而 TestFlight
+                # 上只是一个黄色叹号，没有任何报错。
+                "encryption": b["attributes"].get("usesNonExemptEncryption"),
             }
         )
     return app, rows
@@ -228,17 +233,57 @@ def cmd_builds(args, bearer):
         print("App 记录在（id=%s），但一个构建都还没传上去。" % app["id"])
         return 0
     for r in rows:
-        print(
-            "%-10s (%-6s) %-12s %s%s"
-            % (
-                r["version"],
-                r["build"],
-                r["state"],
-                r["uploaded"],
-                " [已过期]" if r["expired"] else "",
-            )
-        )
+        print("%s  %s" % (_describe(r), r["uploaded"]))
     return 0
+
+
+def _describe(row):
+    bits = "%s (%s) %s" % (row["version"], row["build"], row["state"])
+    if row["encryption"] is None:
+        bits += "，出口合规未答"
+    if row["expired"]:
+        bits += "，已过期"
+    return bits
+
+
+def cmd_wait_build(args, bearer):
+    """盯着刚传上去的构建，直到苹果处理完（或超时）。
+
+    「上传命令成功了」不等于「构建能用」—— 处理阶段还会因为缺键、签名、
+    图标之类被判 INVALID，而那只体现在这里和一封邮件里。
+    """
+    deadline = time.time() + args.timeout
+    seen = None
+    while True:
+        _, rows = _builds(bearer)
+        match = [
+            r
+            for r in rows
+            if str(r["build"]) == str(args.build) and r["version"] == args.version
+        ]
+        if not match:
+            state = "还没出现在 App Store Connect 上（上传后要等一会儿才建索引）"
+        else:
+            row = match[0]
+            state = _describe(row)
+            if row["state"] != "PROCESSING":
+                print(state)
+                if row["state"] == "VALID":
+                    if row["encryption"] is None:
+                        print(
+                            "处理通过，但出口合规还没答 —— 在 TestFlight 页面答完，"
+                            "测试员才收得到（见 docs/ios-testflight.md 第 4 步）。"
+                        )
+                    return 0
+                print("处理没通过，苹果会发一封邮件说明原因。", file=sys.stderr)
+                return 3
+        if state != seen:
+            print(state, flush=True)
+            seen = state
+        if time.time() >= deadline:
+            print("等到超时了，构建还是：%s" % state, file=sys.stderr)
+            return 4
+        time.sleep(args.interval)
 
 
 def cmd_check_build(args, bearer):
@@ -348,6 +393,11 @@ def main():
     cb = sub.add_parser("check-build")
     cb.add_argument("--version", required=True)
     cb.add_argument("--build", required=True)
+    wb = sub.add_parser("wait-build")
+    wb.add_argument("--version", required=True)
+    wb.add_argument("--build", required=True)
+    wb.add_argument("--timeout", type=int, default=2400, help="最多等多少秒，默认 2400")
+    wb.add_argument("--interval", type=int, default=30, help="多久查一次，默认 30 秒")
 
     args = parser.parse_args()
     handler = {
@@ -357,6 +407,7 @@ def main():
         "profiles": cmd_profiles,
         "builds": cmd_builds,
         "check-build": cmd_check_build,
+        "wait-build": cmd_wait_build,
         "preflight": cmd_preflight,
     }[args.cmd]
     return handler(args, token())

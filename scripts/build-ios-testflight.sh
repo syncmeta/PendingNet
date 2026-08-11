@@ -273,7 +273,11 @@ xcrun altool --upload-app -f "$out_ipa" -t ios \
 
 git -C "$root" tag "pendingnet-ios/v$version-$build_number" main 2>/dev/null \
   || echo "tag pendingnet-ios/v$version-$build_number 已存在，沿用"
+
+# 「上传命令成功了」不等于「构建能用」：处理阶段还会因为缺键、签名、图标之类
+# 被判 INVALID，而那只体现在 App Store Connect 和一封邮件里。所以盯到有结论
+# 为止，别把「传完了」当成交付。
 echo
-echo "已上传：$version ($build_number)。"
-echo "苹果那边处理要几分钟到半小时；处理完还要在 App Store Connect 的 TestFlight"
-echo "页面答一次出口合规问卷，构建才会真正发给测试员（见 docs/ios-testflight.md）。"
+echo "==> 盯着苹果那边的处理状态（几分钟到半小时）"
+PENDINGNET_ASC_KEY_ID="$key_id" PENDINGNET_ASC_ISSUER_ID="$issuer" \
+  "$root/scripts/asc-api.py" wait-build --version "$version" --build "$build_number"
