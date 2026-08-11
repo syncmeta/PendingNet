@@ -35,7 +35,7 @@ final class PendingNetTunnelController: ObservableObject {
     // 同一台 VPS 的 Reality 和 Hysteria2 各给一个数字，差别多半只是偶然波动，
     // 摆在用户面前只会让人以为要在两者之间做选择。延迟现在是「一台 VPS 一个
     // 数」，由 `PendingNetLatencyTester` 直接测代理入口的 TCP 握手，在 VPS
-    // 列表上显示。内核自己的 urltest 照旧跑（「自动（最快）」选路要用），
+    // 列表上显示。内核自己的 urltest 照旧跑（「混合」那一档的选路要用），
     // 只是不再端到用户面前当测速结果。
 
     /// `start()` 因为规则集不可用而降级到全局时留下的提示。UI 取用后

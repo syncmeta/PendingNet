@@ -85,6 +85,50 @@ struct PendingRouteModePicker: View {
     }
 }
 
+/// 协议选择。两端一模一样：标题就「协议」两个字，下面是
+/// Reality / Hysteria2 / 混合 三颗药丸，没有解释文字。
+///
+/// 成员名单和顺序都由内核给（见 `PendingNetLocalConfigComposer`），名字统一
+/// 走 `PendingNetOutboundNaming`——「混合」就是原来那个 urltest 自动选路，
+/// 行为没变，只是不再叫「自动（最快）」。
+struct PendingProtocolPicker: View {
+    /// selector 成员 tag，顺序按内核给出的来，不重排。
+    let members: [String]
+    let selectorTag: String?
+    let selected: String?
+    /// 正在切到哪一个（药丸上转圈）。macOS 上没有这个中间态，传 nil。
+    var switchingTag: String? = nil
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("协议")
+                .font(PendingNetTheme.Fonts.bodyEmphasized)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+
+            PendingWrapLayout {
+                ForEach(members, id: \.self) { tag in
+                    PendingPill(
+                        title: PendingNetOutboundNaming.title(
+                            forMemberTag: tag,
+                            selectorTag: selectorTag
+                        ),
+                        selected: tag == selected
+                    ) {
+                        guard tag != selected, switchingTag == nil else { return }
+                        onSelect(tag)
+                    } accessory: {
+                        if tag == switchingTag {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 /// VPS 列表本体：选中标记、地址、切换中状态、点按切换与详情入口都在这里共用。
 struct PendingVPSList: View {
     let items: [PairedVPSRecord]
@@ -193,8 +237,9 @@ struct PendingVPSList: View {
         }
     }
 
-    /// 延迟贴在行右边：测量中转圈，测完就是「延迟 42 ms」，不通就是「不通」
-    /// （原因在地址那行下面）。
+    /// 延迟贴在行右边：测量中转圈，测完就是「42 ms」，不通就是「不通」
+    /// （原因在地址那行下面）。这一列是什么，列表下面那句话已经说了，
+    /// 每行不必再顶一个「延迟」。
     @ViewBuilder
     private func latencyLabel(_ item: PairedVPSRecord) -> some View {
         switch latencies[item.id] {

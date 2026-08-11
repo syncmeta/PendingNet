@@ -32,11 +32,6 @@ struct ControlView: View {
         return state.proxies[tag]
     }
 
-    private func protocolLabel(_ tag: String) -> String {
-        guard let selector = appliedSelectorTag, tag.hasPrefix(selector + "-") else { return tag }
-        return String(tag.dropFirst(selector.count + 1))
-    }
-
     private var connectionStatus: (String, PendingStatusPill.Kind) {
         if engine.takeover != "local" && !engine.helperReady { return ("等待授权", .neutral) }
         return engine.running ? ("已连接", .success) : ("已停止", .neutral)
@@ -138,9 +133,10 @@ struct ControlView: View {
                 .padding(.top, 10)
 
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
-                PendingPillPicker(
-                    options: all.map { .init($0, protocolLabel($0)) },
-                    selection: protoProxy?.now
+                PendingProtocolPicker(
+                    members: all,
+                    selectorTag: selector,
+                    selected: protoProxy?.now
                 ) { name in
                     Task { await state.select(selector: selector, name: name) }
                 }

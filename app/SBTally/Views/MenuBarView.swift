@@ -27,11 +27,6 @@ struct MenuBarView: View {
         return state.proxies[tag]
     }
 
-    private func protocolLabel(_ tag: String) -> String {
-        guard let selector = appliedSelectorTag, tag.hasPrefix(selector + "-") else { return tag }
-        return String(tag.dropFirst(selector.count + 1))
-    }
-
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -132,9 +127,16 @@ struct MenuBarView: View {
                     }
                 }
             }
+            // 菜单栏这一版不带小标题（这里每一排都没有），但名字和主窗口
+            // 走的是同一份 `PendingNetOutboundNaming`。
             if let all = protoProxy?.all, let selector = appliedSelectorTag {
                 PendingPillPicker(
-                    options: all.map { .init($0, protocolLabel($0)) },
+                    options: all.map {
+                        .init($0, PendingNetOutboundNaming.title(
+                            forMemberTag: $0,
+                            selectorTag: selector
+                        ))
+                    },
                     selection: protoProxy?.now
                 ) { name in
                     Task { await state.select(selector: selector, name: name) }

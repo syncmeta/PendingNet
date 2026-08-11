@@ -320,24 +320,17 @@ struct PendingNetIOSHomeView: View {
     /// 这里以前还有一个「测速」按钮，按协议给出各自的 urltest 延迟。撤掉了：
     /// 同一台 VPS 的两个协议差出来的多半是偶然波动，摆成两个数字只会让人
     /// 以为要照着它挑协议。延迟现在是「一台 VPS 一个数」，在上面的 VPS
-    /// 列表里。内核自己的 urltest 照旧跑，「自动（最快）」还是它在选。
+    /// 列表里。内核自己的 urltest 照旧跑，「混合」还是它在选。
+    ///
+    /// 选项名不在这里拼——两端共用 `PendingProtocolPicker`，名字统一走
+    /// `PendingNetOutboundNaming`，Mac 和 iPhone 上才会一字不差。
     private var outboundPills: some View {
-        PendingWrapLayout {
-            ForEach(controller.tunnel.outboundMembers, id: \.self) { tag in
-                outboundPill(tag)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func outboundPill(_ tag: String) -> some View {
-        let selected = controller.tunnel.currentOutbound == tag
-        let switching = switchingOutbound == tag
-        return PendingPill(
-            title: outboundTitle(tag),
-            selected: selected
-        ) {
-            guard !selected, switchingOutbound == nil else { return }
+        PendingProtocolPicker(
+            members: controller.tunnel.outboundMembers,
+            selectorTag: controller.tunnel.selectorTag,
+            selected: controller.tunnel.currentOutbound,
+            switchingTag: switchingOutbound
+        ) { tag in
             Task {
                 switchingOutbound = tag
                 defer { switchingOutbound = nil }
@@ -347,21 +340,7 @@ struct PendingNetIOSHomeView: View {
                     controller.errorMessage = error.localizedDescription
                 }
             }
-        } accessory: {
-            if switching {
-                ProgressView().controlSize(.small)
-            }
         }
-    }
-
-    /// 成员 tag 形如 `<selectorTag>-<protocolID>`，外加一个 `-mix`（urltest，
-    /// 代表自动选最快）。展示名回到节点资料里查，查不到就退回后缀本身。
-    private func outboundTitle(_ tag: String) -> String {
-        guard let selectorTag = controller.tunnel.selectorTag,
-              tag.hasPrefix(selectorTag + "-") else { return tag }
-        let suffix = String(tag.dropFirst(selectorTag.count + 1))
-        if suffix == "mix" { return "自动（最快）" }
-        return controller.nodeProfile?.protocols.first { $0.id == suffix }?.displayName ?? suffix
     }
 
     // MARK: - 状态
