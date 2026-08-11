@@ -117,8 +117,8 @@ plist() { /usr/libexec/PlistBuddy -c "Print $2" "$1/Info.plist" 2>/dev/null; }
 # 版本号：产物里的必须就是仓库里那一对。target 的 postBuildScript 已经查过主 App，
 # 这里补查扩展 —— 主 App 与扩展版本对不上，苹果在处理阶段直接退回。
 for b in "$app" "$appex"; do
-  v=$(plist "$b" :CFBundleShortVersionString)
-  n=$(plist "$b" :CFBundleVersion)
+  v=$(plist "$b" :CFBundleShortVersionString || echo "<读不到>")
+  n=$(plist "$b" :CFBundleVersion || echo "<读不到>")
   if [ "$v" != "$version" ] || [ "$n" != "$build_number" ]; then
     echo "$(basename "$b") 的版本是 $v($n)，仓库里是 $version($build_number)" >&2
     exit 2
@@ -129,7 +129,9 @@ done
 # 只写 true 不给码，苹果在上传前的服务端校验直接以 90592 拒收，而且报错文字
 # （「key value [] 与文档不匹配」）指不到真正的原因上。键不写是合法状态：构建
 # 传得上去，之后在 TestFlight 页面按构建答一次问卷。缘由见 app/project.yml。
-enc=$(plist "$app" :ITSAppUsesNonExemptEncryption)
+# `|| true` 不能省：这个键**正常情况下就是不存在**，而 PlistBuddy 读不到键会
+# 非零退出，在 set -e 下会把整个脚本静默带走（连下面那句报错都轮不到打印）。
+enc=$(plist "$app" :ITSAppUsesNonExemptEncryption || true)
 if [ "$enc" = "true" ]; then
   plist "$app" :ITSEncryptionExportComplianceCode >/dev/null \
     || { echo "Info.plist 里 ITSAppUsesNonExemptEncryption=true 却没有 ITSEncryptionExportComplianceCode —— 苹果会以 90592 拒收。要么补上 ERN 编号，要么把这个键整个去掉" >&2; exit 2; }
