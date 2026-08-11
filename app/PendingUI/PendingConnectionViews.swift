@@ -101,7 +101,9 @@ struct PendingProtocolPicker: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        // 间距写在共用件里，两端才会一样：标题和药丸之间松一档，整块再和
+        // 上面那块拉开——它是卡里唯一带标题的一段，挨太近会读成上一块的尾巴。
+        VStack(alignment: .leading, spacing: 14) {
             Text("协议")
                 .font(PendingNetTheme.Fonts.bodyEmphasized)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
@@ -126,6 +128,7 @@ struct PendingProtocolPicker: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.top, 12)
     }
 }
 
