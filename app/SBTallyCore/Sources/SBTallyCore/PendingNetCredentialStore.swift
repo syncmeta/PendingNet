@@ -26,6 +26,24 @@ public struct PendingNetKeychainLocation: Equatable, Sendable {
         self.synchronizable = synchronizable
         self.accessGroup = accessGroup
     }
+
+    /// 按这个位置发出去的查询，会不会**顺带命中** `other` 位置上的条目。
+    ///
+    /// 关键在于 `accessGroup == nil` 不是「App 默认组」这么一个具体的组，而是
+    /// **通配**：不带 `kSecAttrAccessGroup` 的查询会横扫这个 App 有权访问的所有
+    /// 组，共享组也在里面。而有 entitlement 的构建里，共享组**就是** App 的默认
+    /// 组（entitlements 里只有它一个），两档本来就落在同一个条目上。
+    ///
+    /// 清理更差的位置之前必须先问一句这个，否则就是「写进共享组 → 按默认组去
+    /// 清理 → 把刚写的那条删掉」。0.3.21 踩的就是这个：`save` 报成功、事后三档
+    /// 一条不剩，令牌永远搬不上能同步的位置，另一台设备上的 VPS 全是死的。
+    func mayMatch(_ other: PendingNetKeychainLocation) -> Bool {
+        guard dataProtection == other.dataProtection,
+              synchronizable == other.synchronizable else { return false }
+        // 组没写明 = 通配，什么组都命中；写明了就只命中同一个组。
+        guard let accessGroup else { return true }
+        return accessGroup == other.accessGroup
+    }
 }
 
 /// SecItem 的注入点。真机走 `SecItemKeychainBackend`，单测走内存假实现——
@@ -81,8 +99,16 @@ public struct PendingNetCredentialStoreCore: Sendable {
         guard let best = try write(accessToken: accessToken, serverID: serverID) else {
             return
         }
-        // 写进了更好的位置，把更差位置上的旧条目清掉，免得读的时候被旧值挡住。
-        for location in locations.dropFirst(best + 1) {
+        clearLocations(worseThan: best, serverID: serverID)
+    }
+
+    /// 把更差位置上的旧条目清掉，免得读的时候被旧值挡住。
+    ///
+    /// **会命中刚写进去那条的位置一律跳过**——见 `mayMatch`。宁可留一份读不到
+    /// 的残留（下一档的查询本来就找不到它），也绝不能把用户唯一那份令牌删掉。
+    private func clearLocations(worseThan best: Int, serverID: String) {
+        let winner = locations[best]
+        for location in locations.dropFirst(best + 1) where !location.mayMatch(winner) {
             _ = backend.delete(query(for: location, serverID: serverID))
         }
     }
@@ -161,9 +187,7 @@ public struct PendingNetCredentialStoreCore: Sendable {
         guard let best = try? write(accessToken: token, serverID: serverID), best < index else {
             return
         }
-        for location in locations[(best + 1)...] {
-            _ = backend.delete(query(for: location, serverID: serverID))
-        }
+        clearLocations(worseThan: best, serverID: serverID)
     }
 
     // MARK: -
