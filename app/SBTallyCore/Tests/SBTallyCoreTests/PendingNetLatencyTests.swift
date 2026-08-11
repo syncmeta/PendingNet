@@ -211,7 +211,7 @@ final class PendingNetLatencyTests: XCTestCase {
                 target: PendingNetLatencyTarget(host: "203.0.113.10", port: 443, kind: .proxyEntry)
             )
         )
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "延迟 42 ms")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "42 ms")
         XCTAssertFalse(tester.busy)
     }
 
@@ -241,8 +241,8 @@ final class PendingNetLatencyTests: XCTestCase {
         var second = record(proxyTCPHost: "198.51.100.7", proxyTCPPort: 8443)
         second.serverID = "s2"
         await tester.measureAll([record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 443), second])
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "延迟 443 ms")
-        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "延迟 8443 ms")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "443 ms")
+        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms")
     }
 
     @MainActor

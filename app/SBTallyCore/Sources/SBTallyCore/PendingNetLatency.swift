@@ -82,10 +82,11 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
     case failed(String)
 
     /// VPS 列表那一行右边显示的东西。测量中返回 nil——那时候该显示转圈。
+    /// 只给数字，不带「延迟」二字：那一列是什么，列表下面已经写清楚了。
     public var rowText: String? {
         switch self {
         case .measuring: nil
-        case .ok(let milliseconds, _): "延迟 \(milliseconds) ms"
+        case .ok(let milliseconds, _): "\(milliseconds) ms"
         case .failed: "不通"
         }
     }
@@ -100,7 +101,7 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
     public var detailText: String? {
         switch self {
         case .measuring: "正在测…"
-        case .ok(let milliseconds, let target): "延迟 \(milliseconds) ms · \(target.explanation)"
+        case .ok(let milliseconds, let target): "\(milliseconds) ms · \(target.explanation)"
         case .failed(let reason): reason
         }
     }
