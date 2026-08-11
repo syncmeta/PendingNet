@@ -18,6 +18,12 @@ final class PendingNetTunnelController: ObservableObject {
     }
     @Published var routeMode: PendingNetRouteMode = .global
 
+    /// 本机混合入站：端口，以及要不要让同网段的别的设备也能用。
+    ///
+    /// 手机自己的流量走 tun，这个入站是给局域网里的电脑 / 电视当代理用的。
+    /// 存档、取值范围、错误文案与 macOS 共用一份（`PendingNetLocalInbound`）。
+    @Published private(set) var localInbound: PendingNetLocalInbound
+
     /// 当前 VPS 的 selector tag。由 `runtimeServer(name:)` 确定性生成，
     /// App 侧自己算得出来，不需要向扩展查询。
     @Published private(set) var selectorTag: String?
@@ -50,9 +56,11 @@ final class PendingNetTunnelController: ObservableObject {
     private let tunnelBundleID = "com.pendingname.pendingnet.extension"
     private let routeModeKey = "pendingnet.ios.route-mode.v1"
     private let ruleSetStore: PendingNetRuleSetStore
+    private let inboundStore = PendingNetLocalInboundStore()
 
     init(ruleSetStore: PendingNetRuleSetStore) {
         self.ruleSetStore = ruleSetStore
+        localInbound = inboundStore.load()
         // 经 `stored(rawValue:)` 读，而不是直接 `init(rawValue:)`：档位改名之后
         // 老用户存的还是 `bypassCN` / `direct`，直接解会读成 nil 并被悄悄打回
         // 全局，等于因为一次改名丢掉了用户的设置。顺手把迁移结果写回去，免得
@@ -133,6 +141,13 @@ final class PendingNetTunnelController: ObservableObject {
         routeMode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: routeModeKey)
         guard !isTunnelLive else { return }
+        writeStartupSnapshot(profile: profile, serverName: serverName)
+    }
+
+    private func writeStartupSnapshot(
+        profile: PendingNetNodeProfile,
+        serverName: String
+    ) {
         guard let base = PendingNetTunnelPaths.container(),
               let content = try? makeConfigContent(profile: profile, serverName: serverName)
         else { return }
@@ -141,6 +156,50 @@ final class PendingNetTunnelController: ObservableObject {
             to: PendingNetTunnelPaths.snapshotURL(in: base),
             options: .atomic
         )
+    }
+
+    // MARK: - 端口与局域网访问
+
+    /// 改本机入站（端口 / 允许局域网）。
+    ///
+    /// 隧道在跑就把新配置推给扩展，内核就地把那个入站重开到新端口——和
+    /// macOS 上「引擎在跑就顺手重启」是同一个承诺，手机上不该只是存个数字。
+    /// 不在跑就把启动快照一并改掉，否则从「设置 → VPN」直接开隧道会开在旧
+    /// 端口上（那条路径 startTunnel 的 options 是空的，扩展只读快照）。
+    ///
+    /// 推失败要把设置退回原值：留下「界面写着 3128、隧道实际还在 2080」比
+    /// 改不成更糟。
+    func setLocalInbound(
+        _ next: PendingNetLocalInbound,
+        profile: PendingNetNodeProfile?,
+        serverName: String?
+    ) async throws {
+        let previous = localInbound
+        localInbound = next
+        inboundStore.save(next)
+
+        guard let profile, let serverName else {
+            // 还没配对 / 还没拉到节点资料。没连着就只是存下来，下次连接自然
+            // 带上；连着却拿不到资料，说明改不动，必须说出来而不是假装改了。
+            guard isTunnelLive else { return }
+            localInbound = previous
+            inboundStore.save(previous)
+            throw PendingNetPairingError.serverRejected(
+                "隧道正在跑，但这会儿拿不到当前 VPS 的节点资料，端口没有改。回到连接页重连一次再试。"
+            )
+        }
+
+        do {
+            if isTunnelLive {
+                try await reload(profile: profile, serverName: serverName)
+            } else {
+                writeStartupSnapshot(profile: profile, serverName: serverName)
+            }
+        } catch {
+            localInbound = previous
+            inboundStore.save(previous)
+            throw error
+        }
     }
 
     // MARK: - 协议手选
@@ -345,7 +404,8 @@ final class PendingNetTunnelController: ObservableObject {
             runtimeServer: try profile.runtimeServer(name: serverName),
             routeMode: routeMode,
             ruleSetDirectory: PendingNetTunnelPaths.ruleSetDirectory(in: base).path,
-            cachePath: PendingNetTunnelPaths.cacheURL(in: base).path
+            cachePath: PendingNetTunnelPaths.cacheURL(in: base).path,
+            localInbound: localInbound
         )
         // 仅用于真机排查「App 生成的配置到底长什么样」的调试留痕，
         // 不是配置传递给扩展的机制——扩展永远只认 startTunnel 的

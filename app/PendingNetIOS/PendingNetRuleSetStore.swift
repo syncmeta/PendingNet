@@ -16,8 +16,14 @@ final class PendingNetRuleSetStore: ObservableObject {
     /// 判据——那个判据按档位收窄，见 `isReady(for:)`。
     @Published private(set) var isReady = false
 
+    /// 每一份规则集在不在本机。设置页按份显示，别让用户对着一个笼统的
+    /// 「未下载」猜是哪一份没下来。与 macOS 侧的 `PendingNetRouteRuleSets`
+    /// 同名同义。
+    @Published private(set) var presence: [String: Bool] = [:]
+
     init() {
         isReady = Self.allPresent()
+        presence = Self.presentNames()
     }
 
     /// 这一档位需要的规则集是否就位。`PendingNetTunnelController.start`
@@ -53,7 +59,10 @@ final class PendingNetRuleSetStore: ObservableObject {
         guard let directory = Self.directory() else {
             throw PendingNetPairingError.serverRejected("无法访问 App Group 容器")
         }
-        defer { isReady = Self.allPresent() }
+        defer {
+            isReady = Self.allPresent()
+            presence = Self.presentNames()
+        }
 
         for source in PendingNetTunnelConfig.requiredRuleSets where tags.contains(source.name) {
             let destination = directory.appendingPathComponent("\(source.name).srs")
@@ -91,11 +100,20 @@ final class PendingNetRuleSetStore: ObservableObject {
     /// 同样按魔数判断，而不是「文件非空就当它有效」：上一轮可能落下过一个
     /// 被替换掉的 HTML 页面，那种文件非空但用不了，必须被认出来重下。
     private static func allPresent() -> Bool {
-        guard let directory = directory() else { return false }
-        return PendingNetTunnelConfig.requiredRuleSetNames.allSatisfy { name in
-            PendingNetTunnelConfig.looksLikeRuleSet(
-                at: directory.appendingPathComponent("\(name).srs").path
-            )
-        }
+        presentNames().values.allSatisfy { $0 }
+    }
+
+    /// 按份算，同样只认 `.srs` 魔数。
+    private static func presentNames() -> [String: Bool] {
+        let directory = directory()
+        return Dictionary(
+            uniqueKeysWithValues: PendingNetTunnelConfig.requiredRuleSetNames.map { name in
+                (name, directory.map {
+                    PendingNetTunnelConfig.looksLikeRuleSet(
+                        at: $0.appendingPathComponent("\(name).srs").path
+                    )
+                } ?? false)
+            }
+        )
     }
 }

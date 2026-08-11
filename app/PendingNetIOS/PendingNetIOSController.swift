@@ -214,6 +214,25 @@ final class PendingNetIOSController: ObservableObject {
         }
     }
 
+    /// 改端口 / 允许局域网访问。返回 nil 表示成功，否则是给用户看的人话。
+    /// 形状与 macOS 的 `EngineController.setLocalInbound` 一样，设置页那张卡
+    /// 两端共用一个。
+    func setLocalInbound(port: Int, allowLAN: Bool) async -> String? {
+        // 隧道在跑却没有节点资料的话就改不成（要重新生成整份配置推给扩展）。
+        // 先补一次，补不到由 tunnel 那边如实报错，不假装存上了。
+        if nodeProfile == nil, server != nil { await refreshNodeProfile() }
+        do {
+            try await tunnel.setLocalInbound(
+                PendingNetLocalInbound(port: port, allowsLAN: allowLAN),
+                profile: nodeProfile,
+                serverName: server?.name
+            )
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func refreshNodeProfile() async {
         guard let server else { return }
         do {
