@@ -40,7 +40,7 @@ public enum PendingNetTunnelConfig {
 
     /// 代理侧解析器。走 selector，随隧道一起生效。
     static let proxyDNSServer = "1.1.1.1"
-    /// 直连侧解析器。走 direct，用于分流模式下的国内域名。
+    /// 直连侧解析器。走默认拨号器（即直连），用于分流模式下的国内域名。
     static let directDNSServer = "223.5.5.5"
 
     /// 一个规则集：配置里的 tag（同时也是落盘文件名 `<name>.srs`），以及主
@@ -190,11 +190,14 @@ public enum PendingNetTunnelConfig {
                     "server": proxyDNSServer,
                     "detour": selectorTag,
                 ],
+                // 直连解析器**不写 detour**：不写就是用默认拨号器，本来就是直连。
+                // 写成 `detour: direct` 语义完全一样，但内核会拒绝启动整条隧道
+                // （"detour to an empty direct outbound makes no sense"）——我们
+                // 那个 direct 出站是不带任何选项的空壳，绕经它等于什么也没做。
                 [
                     "type": "https",
                     "tag": "dns-direct",
                     "server": directDNSServer,
-                    "detour": "direct",
                 ],
             ],
             "final": mode == .blacklist ? "dns-direct" : "dns-proxy",

@@ -385,18 +385,65 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         let tags = servers.compactMap { $0["tag"] as? String }
         XCTAssertEqual(Set(tags), ["dns-proxy", "dns-direct"])
 
-        // 代理侧 DNS 必须走 selector，直连侧必须走 direct，
-        // 否则隧道建立前的 DNS 查询会打进黑洞而不回收。
+        // 代理侧 DNS 必须走 selector，否则隧道建立前的 DNS 查询会打进黑洞
+        // 而不回收。直连侧则**不能**写 detour：不写就是默认拨号器（直连），
+        // 写成 direct 语义一样却会让内核拒绝启动，见下面那条三档守卫。
         let proxyServer = try XCTUnwrap(servers.first { $0["tag"] as? String == "dns-proxy" })
         XCTAssertEqual(proxyServer["detour"] as? String, server.selectorTag)
         let directServer = try XCTUnwrap(servers.first { $0["tag"] as? String == "dns-direct" })
-        XCTAssertEqual(directServer["detour"] as? String, "direct")
+        XCTAssertNil(directServer["detour"])
 
         // ipv4_only 把每个域名的查询数从 A+AAAA 两条降到一条。
         XCTAssertEqual(dns["strategy"] as? String, "ipv4_only")
         XCTAssertEqual(dns["disable_cache"] as? Bool, false)
         XCTAssertEqual(dns["independent_cache"] as? Bool, false)
         XCTAssertEqual(dns["final"] as? String, "dns-proxy")
+    }
+
+    /// 三档分流都不许出现「DNS 服务器 detour 到一个空的 direct 出站」。
+    ///
+    /// 0.3.22 就栽在这上面：`dns-direct` 写了 `detour: direct`，而我们的 direct
+    /// 出站是个不带任何选项的空壳，内核判定「绕经它没有意义」，**整条隧道拒绝
+    /// 启动**——三档全中，手机上点什么都起不来。这种「生成的配置内核根本跑不
+    /// 起来」的事，之前只有 testEveryRouteModePassesInstalledSingBoxCheck 拦得
+    /// 住，而那条在没装 sing-box 的机器上会跳过，于是一路测到了用户手机上。
+    /// 这条不依赖任何外部二进制，纯看配置结构。
+    func testNoDNSServerDetoursThroughAnEmptyDirectOutbound() throws {
+        for mode in PendingNetRouteMode.allCases {
+            let data = try PendingNetTunnelConfig.make(
+                runtimeServer: Self.sampleRuntimeServer(),
+                routeMode: mode,
+                ruleSetDirectory: "/tmp/pendingnet-rulesets",
+                cachePath: "/tmp/pendingnet-cache.db"
+            )
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let outbounds = try XCTUnwrap(root["outbounds"] as? [[String: Any]])
+            let servers = try XCTUnwrap((root["dns"] as? [String: Any])?["servers"] as? [[String: Any]])
+
+            // 「空的 direct 出站」= type 是 direct，除了 type/tag 再没别的选项。
+            let emptyDirectTags = Set(outbounds.compactMap { outbound -> String? in
+                guard (outbound["type"] as? String) == "direct",
+                      Set(outbound.keys).isSubset(of: ["type", "tag"]),
+                      let tag = outbound["tag"] as? String else { return nil }
+                return tag
+            })
+            XCTAssertFalse(
+                emptyDirectTags.isEmpty,
+                "\(mode.rawValue): 配置里本来就该有一个空的 direct 出站，这条守卫才有意义"
+            )
+
+            for server in servers {
+                guard let detour = server["detour"] as? String else { continue }
+                XCTAssertFalse(
+                    emptyDirectTags.contains(detour),
+                    """
+                    \(mode.rawValue): DNS 服务器 \(server["tag"] as? String ?? "?") \
+                    detour 到了空的 direct 出站 \(detour)，内核会拒绝启动整条隧道；\
+                    直连解析器不写 detour 即可
+                    """
+                )
+            }
+        }
     }
 
     func testDNSTrafficIsHijackedIntoTheResolver() throws {
