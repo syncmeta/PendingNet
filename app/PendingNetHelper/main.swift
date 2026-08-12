@@ -8,6 +8,7 @@ let ETC = "/usr/local/etc/sbtally"
 let LABEL = "system/io.sbtally.singbox"
 let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
 let ACTIVE_SELECTOR = "\(ETC)/pendingnet-active-selector"
+let ROUTE_MODE = "\(ETC)/route-mode"
 
 func sh(_ args: [String]) -> (Int32, String) {
     let p = Process(); p.executableURL = URL(fileURLWithPath: args[0])
@@ -159,22 +160,28 @@ func waitForEngine() -> Bool {
     return false
 }
 
-/// Selects a sing-box outbound through its loopback-only Clash API. The
-/// helper reads the API secret from the active config and never exposes it to
-/// the app or a process argument.
-func selectProxy(configData: Data, selector: String, name: String) -> String? {
-    guard let root = try? JSONSerialization.jsonObject(with: configData) as? [String: Any],
-          let experimental = root["experimental"] as? [String: Any],
-          let clashAPI = experimental["clash_api"] as? [String: Any],
-          let controller = clashAPI["external_controller"] as? String,
-          let url = URL(string: "http://\(controller)/proxies/\(selector)"),
-          url.scheme == "http",
-          url.host == "127.0.0.1" || url.host == "localhost" else {
-        return "本机 sing-box 控制接口配置无效"
-    }
-    let secret = clashAPI["secret"] as? String ?? ""
-    guard let body = try? JSONSerialization.data(withJSONObject: ["name": name]) else {
-        return "无法生成 VPS 选择请求"
+/// What the engine's Clash API said, or why it could not be asked at all.
+enum ClashResponse {
+    case answered(status: Int, body: Data)
+    /// 给用户看的人话。
+    case unreachable(String)
+}
+
+/// One request to the loopback-only Clash API of the engine this daemon runs,
+/// retried until the control port answers (it comes up a moment after launchd
+/// reports the job running).
+///
+/// The API secret is read from the active config here and never handed to the
+/// app or put on a command line.
+func clashRequest(
+    configData: Data,
+    method: String,
+    path: String,
+    body: Data?
+) -> ClashResponse {
+    guard let endpoint = PendingNetClashEndpoint(configData: configData),
+          let url = endpoint.url(path: path) else {
+        return .unreachable("本机 sing-box 控制接口配置无效")
     }
 
     let configuration = URLSessionConfiguration.ephemeral
@@ -185,30 +192,107 @@ func selectProxy(configData: Data, selector: String, name: String) -> String? {
 
     for _ in 0..<30 {
         var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
+        request.httpMethod = method
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if !secret.isEmpty {
-            request.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
+        if !endpoint.secret.isEmpty {
+            request.setValue("Bearer \(endpoint.secret)", forHTTPHeaderField: "Authorization")
         }
 
         let semaphore = DispatchSemaphore(value: 0)
         var statusCode: Int?
-        var requestError: Error?
-        session.dataTask(with: request) { _, response, error in
+        var responseBody = Data()
+        session.dataTask(with: request) { data, response, _ in
             statusCode = (response as? HTTPURLResponse)?.statusCode
-            requestError = error
+            responseBody = data ?? Data()
             semaphore.signal()
         }.resume()
         _ = semaphore.wait(timeout: .now() + 1)
-        if statusCode == 204 || statusCode == 200 { return nil }
-        if statusCode == 401 { return "本机 sing-box 控制接口凭据不匹配" }
-        if requestError == nil, let statusCode {
-            return "本机 sing-box 拒绝选择 VPS（HTTP \(statusCode)）"
-        }
+        // No status code at all means nothing answered yet — that is the case
+        // worth retrying; anything the engine actually said is the answer.
+        if statusCode == 401 { return .unreachable("本机 sing-box 控制接口凭据不匹配") }
+        if let statusCode { return .answered(status: statusCode, body: responseBody) }
         Thread.sleep(forTimeInterval: 0.1)
     }
-    return "本机 sing-box 控制接口尚未就绪"
+    return .unreachable("本机 sing-box 控制接口尚未就绪")
+}
+
+/// Selects a sing-box outbound through its Clash API.
+func selectProxy(configData: Data, selector: String, name: String) -> String? {
+    guard let body = try? JSONSerialization.data(withJSONObject: ["name": name]) else {
+        return "无法生成 VPS 选择请求"
+    }
+    switch clashRequest(configData: configData, method: "PUT",
+                        path: "proxies/\(selector)", body: body) {
+    case .unreachable(let message):
+        return message
+    case .answered(let status, _):
+        guard status == 200 || status == 204 else {
+            return "本机 sing-box 拒绝选择 VPS（HTTP \(status)）"
+        }
+        return nil
+    }
+}
+
+/// Switches the running engine's routing mode through its Clash API.
+///
+/// Two things have to be checked that the API itself will not check: the config
+/// has to declare the mode (a `clash_mode` route rule naming it), and the
+/// engine has to actually be in it afterwards. Without both, an accepted-then-
+/// ignored switch leaves the GUI highlighting 全局 while traffic still follows
+/// the whitelist.
+func applyRouteMode(_ name: String, configData: Data) -> String? {
+    guard let mode = PendingNetRouteMode.clashNamed(name) else {
+        return "不认识的路由模式：\(name)"
+    }
+    let declared = PendingNetClashControl.declaredModes(in: configData)
+    guard declared.contains(mode) else {
+        return "当前配置里没有「\(name)」这一档路由规则"
+    }
+    guard let body = try? JSONSerialization.data(withJSONObject: ["mode": mode.clashName]) else {
+        return "无法生成路由模式请求"
+    }
+    switch clashRequest(configData: configData, method: "PATCH", path: "configs", body: body) {
+    case .unreachable(let message):
+        return message
+    case .answered(let status, _):
+        guard status == 200 || status == 204 else {
+            return "本机 sing-box 拒绝切换路由模式（HTTP \(status)）"
+        }
+    }
+    switch clashRequest(configData: configData, method: "GET", path: "configs", body: nil) {
+    case .unreachable(let message):
+        return message
+    case .answered(let status, let responseBody):
+        guard status == 200,
+              let root = try? JSONSerialization.jsonObject(with: responseBody) as? [String: Any],
+              let current = root["mode"] as? String else {
+            return "无法确认本机 sing-box 的路由模式"
+        }
+        guard PendingNetRouteMode.clashNamed(current) == mode else {
+            return "本机 sing-box 没有切到「\(name)」（仍然是 \(current)）"
+        }
+        return nil
+    }
+}
+
+/// The route mode the user last picked, as recorded by `setRouteMode`.
+func storedRouteMode() -> PendingNetRouteMode? {
+    guard let raw = try? String(contentsOfFile: ROUTE_MODE, encoding: .utf8) else { return nil }
+    return PendingNetRouteMode.clashNamed(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+}
+
+/// Re-applies the recorded route mode to an engine that has just come up.
+///
+/// The config's `default_mode` is `Whitelist` and `store_mode` is off, so every
+/// restart — switching takeover, applying a VPS — drops back to the whitelist.
+/// Without replaying it here the user's pick is quietly overwritten each time.
+///
+/// Best-effort on purpose: the engine *is* up, and failing the caller over a
+/// mode that did not land would be a worse answer than the mode being stale.
+func reapplyStoredRouteMode(configData: Data) {
+    guard let mode = storedRouteMode() else { return }
+    _ = applyRouteMode(mode.clashName, configData: configData)
 }
 
 func activatePendingSelector(configData: Data) -> String? {
@@ -236,6 +320,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         if let configData, let selectionError = activatePendingSelector(configData: configData) {
             return fail(selectionError)
         }
+        if let configData { reapplyStoredRouteMode(configData: configData) }
         if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
         reply(nil)
     }
@@ -260,8 +345,31 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         guard wasRunning else { return reply(nil) }
         if let error = launchctl(["kickstart", "-k", LABEL]) { return reply(error) }
         guard waitForEngine() else { return reply("sing-box 重启后未进入运行状态") }
+        if let configData = try? readData(path: "\(ETC)/master.json") {
+            reapplyStoredRouteMode(configData: configData)
+        }
         if mode == "sysproxy" { enableOwnedSystemProxy() }
         reply(nil)
+    }
+
+    /// Switches the engine this daemon runs to `mode`, and records the pick so
+    /// it survives the restarts that switching takeover or applying a VPS
+    /// cause. Recording happens even with no engine up: the choice is a
+    /// preference, and `reapplyStoredRouteMode` lands it at the next start.
+    func setRouteMode(_ mode: String, reply: @escaping (String?) -> Void) {
+        guard let known = PendingNetRouteMode.clashNamed(mode) else {
+            return reply("不认识的路由模式：\(mode)")
+        }
+        do {
+            try writeConfig(Data((known.clashName + "\n").utf8), path: ROUTE_MODE)
+        } catch {
+            return reply("路由模式没能记下来：\(error.localizedDescription)")
+        }
+        guard engineRunning() else { return reply(nil) }
+        guard let configData = try? readData(path: "\(ETC)/master.json") else {
+            return reply("读不到本机 sing-box 配置")
+        }
+        reply(applyRouteMode(known.clashName, configData: configData))
     }
 
     /// Clears a system proxy this helper owns but that no longer has a live
@@ -327,6 +435,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                         throw NSError(domain: "PendingNetHelper", code: 4,
                                       userInfo: [NSLocalizedDescriptionKey: error])
                     }
+                    reapplyStoredRouteMode(configData: active)
                 }
             } catch {
                 for path in paths {

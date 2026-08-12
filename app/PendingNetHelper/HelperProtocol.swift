@@ -15,7 +15,7 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 3
+public let pendingNetHelperInterfaceVersion = 4
 
 @objc public protocol HelperProtocol {
     // MARK: - Interface version 1
@@ -62,6 +62,23 @@ public let pendingNetHelperInterfaceVersion = 3
     /// that too: a helper that started before the binary on disk was written is
     /// not running that binary.
     func startedAt(reply: @escaping (Double) -> Void)
+
+    // MARK: - Interface version 4
+
+    /// Switches the helper-run engine's routing to `mode` — one of
+    /// `Global` / `Whitelist` / `Blacklist`. Replies nil on success, otherwise
+    /// text for the user.
+    ///
+    /// TUN and 系统代理 run a second sing-box, started by this daemon as root,
+    /// whose Clash API secret the app never sees — so 全局/白名单/黑名单 could
+    /// only ever be switched in 「仅端口」. Worse, that config defaults to
+    /// `Whitelist`, so the GUI could highlight 全局 while the engine routed by
+    /// the whitelist. This is the app's way to reach that engine.
+    ///
+    /// The mode is also recorded on disk and replayed after every engine start:
+    /// `store_mode` is off, so a restart (switching takeover, applying a VPS)
+    /// otherwise drops back to the config's default and quietly loses the pick.
+    func setRouteMode(_ mode: String, reply: @escaping (String?) -> Void)
 }
 
 /// 这一对身份从前是散在 app、助手、launchd plist、签名脚本里的字面量。
