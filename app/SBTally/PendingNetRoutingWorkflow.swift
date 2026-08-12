@@ -35,9 +35,10 @@ enum PendingNetRoutingWorkflow {
     ) async {
         let mode = state.mode
         guard engine.takeover == "local" else {
-            // sysproxy/TUN 的引擎由后台服务另起一份，app 够不着它的控制端口。
-            state.modeNote = "已记住。当前是「\(takeoverName(engine.takeover))」接管，路由由后台服务的配置决定，"
-                + "切回「仅端口」后这里的选择才会生效。"
+            // sysproxy/TUN 的引擎由后台服务另起一份，app 够不着它的控制端口，
+            // 只能请后台服务代切。
+            await applyThroughHelper(
+                mode: mode, engine: engine, state: state, userInitiated: userInitiated)
             return
         }
         guard engine.running else {
@@ -61,6 +62,35 @@ enum PendingNetRoutingWorkflow {
             return
         }
         state.modeNote = nil
+    }
+
+    /// TUN / 系统代理：路由归后台服务管，模式也由它切。
+    ///
+    /// 它还会把选择落盘，所以引擎没在跑时这一趟也不白走 —— 下次起来就按这个
+    /// 模式走，不用用户再点一次。
+    private static func applyThroughHelper(
+        mode: String,
+        engine: EngineController,
+        state: AppState,
+        userInitiated: Bool
+    ) async {
+        switch await engine.setRouteMode(mode) {
+        case .applied:
+            state.modeNote = nil
+        case .unreachable(let reason):
+            guard userInitiated else {
+                // 不是用户刚点的：连接卡上「等待授权」那套已经在说这件事了，
+                // 这里再补一句只是重复。
+                state.modeNote = nil
+                return
+            }
+            state.modeNote = "已记住。「\(takeoverName(engine.takeover))」接管下的路由要由后台服务来切，"
+                + "而现在够不着它（\(reason)）。授权后台服务后这个选择就会生效。"
+        case .rejected(let reason):
+            state.modeNote = userInitiated
+                ? "后台服务没能切到这个模式：\(reason)。已记住你的选择，重新连接后会再试。"
+                : "已记住，重新连接后生效。"
+        }
     }
 
     private static func takeoverName(_ takeover: String) -> String {

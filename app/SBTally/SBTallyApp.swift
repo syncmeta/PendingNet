@@ -39,6 +39,12 @@ struct SBTallyApp: App {
                     await state.refresh()
                     state.startLive()
                     await engine.refresh()
+                    // 记住的路由模式要在这里主动推一次，不能等用户再点一遍：
+                    // 后台服务那份配置的 default_mode 是白名单，而界面显示的是
+                    // 记住的那一档 —— 不推的话，一进 TUN 就是「界面亮全局、引擎
+                    // 走白名单」，比切不动更糟。`refresh()` 刚认过接管方式，所以
+                    // 顺序不能反。
+                    await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
                     vpsPairing.refreshFromCloud()
                 }
                 // 回到前台顺手拉一次 iCloud —— 在 iPhone 上配好的 VPS 不用重开

@@ -3,6 +3,20 @@ import SBTallyCore
 import ServiceManagement
 import SwiftUI
 
+/// 让后台服务切路由模式的结果。
+///
+/// 「够不着后台服务」和「后台服务不肯切」要分开：前者是授权 / 版本的问题，
+/// 后者是引擎的问题，界面上该说的话完全不同——从前这两种情形都被糊成一句
+/// 「已记住」，用户既不知道为什么没生效，也不知道该做什么。
+enum PendingNetRouteModeOutcome: Sendable, Equatable {
+    /// 引擎已经按这个模式走了。
+    case applied
+    /// 连不上后台服务（没授权、旧版、没响应）。
+    case unreachable(String)
+    /// 后台服务收到了，但没切成，带着它给的理由。
+    case rejected(String)
+}
+
 @MainActor
 final class EngineController: ObservableObject {
     @Published var running = false
@@ -532,6 +546,30 @@ final class EngineController: ObservableObject {
         if takeover == "local", running { await userEngine.stop() }
         takeover = mode
         await call { p, r in p.setTakeover(mode, reply: r) }
+    }
+
+    /// 在 TUN / 系统代理下切路由模式。
+    ///
+    /// 这两种接管方式的 sing-box 是后台服务用 root 另起的，控制口的 secret
+    /// app 看不到，所以只能请它代劳。「仅端口」不走这里 —— 那份引擎是 app
+    /// 自己拉起来的，直接 PATCH 它的控制口就行（见 `AppState.pushMode`）。
+    func setRouteMode(_ mode: String) async -> PendingNetRouteModeOutcome {
+        guard helperReady else {
+            return .unreachable(lastError ?? "后台服务还没授权")
+        }
+        // 版本握手是硬要求：这个方法是 interface version 4 才有的，直接发给
+        // 可能是旧版的助手会让 XPC 把整条连接拆掉。
+        let outcome = await withCompatibleHelper(
+            PendingNetRouteModeOutcome.unreachable(""), timeout: Self.engineTimeout
+        ) { p, reply in
+            p.setRouteMode(mode) { reply($0.map { .rejected($0) } ?? .applied) }
+        }
+        // 拿到的是兜底值 —— 真正的原因（旧版助手 / 没响应 / XPC 报错）在这期间
+        // 已经被写进 lastError 了。
+        if case .unreachable = outcome {
+            return .unreachable(lastError ?? "后台服务没有响应")
+        }
+        return outcome
     }
 
     func applyServerConfiguration(_ runtime: PendingNetRuntimeServer) async -> Bool {
