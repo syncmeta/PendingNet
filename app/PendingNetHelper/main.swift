@@ -161,6 +161,63 @@ func waitForEngine() -> Bool {
     return false
 }
 
+/// 引擎当前那个进程的 pid，没有进程在跑就是 nil。
+func enginePID() -> Int32? {
+    let (code, out) = sh(["/bin/launchctl", "print", LABEL])
+    guard code == 0 else { return nil }
+    return PendingNetEngineRestart.parsePID(launchctlPrintOutput: out)
+}
+
+/// 等 `pid` 这个进程真的消失。
+///
+/// 看的是进程本身而不是 launchd 的 job 状态：这个 job 是 KeepAlive 的，旧实例一退
+/// launchd 可能马上拉一个新的起来，job 状态几乎不落地到「停了」。我们要确认的是
+/// 「那个握着 TUN 的进程没了」，`kill(pid, 0)` 正好回答这一句（helper 是 root，
+/// 权限不会成为噪音）。
+func waitForProcessToExit(_ pid: Int32, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while kill(pid, 0) == 0 {
+        guard Date() < deadline else { return false }
+        Thread.sleep(forTimeInterval: PendingNetEngineRestart.pollInterval)
+    }
+    return true
+}
+
+/// 重启引擎：先请它自己退干净，确认进程没了，再拉新的。
+///
+/// 这里替掉了原来三处各写一遍的 `launchctl kickstart -k`。`-k` 是 SIGKILL：
+/// sing-box 来不及拆自己的 TUN、把系统 DNS 和路由还原就没了，launchd 立刻补一个
+/// 新实例上来，新实例读到的主链路可能还是空的——引擎日志里那几条
+/// `missing default interface` 就是这么来的，进程活着但整机没网。
+///
+/// 所以改成 SIGTERM + 等它退（超时再 SIGKILL 兜底），退干净了再 kickstart。
+/// 返回 nil 表示重启成功。
+func restartEngineProcess() -> String? {
+    if let running = enginePID() {
+        if let error = launchctl(["kill", "SIGTERM", LABEL]) {
+            helperLog("请引擎优雅退出失败（\(error)），直接 SIGKILL 兜底")
+            _ = launchctl(["kill", "SIGKILL", LABEL])
+        }
+        if !waitForProcessToExit(running, timeout: PendingNetEngineRestart.gracefulStopTimeout) {
+            helperLog("引擎 \(Int(PendingNetEngineRestart.gracefulStopTimeout)) 秒内没有退出，SIGKILL 兜底")
+            _ = launchctl(["kill", "SIGKILL", LABEL])
+            guard waitForProcessToExit(
+                running, timeout: PendingNetEngineRestart.forcedStopTimeout) else {
+                return "sing-box 进程 \(running) 杀不掉"
+            }
+        }
+    }
+    if let error = launchctl(["kickstart", LABEL]) {
+        // KeepAlive 可能已经替我们把新实例拉起来了；那种情况下 kickstart 报什么都无所谓。
+        guard !engineRunning() else {
+            helperLog("kickstart 报了「\(error)」，但引擎已经在跑，按成功处理")
+            return nil
+        }
+        return error
+    }
+    return nil
+}
+
 /// What the engine's Clash API said, or why it could not be asked at all.
 enum ClashResponse {
     case answered(status: Int, body: Data)
@@ -344,7 +401,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
         guard wasRunning else { return reply(nil) }
-        if let error = launchctl(["kickstart", "-k", LABEL]) { return reply(error) }
+        if let error = restartEngineProcess() { return reply(error) }
         guard waitForEngine() else { return reply("sing-box 重启后未进入运行状态") }
         if let configData = try? readData(path: "\(ETC)/master.json") {
             reapplyStoredRouteMode(configData: configData)
@@ -424,7 +481,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 try writeConfig(active, path: masterPath)
                 try writeConfig(Data((selectorTag + "\n").utf8), path: ACTIVE_SELECTOR)
                 if wasRunning {
-                    if let error = launchctl(["kickstart", "-k", LABEL]) {
+                    if let error = restartEngineProcess() {
                         throw NSError(domain: "PendingNetHelper", code: 2,
                                       userInfo: [NSLocalizedDescriptionKey: error])
                     }
@@ -447,7 +504,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 } else {
                     try? FileManager.default.removeItem(atPath: ACTIVE_SELECTOR)
                 }
-                if wasRunning { _ = launchctl(["kickstart", "-k", LABEL]) }
+                if wasRunning { _ = restartEngineProcess() }
                 throw error
             }
             reply(nil)
@@ -627,8 +684,8 @@ final class LinkSelfHealer {
 
     private func heal(reason: String) {
         helperLog("自愈：\(reason)")
-        if let error = launchctl(["kickstart", "-k", LABEL]) {
-            return helperLog("自愈失败：kickstart 没成功：\(error)")
+        if let error = restartEngineProcess() {
+            return helperLog("自愈失败：重启引擎没成功：\(error)")
         }
         guard waitForEngine() else {
             return helperLog("自愈失败：sing-box 重启后未进入运行状态")
