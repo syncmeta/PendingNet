@@ -1,3 +1,4 @@
+import SBTallyCore
 import SwiftUI
 
 @main
@@ -22,18 +23,24 @@ struct PendingNetIOSApp: App {
             .environmentObject(controller)
             .environmentObject(toast)
             .tint(PendingNetTheme.Palette.accent)
-            // 从「文件」、AirDrop 或别的 App 点开一个 .pdn 就直接配对，不用
-            // 先进 App 再点导入。类型声明在 project.yml 的 info 段里；只声明
-            // 不接住的话，PendingNet 会出现在「打开方式」里、点了却什么都不
-            // 发生，比不声明更糟。
+            // 从「文件」、AirDrop 或别的 App 点开一个 .pdn，或者点一条
+            // pendingnet:// 配对链接，都直接配对，不用先进 App 再点导入。
+            // 两份声明都在 project.yml 的 info 段里；只声明不接住的话，
+            // PendingNet 会出现在「打开方式」里、点了却什么都不发生，比不
+            // 声明更糟。
             .onOpenURL { url in
-                // 与 macOS 同一句守卫（SBTallyApp）。今天 iOS 只可能收到 .pdn
-                // 文件 URL（没声明自定义 scheme、也没有 universal link），但
+                // 与 macOS 同一句守卫（见 PendingNetConnectionWorkflow 的
+                // `importAndConnect(opened:)`）。认不出来的 URL 一律不理：
                 // `importAndEnroll` 里是 `Data(contentsOf:)`——真收到一个 http
                 // URL 就成了一次同步网络请求。两端对「什么算可导入」的判断
                 // 不一致，正是这一轮在消灭的那类东西。
-                guard url.pathExtension.lowercased() == "pdn" else { return }
-                Task { await importPairing(from: url) }
+                if url.isFileURL {
+                    guard url.pathExtension.lowercased() == "pdn" else { return }
+                    Task { await importPairing(from: url) }
+                    return
+                }
+                guard url.scheme?.lowercased() == PendingNetPairingFile.urlScheme else { return }
+                Task { await controller.importAndEnroll(pasted: url.absoluteString) }
             }
             // Errors / success messages are now toasts, not inline banners that
             // linger. Observed at the root so both tabs surface them, and they
