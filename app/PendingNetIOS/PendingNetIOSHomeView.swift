@@ -13,6 +13,7 @@ struct PendingNetIOSHomeView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingImporter = false
+    @State private var showingPasteImport = false
     @State private var showingLog = false
     @State private var switchingOutbound: String?
     @State private var switchingRouteMode = false
@@ -55,6 +56,15 @@ struct PendingNetIOSHomeView: View {
             case .failure(let error):
                 controller.errorMessage = error.localizedDescription
             }
+        }
+        .sheet(isPresented: $showingPasteImport) {
+            PendingPasteImportSheet(busy: controller.working) { text in
+                showingPasteImport = false
+                Task { await controller.importAndEnroll(pasted: text) }
+            } onCancel: {
+                showingPasteImport = false
+            }
+            .presentationDetents([.medium])
         }
         .sheet(isPresented: $showingLog) {
             PendingNetTunnelLogView()
@@ -256,6 +266,11 @@ struct PendingNetIOSHomeView: View {
                     ))
                     .disabled(latency.busy || controller.working)
                 }
+                Button("粘贴链接") { showingPasteImport = true }
+                    .buttonStyle(PendingQuietButtonStyle(
+                        fill: PendingNetTheme.Palette.surface
+                    ))
+                    .disabled(controller.working)
                 Button {
                     showingImporter = true
                 } label: {

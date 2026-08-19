@@ -11,6 +11,7 @@ struct ControlView: View {
     @StateObject private var latency = PendingNetLatencyTester()
 
     @State private var showingPairingImporter = false
+    @State private var showingPasteImport = false
     @State private var detailServerID: String?
 
     /// The sing-box selector tag the engine currently routes through, if it is
@@ -72,6 +73,21 @@ struct ControlView: View {
                 }
             case .failure(let error):
                 vpsPairing.lastError = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showingPasteImport) {
+            PendingPasteImportSheet(busy: vpsPairing.pairing) { text in
+                showingPasteImport = false
+                Task {
+                    await PendingNetConnectionWorkflow.importAndConnect(
+                        pasted: text,
+                        pairing: vpsPairing,
+                        engine: engine,
+                        state: state
+                    )
+                }
+            } onCancel: {
+                showingPasteImport = false
             }
         }
     }
@@ -179,6 +195,11 @@ struct ControlView: View {
                         ))
                         .disabled(latency.busy || vpsPairing.pairing)
                 }
+                Button("粘贴链接") { showingPasteImport = true }
+                    .buttonStyle(PendingQuietButtonStyle(
+                        fill: PendingNetTheme.Palette.surface
+                    ))
+                    .disabled(vpsPairing.pairing)
                 Button {
                     showingPairingImporter = true
                 } label: {
