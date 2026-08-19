@@ -1,5 +1,6 @@
 import Foundation
 import SBTallyCore
+import SystemConfiguration
 
 /// Captured at launch so the app can tell whether this process predates the
 /// helper binary currently sitting in the app bundle.
@@ -497,8 +498,186 @@ func readData(path: String) throws -> Data {
     try Data(contentsOf: URL(fileURLWithPath: path))
 }
 
+// MARK: - 换网卡自愈 + 日志轮转
+
+let ENGINE_LOG = "/var/log/sbtally-singbox.log"
+let HELPER_LOG = "/var/log/pendingnet-helper.log"
+
+/// 这个 daemon 自己的日志。`com.pendingname.pendingnet.helper.plist` 没有
+/// `StandardOutPath`，所以 print 出去的东西谁也看不到；写进一个固定文件才拿得到
+/// 「为什么重启了引擎」的实证，同时也进统一日志方便 `log show` 捞。
+func helperLog(_ message: String) {
+    NSLog("PendingNetHelper: %@", message)
+    let stamp = ISO8601DateFormatter().string(from: Date())
+    guard let data = "\(stamp) \(message)\n".data(using: .utf8) else { return }
+    if let handle = FileHandle(forWritingAtPath: HELPER_LOG) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    } else {
+        FileManager.default.createFile(
+            atPath: HELPER_LOG, contents: data, attributes: [.posixPermissions: 0o644])
+    }
+}
+
+/// 原地截断一个长到没边的日志，留一代尾巴到 `.1`。
+///
+/// launchd 只会往 `StandardOutPath` 一路追加，本机那份引擎日志就这么长到了
+/// 160MB。不能用 newsyslog：它把文件改名之后 sing-box 手上的 fd 还指着旧
+/// inode，而这个 daemon 没有 pidfile 可以让 newsyslog 发信号。launchd 是以
+/// `O_APPEND` 打开的，所以 truncate 到 0 之后进程的下一次写入会落回开头，
+/// 不留空洞——这是这里唯一安全的做法。
+func rotateLogIfNeeded(_ path: String) {
+    guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size]
+        as? NSNumber else { return }
+    let total = size.intValue
+    guard case .rotate(let keep) = PendingNetLogRotation.plan(size: total) else { return }
+    guard let handle = FileHandle(forUpdatingAtPath: path) else {
+        return helperLog("轮转 \(path) 失败：打不开文件")
+    }
+    defer { try? handle.close() }
+    do {
+        try handle.seek(toOffset: UInt64(max(0, total - keep)))
+        let tail = handle.readDataToEndOfFile()
+        let archive = PendingNetLogRotation.archivePath(for: path)
+        try tail.write(to: URL(fileURLWithPath: archive), options: .atomic)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o644], ofItemAtPath: archive)
+        try handle.truncate(atOffset: 0)
+        helperLog("轮转 \(path)：原 \(total) 字节，末尾 \(tail.count) 字节留到 \(archive)，已原地截断")
+    } catch {
+        helperLog("轮转 \(path) 失败：\(error.localizedDescription)")
+    }
+}
+
+/// 盯着系统主链路，换网卡就把引擎踢一下。
+///
+/// 为什么要有这东西：macOS 上有线切无线之后，sing-box 的 `auto_detect_interface`
+/// 不会把出站重新绑到新网卡上——代理腿和 direct 腿一起 `network is unreachable`，
+/// 引擎自己永远缓不过来。文档里那套 `network_strategy` / `network_type` 明写着
+/// 「只在 Android 和 Apple 平台的图形客户端里支持」，也就是走 NetworkExtension 的
+/// 那条路；我们跑的是命令行 daemon，用不上。剩下的路只有从外面重启。
+///
+/// 所有判断（去抖、节流、中间态、用户停掉的引擎不拉起来）都在
+/// `PendingNetLinkWatchdog` 里，有单测；这里只负责取值和执行。
+final class LinkSelfHealer {
+    private let queue = DispatchQueue(label: "com.pendingname.pendingnet.helper.link")
+    private var watchdog = PendingNetLinkWatchdog()
+    private var store: SCDynamicStore?
+    /// 每次重新约复查都 +1，旧的那次醒来发现号码对不上就自己退场。
+    private var wakeGeneration = 0
+
+    func start() {
+        queue.async { [self] in
+            var context = SCDynamicStoreContext(
+                version: 0,
+                info: Unmanaged.passUnretained(self).toOpaque(),
+                retain: nil, release: nil, copyDescription: nil
+            )
+            let callback: SCDynamicStoreCallBack = { _, _, info in
+                guard let info else { return }
+                // SCDynamicStore 的回调派发在下面设的那个队列上，直接干活即可。
+                Unmanaged<LinkSelfHealer>.fromOpaque(info).takeUnretainedValue().tick()
+            }
+            guard let store = SCDynamicStoreCreate(
+                nil, "com.pendingname.pendingnet.helper" as CFString, callback, &context)
+            else {
+                helperLog("订阅主链路变化失败：SCDynamicStoreCreate 返回空，换网卡自愈没启用")
+                return
+            }
+            self.store = store
+            SCDynamicStoreSetNotificationKeys(
+                store,
+                ["State:/Network/Global/IPv4", "State:/Network/Global/IPv6"] as CFArray,
+                nil
+            )
+            SCDynamicStoreSetDispatchQueue(store, queue)
+            helperLog("已订阅主链路变化：换网卡后会自动重启引擎（去抖 "
+                + "\(Int(PendingNetLinkWatchdog.defaultDebounce))s，节流 "
+                + "\(Int(PendingNetLinkWatchdog.defaultThrottle))s）")
+            tick()
+            maintain()
+        }
+    }
+
+    /// 只在 `queue` 上调用。
+    private func tick() {
+        let snapshot = currentSnapshot()
+        let now = ProcessInfo.processInfo.systemUptime
+        switch watchdog.evaluate(
+            snapshot: snapshot, engineShouldRun: engineRunning(), at: now
+        ) {
+        case .idle:
+            break
+        case .wait(let until):
+            wake(after: max(0.2, until - now))
+        case .restart(let reason):
+            heal(reason: reason)
+        }
+    }
+
+    private func wake(after delay: TimeInterval) {
+        wakeGeneration += 1
+        let generation = wakeGeneration
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.wakeGeneration == generation else { return }
+            self.tick()
+        }
+    }
+
+    private func heal(reason: String) {
+        helperLog("自愈：\(reason)")
+        if let error = launchctl(["kickstart", "-k", LABEL]) {
+            return helperLog("自愈失败：kickstart 没成功：\(error)")
+        }
+        guard waitForEngine() else {
+            return helperLog("自愈失败：sing-box 重启后未进入运行状态")
+        }
+        // 重启等于回到 default_mode，用户选的 VPS 和路由档位要照 startEngine 那样补回来。
+        if let configData = try? readData(path: "\(ETC)/master.json") {
+            if let error = activatePendingSelector(configData: configData) {
+                helperLog("自愈后重选 VPS 失败：\(error)")
+            }
+            reapplyStoredRouteMode(configData: configData)
+        }
+        // 新链路可能是这台机器上刚出现的网络服务，代理设置不会自己跟过去。
+        if currentMode() == "sysproxy",
+           FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER) {
+            setSystemProxy(true)
+        }
+        helperLog("自愈完成：引擎已重启")
+    }
+
+    /// 每 5 分钟看一眼两份日志有没有长疯。
+    private func maintain() {
+        rotateLogIfNeeded(ENGINE_LOG)
+        rotateLogIfNeeded(HELPER_LOG)
+        queue.asyncAfter(deadline: .now() + 300) { [weak self] in self?.maintain() }
+    }
+
+    private func currentSnapshot() -> PendingNetLinkSnapshot {
+        guard let store else { return PendingNetLinkSnapshot() }
+        let global = SCDynamicStoreCopyValue(
+            store, "State:/Network/Global/IPv4" as CFString) as? [String: Any]
+        var address: String?
+        if let service = global?["PrimaryService"] as? String,
+           let ipv4 = SCDynamicStoreCopyValue(
+               store, "State:/Network/Service/\(service)/IPv4" as CFString) as? [String: Any],
+           let addresses = ipv4["Addresses"] as? [String] {
+            address = addresses.first
+        }
+        return PendingNetLinkSnapshot(
+            primaryInterface: global?["PrimaryInterface"] as? String,
+            primaryAddress: address,
+            router: global?["Router"] as? String
+        )
+    }
+}
+
 let delegate = Helper()
+let linkSelfHealer = LinkSelfHealer()
 retireLegacyHelperJob()
+linkSelfHealer.start()
 let listener = NSXPCListener(machServiceName: PendingNetIdentifiers.helper)
 listener.delegate = delegate
 listener.resume()
