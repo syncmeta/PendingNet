@@ -77,9 +77,13 @@ struct SBTallyApp: App {
                 .environmentObject(updater)
                 .environmentObject(navigation)
         } label: {
-            Image(systemName: engine.running ? "network" : "network.slash")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(engine.running ? .primary : .secondary)
+            // 用 PendingNet 的应用图标（PendingNetMenuBarIcon，明暗两套变体），
+            // 不再用 SF Symbol 的 network 图标。停止时半透明，保留一眼可辨的连接状态。
+            Image("PendingNetMenuBarIcon")
+                .resizable()
+                .scaledToFit()
+                .frame(height: 20)
+                .opacity(engine.running ? 1.0 : 0.5)
         }
         .menuBarExtraStyle(.window)
         .commands {

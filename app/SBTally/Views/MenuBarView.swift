@@ -31,21 +31,13 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(PendingNetTheme.Palette.accentBackground)
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .foregroundStyle(PendingNetTheme.Palette.accent)
-                }
-                .frame(width: 32, height: 32)
-                Text("PendingNet")
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundStyle(PendingNetTheme.Palette.ink)
-                Spacer()
+                // 这里不再放 PendingNet 字样与图标 -- 菜单栏图标本身就是品牌标识，
+                // 框里只留连接状态药丸，避免重复。
                 PendingStatusPill(
                     text: engine.running ? "已连接" : (engine.takeover == "local" || engine.helperReady ? "已停止" : "等待授权"),
                     kind: engine.running ? .success : .neutral
                 )
+                Spacer()
             }
 
             if engine.takeover != "local" && !engine.helperReady {
