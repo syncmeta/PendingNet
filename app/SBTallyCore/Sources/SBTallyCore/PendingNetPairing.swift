@@ -102,6 +102,7 @@ public enum PendingNetPairingError: LocalizedError, Equatable {
     case invalidToken
     case expired
     case unexpectedFields
+    case invalidLink
     case invalidServerResponse
     case serverRejected(String)
     case keychain(OSStatus)
@@ -117,6 +118,7 @@ public enum PendingNetPairingError: LocalizedError, Equatable {
         case .invalidToken: "配对令牌无效"
         case .expired: "配对文件已过期，请在 VPS 上重新生成"
         case .unexpectedFields: "配对文件字段不完整或包含当前版本不认识的内容"
+        case .invalidLink: "这不是一条 PendingNet 配对链接，请复制完整的 pendingnet:// 链接再试"
         case .invalidServerResponse: "PendingNet Server 返回了无效响应"
         case .serverRejected(let message): message
         case .keychain(let status): "保存 VPS 凭据失败（Keychain \(status)）"

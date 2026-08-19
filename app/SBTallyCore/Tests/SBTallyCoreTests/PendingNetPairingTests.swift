@@ -152,6 +152,108 @@ final class PendingNetPairingTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - 配对链接
+
+    /// Go 侧 `internal/pairing` 的 `File.URL` 实打实吐出来的一条链接（假数据）。
+    /// 它是两端解析对齐的锚点：同一条链接，Swift 解出来的必须和 Go 一模一样。
+    /// 生成端只有 Go 那一份，所以这里钉的是它的输出，不是我们自己拼的字符串。
+    private var goldenLink: String { "pendingnet://pair?v=1&d=eyJmb3JtYXQiOiJwZW5kaW5nbmV0LXBhaXJpbmciLCJ2ZXJzaW9uIjoxLCJzZXJ2ZXJfaWQiOiJwbnNfZmRvelBSR3pnV1JfUHR4ZFhBWnFXSWtyIiwibmFtZSI6IlBlbmRpbmdOZXQgTEEiLCJjb250cm9sIjp7ImVuZHBvaW50IjoiaHR0cHM6Ly8yMDMuMC4xMTMuMTA6NzQ0MyIsImNlcnRpZmljYXRlX3NoYTI1NiI6InNoYTI1NjphYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiIn0sImVucm9sbG1lbnQiOnsidG9rZW4iOiJ0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0IiwiZXhwaXJlc19hdCI6IjIwMjYtMDgtMTlUMTI6MTA6MDBaIn19" }
+    private var goldenPayload: String { goldenLink.components(separatedBy: "&d=")[1] }
+    /// 金链子里那份凭据 2026-08-19T12:10:00Z 过期，所以这些用例用它之前的时刻。
+    private var beforeGoldenExpiry: Date { Date(timeIntervalSince1970: 1_755_000_000) }
+
+    func testDecodePairingLink() throws {
+        let pairing = try PendingNetPairingFile.decode(link: goldenLink, now: beforeGoldenExpiry)
+        XCTAssertEqual(pairing.format, "pendingnet-pairing")
+        XCTAssertEqual(pairing.version, 1)
+        XCTAssertEqual(pairing.serverID, "pns_fdozPRGzgWR_PtxdXAZqWIkr")
+        XCTAssertEqual(pairing.name, "PendingNet LA")
+        XCTAssertEqual(pairing.control.endpoint, "https://203.0.113.10:7443")
+        XCTAssertEqual(
+            pairing.control.certificateSHA256,
+            "sha256:abababababababababababababababababababababababababababababababab"
+        )
+        XCTAssertEqual(pairing.enrollment.token, "ttttttttttttttttttttttttttttttttttttttttttt")
+        XCTAssertEqual(
+            pairing.enrollment.expiresAt,
+            ISO8601DateFormatter().date(from: "2026-08-19T12:10:00Z")
+        )
+    }
+
+    func testPairingLinkTolerantOfPaste() {
+        // 从聊天软件里复制常常带回车和空格；被路上补了 base64 填充也照收。
+        XCTAssertNoThrow(try PendingNetPairingFile.decode(
+            link: "  \n" + goldenLink + "\n ", now: beforeGoldenExpiry
+        ))
+        XCTAssertNoThrow(try PendingNetPairingFile.decode(
+            link: goldenLink + "==", now: beforeGoldenExpiry
+        ))
+    }
+
+    func testRejectsExpiredPairingLink() {
+        XCTAssertThrowsError(try PendingNetPairingFile.decode(
+            link: goldenLink, now: Date(timeIntervalSince1970: 1_800_000_000)
+        )) { error in
+            XCTAssertEqual(error as? PendingNetPairingError, .expired)
+        }
+    }
+
+    func testRejectsMalformedPairingLink() {
+        let notPairingJSON = base64URL(#"{"hello":"world"}"#)
+        let cases: [String: String] = [
+            "空": "",
+            "随手粘的一段话": "just some text a user pasted",
+            "scheme 不对": "https://pair?v=1&d=" + goldenPayload,
+            "host 不对": "pendingnet://connect?v=1&d=" + goldenPayload,
+            "多了路径": "pendingnet://pair/import?v=1&d=" + goldenPayload,
+            "没有版本": "pendingnet://pair?d=" + goldenPayload,
+            "多了参数": "pendingnet://pair?v=1&d=" + goldenPayload + "&extra=1",
+            "参数重复": "pendingnet://pair?v=1&d=" + goldenPayload + "&d=" + goldenPayload,
+            "没有载荷": "pendingnet://pair?v=1",
+            "载荷不是 base64url": "pendingnet://pair?v=1&d=not*base64*url",
+            "载荷不是 JSON": "pendingnet://pair?v=1&d=" + base64URL("not json at all"),
+            "JSON 不是配对文件": "pendingnet://pair?v=1&d=" + notPairingJSON,
+        ]
+        for (name, link) in cases {
+            XCTAssertThrowsError(
+                try PendingNetPairingFile.decode(link: link, now: beforeGoldenExpiry),
+                name
+            )
+        }
+    }
+
+    func testRejectsFuturePairingLinkVersion() {
+        XCTAssertThrowsError(try PendingNetPairingFile.decode(
+            link: "pendingnet://pair?v=2&d=" + goldenPayload, now: beforeGoldenExpiry
+        )) { error in
+            XCTAssertEqual(error as? PendingNetPairingError, .unsupportedVersion(2))
+        }
+    }
+
+    /// 粘贴框两种都得吃：一条链接，或者把 .pdn 用文本编辑器打开整段复制过来。
+    func testDecodePastedTextAcceptsLinkAndDocument() throws {
+        let fromLink = try PendingNetPairingFile.decode(pasted: goldenLink, now: beforeGoldenExpiry)
+        XCTAssertEqual(fromLink.serverID, "pns_fdozPRGzgWR_PtxdXAZqWIkr")
+
+        let document = String(decoding: pairingJSON(), as: UTF8.self)
+        let fromDocument = try PendingNetPairingFile.decode(
+            pasted: "\n  " + document + "  \n", now: now
+        )
+        XCTAssertEqual(fromDocument.serverID, "pns_test")
+
+        XCTAssertThrowsError(try PendingNetPairingFile.decode(pasted: "   ", now: now)) { error in
+            XCTAssertEqual(error as? PendingNetPairingError, .invalidLink)
+        }
+    }
+
+    private func base64URL(_ text: String) -> String {
+        Data(text.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
 }
 
 private func validateMergedLocalConfigs(
