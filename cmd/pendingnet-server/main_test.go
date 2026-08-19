@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"sbtally/internal/pairing"
 )
 
 func TestInitPairAndStatusCommands(t *testing.T) {
@@ -20,10 +23,22 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 		t.Fatalf("unexpected init output: %s", out.String())
 	}
 
+	// 不带 --format 就是链接：默认那条路要有测试盯着，改默认值不该是静悄悄的。
+	out.Reset()
+	if err := run([]string{
+		"pair", "create", "--state-dir", dir, "--ttl", "5m",
+	}, &out, &errOut); err != nil {
+		t.Fatalf("pair create: %v (%s)", err, errOut.String())
+	}
+	link := strings.TrimSpace(out.String())
+	if _, err := pairing.ParseURL(link, time.Now()); err != nil {
+		t.Fatalf("default output is not a pairing link (%q): %v", link, err)
+	}
+
 	pairPath := filepath.Join(dir, "exports", "vps-test.pdn")
 	out.Reset()
 	if err := run([]string{
-		"pair", "create", "--state-dir", dir, "--ttl", "5m", "--out", pairPath,
+		"pair", "create", "--state-dir", dir, "--ttl", "5m", "--format", "json", "--out", pairPath,
 	}, &out, &errOut); err != nil {
 		t.Fatalf("pair create: %v (%s)", err, errOut.String())
 	}
@@ -34,12 +49,42 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("pair file permissions %o", info.Mode().Perm())
 	}
+	written, err := os.ReadFile(pairPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pairing.Parse(bytes.TrimSpace(written), time.Now()); err != nil {
+		t.Fatalf("--format json did not write a pairing document: %v", err)
+	}
+
+	// --out 跟着 format 走：链接进文件，而不是文件里躺着一份 JSON。
+	linkPath := filepath.Join(dir, "exports", "vps-test.txt")
+	out.Reset()
+	if err := run([]string{
+		"pair", "create", "--state-dir", dir, "--ttl", "5m", "--out", linkPath,
+	}, &out, &errOut); err != nil {
+		t.Fatalf("pair create: %v (%s)", err, errOut.String())
+	}
+	writtenLink, err := os.ReadFile(linkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pairing.ParseURL(string(writtenLink), time.Now()); err != nil {
+		t.Fatalf("--out did not write a pairing link: %v", err)
+	}
+
+	out.Reset()
+	if err := run([]string{
+		"pair", "create", "--state-dir", dir, "--format", "qr",
+	}, &out, &errOut); err == nil {
+		t.Fatal("expected an unknown --format to be rejected")
+	}
 
 	out.Reset()
 	if err := run([]string{"status", "--state-dir", dir}, &out, &errOut); err != nil {
 		t.Fatalf("status: %v (%s)", err, errOut.String())
 	}
-	if !strings.Contains(out.String(), `"active_pairings": 1`) || !strings.Contains(out.String(), `"devices": 0`) {
+	if !strings.Contains(out.String(), `"active_pairings": 3`) || !strings.Contains(out.String(), `"devices": 0`) {
 		t.Fatalf("unexpected status output: %s", out.String())
 	}
 }
