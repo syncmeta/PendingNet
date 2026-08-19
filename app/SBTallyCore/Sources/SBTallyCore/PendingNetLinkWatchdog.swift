@@ -26,16 +26,42 @@ public struct PendingNetLinkSnapshot: Equatable, Sendable {
 
     /// 有主网卡才算「有网」。换网卡的中途会短暂落到这个状态，不能在这时候重启引擎
     /// —— 重启到一个没有默认路由的系统里，sing-box 一样起不来。
-    public var isOnline: Bool {
-        guard let primaryInterface else { return false }
-        return !primaryInterface.isEmpty
+    public var isOnline: Bool { Self.normalized(primaryInterface) != nil }
+
+    /// 两份快照是不是同一条链路。
+    ///
+    /// 只看网卡和地址：这两样才决定 sing-box 的出站绑在哪儿。默认网关**不算**——
+    /// 同一块网卡、同一个地址，网关字符串抖一下（DHCP 续约、SCDynamicStore 先后
+    /// 写入两个键）跟出站绑定没有关系，而重启引擎的代价是全机断网，误判比漏判贵得多。
+    /// 本机 10:22:50 那次「从 en7(192.168.1.17) 变成 en7(192.168.1.17)」的自愈，
+    /// 就是被这种变化触发的。
+    ///
+    /// nil 和空串当同一回事：SCDynamicStore 在切换中途会把键写成空，那不是一条新链路。
+    public func isSameLink(as other: PendingNetLinkSnapshot) -> Bool {
+        Self.normalized(primaryInterface) == Self.normalized(other.primaryInterface)
+            && Self.normalized(primaryAddress) == Self.normalized(other.primaryAddress)
     }
 
-    /// 给日志用的人话，例如 `en7(192.168.1.17)`。
+    /// 给日志用的人话，例如 `en7(192.168.1.17) 网关 192.168.1.2`。
+    ///
+    /// 网关必须一起印出来，哪怕它不参与「要不要重启」的判断：日志是事后唯一的物证，
+    /// 只印网卡和地址的话，一条网关引发的变化在日志里就长成「从 X 变成 X」，没人看得懂。
     public var describedForLog: String {
-        guard let primaryInterface, !primaryInterface.isEmpty else { return "无主网卡" }
-        guard let primaryAddress, !primaryAddress.isEmpty else { return primaryInterface }
-        return "\(primaryInterface)(\(primaryAddress))"
+        let interface = Self.normalized(primaryInterface)
+        let address = Self.normalized(primaryAddress)
+        let link: String
+        switch (interface, address) {
+        case (nil, _): link = "无主网卡"
+        case (let interface?, nil): link = "\(interface)(无地址)"
+        case (let interface?, let address?): link = "\(interface)(\(address))"
+        }
+        return link + " 网关 " + (Self.normalized(router) ?? "无")
+    }
+
+    /// 空串一律当没有：SCDynamicStore 里「这个键暂时没值」既可能是缺键也可能是空串。
+    static func normalized(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 }
 
@@ -115,13 +141,24 @@ public struct PendingNetLinkWatchdog: Equatable {
             return .idle
         }
 
-        if snapshot != previous {
-            lastSnapshot = snapshot
-            // 每看到一次变化就把去抖窗口重新拉满：还在抖就接着等。
+        // 基线永远跟上最新一份快照，网关也记进去——它不触发重启，但下一次
+        // 「从哪儿变到哪儿」要拿它来说话。
+        lastSnapshot = snapshot
+
+        if !snapshot.isSameLink(as: previous) {
+            // 每看到一次真正的链路变化就把去抖窗口重新拉满：还在抖就接着等。
+            // 只有网关变了的话这里不动，pending 也不会凭空冒出来。
             pending = Pending(from: pending?.from ?? previous, noticedAt: now)
         }
 
         guard let pending else { return .idle }
+
+        // 抖回原地了：网卡和地址跟出发时一模一样（比如拔掉网线又插回同一个口，
+        // 或者中途只有网关变过）。出站还绑在同一条链路上，重启只会白断一次网。
+        if snapshot.isSameLink(as: pending.from) {
+            self.pending = nil
+            return .idle
+        }
 
         let ready = pending.noticedAt + debounce
         if now < ready { return .wait(until: ready) }
