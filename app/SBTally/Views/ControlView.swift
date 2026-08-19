@@ -37,25 +37,10 @@ struct ControlView: View {
         return engine.running ? ("已连接", .success) : ("已停止", .neutral)
     }
 
+    /// `state.mode` 是 Clash 那边的写法（引擎回读的、或我们发下去的）。翻回
+    /// 档位一律走 `clashNamed`，不靠大小写变换——见 `PendingNetClashControl`。
     private var routeMode: PendingNetRouteMode? {
-        PendingNetRouteMode(rawValue: state.mode.lowercased())
-    }
-
-    private var friendlyEngineError: String? {
-        guard let error = engine.lastError else { return nil }
-        if error.localizedCaseInsensitiveContains("operation not permitted") {
-            // Pending approval is the common case; a leftover legacy
-            // registration is only plausible once approval is done.
-            if engine.helperNeedsApproval {
-                return "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目。"
-            }
-            return "旧版后台服务仍在系统中。请先在系统设置里关闭 PendingNet 后台项目，再回来重新授权。"
-        }
-        if error.localizedCaseInsensitiveContains("could not connect") ||
-            error.localizedCaseInsensitiveContains("助手连接失败") {
-            return "后台服务尚未连接，请重新授权。"
-        }
-        return error
+        PendingNetRouteMode.clashNamed(state.mode)
     }
 
     var body: some View {
@@ -115,7 +100,7 @@ struct ControlView: View {
                 PendingRouteModePicker(selection: routeMode) { mode in
                     Task {
                         await PendingNetRoutingWorkflow.select(
-                            mode: mode.rawValue.capitalized,
+                            mode: mode.clashName,
                             engine: engine,
                             state: state
                         )
@@ -140,14 +125,6 @@ struct ControlView: View {
                 ) { name in
                     Task { await state.select(selector: selector, name: name) }
                 }
-            }
-
-            if let error = friendlyEngineError {
-                messageBanner(error, kind: .danger)
-            }
-
-            if let error = vpsPairing.lastError {
-                messageBanner(error, kind: .danger)
             }
 
             if engine.startFailed && !engine.logTail.isEmpty {
@@ -280,21 +257,4 @@ struct ControlView: View {
         Task { await latency.measureAll(vpsPairing.servers) }
     }
 
-    private func messageBanner(_ text: String, kind: PendingStatusPill.Kind) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: kind == .danger ? "exclamationmark.circle.fill" : "info.circle.fill")
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(PendingNetTheme.Fonts.caption)
-        .foregroundStyle(kind == .danger
-            ? PendingNetTheme.Palette.danger
-            : PendingNetTheme.Palette.inkMuted)
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(kind == .danger
-            ? PendingNetTheme.Palette.dangerBackground
-            : PendingNetTheme.Palette.surfaceMuted)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
 }

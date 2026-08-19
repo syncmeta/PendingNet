@@ -71,16 +71,17 @@ struct MenuBarView: View {
                 }
             }
 
-            PendingPillPicker(
-                options: [
-                    .init("Global", "全局"),
-                    .init("Whitelist", "白名单"),
-                    .init("Blacklist", "黑名单"),
-                ],
-                selection: state.mode
+            // 档位名不在这里另写一遍：三个中文名跟主窗口共用同一个选择器，
+            // Clash 那边的写法只由 `clashName` / `clashNamed` 翻译。
+            PendingRouteModePicker(
+                selection: PendingNetRouteMode.clashNamed(state.mode)
             ) { mode in
                 Task {
-                    await PendingNetRoutingWorkflow.select(mode: mode, engine: engine, state: state)
+                    await PendingNetRoutingWorkflow.select(
+                        mode: mode.clashName,
+                        engine: engine,
+                        state: state
+                    )
                 }
             }
             if let note = state.modeNote {
@@ -134,11 +135,9 @@ struct MenuBarView: View {
                     Task { await state.select(selector: selector, name: name) }
                 }
             }
-            if let error = engine.lastError {
-                Text(error)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.danger)
-            }
+            // 引擎错误不再写在这里常驻：菜单栏根上挂了 toast（见 SBTallyApp），
+            // 失败时弹一下自动消失。下面只留失败时的运行日志（折叠态），它是
+            // 诊断用的，不是要用户一直盯着读的报错。
             if engine.startFailed && !engine.logTail.isEmpty {
                 ScrollView {
                     Text(engine.logTail)

@@ -108,13 +108,6 @@ struct PendingNetIOSHomeView: View {
             if controller.tunnel.isTunnelLive, !controller.tunnel.outboundMembers.isEmpty {
                 outboundPills
             }
-
-            if let message = controller.message {
-                messageBanner(message, kind: .success)
-            }
-            if let error = controller.errorMessage {
-                messageBanner(error, kind: .danger)
-            }
         }
     }
 
@@ -366,26 +359,6 @@ struct PendingNetIOSHomeView: View {
         case .reasserting: "重连中"
         @unknown default: "未知"
         }
-    }
-
-    private func messageBanner(_ text: String, kind: PendingStatusPill.Kind) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: kind == .danger
-                ? "exclamationmark.circle.fill"
-                : "checkmark.circle.fill")
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(PendingNetTheme.Fonts.caption)
-        .foregroundStyle(kind == .danger
-            ? PendingNetTheme.Palette.danger
-            : PendingNetTheme.Palette.success)
-        .padding(11)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(kind == .danger
-            ? PendingNetTheme.Palette.dangerBackground
-            : PendingNetTheme.Palette.accentBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }
 

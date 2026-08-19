@@ -31,7 +31,7 @@ struct PendingLocalInboundCard: View {
 
     @State private var portField = ""
     @State private var saving = false
-    @State private var errorMessage: String?
+    @EnvironmentObject private var toast: PendingToastCenter
 
     var body: some View {
         PendingSectionCard("端口") {
@@ -58,15 +58,6 @@ struct PendingLocalInboundCard: View {
                 .font(PendingNetTheme.Fonts.body)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
                 .disabled(saving)
-
-                // 存成功不报喜：输入框里就是刚存下的那个端口，它自己是回执。
-                // 只有失败才说话。
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
         }
         .task { portField = String(port) }
@@ -107,15 +98,14 @@ struct PendingLocalInboundCard: View {
                 reservedPort: reservedPort
             )
         } catch {
-            errorMessage = error.localizedDescription
+            toast.show(error.localizedDescription)
             return
         }
-        errorMessage = nil
         saving = true
         Task {
             let failure = await save(port, nextLAN)
             saving = false
-            errorMessage = failure
+            if let failure { toast.show(failure) }
             // 成功就把输入框对齐到刚存下的那个端口；失败**不动**它——调用方
             // 已经把设置退回原值了，此刻把用户刚敲的数字也抹掉，他连改错了
             // 什么都看不见。（不能写 `String(self.port)`：这个 View 实例的
@@ -152,7 +142,7 @@ struct PendingRuleSetCard: View {
     let refresh: () async -> String?
 
     @State private var refreshing = false
-    @State private var errorMessage: String?
+    @EnvironmentObject private var toast: PendingToastCenter
 
     private var isReady: Bool { !items.isEmpty && items.allSatisfy(\.ready) }
 
@@ -188,12 +178,11 @@ struct PendingRuleSetCard: View {
                 Button {
                     Task {
                         refreshing = true
-                        errorMessage = nil
                         let failure = await refresh()
                         refreshing = false
                         // 下好了不报喜：上面每一份的「已就绪 / 缺失」和那颗
                         // 状态药丸自己会翻，只有失败才说话。
-                        errorMessage = failure
+                        if let failure { toast.show(failure) }
                     }
                 } label: {
                     if refreshing {
@@ -207,13 +196,6 @@ struct PendingRuleSetCard: View {
                 }
                 .buttonStyle(PendingQuietButtonStyle())
                 .disabled(refreshing)
-
-                if let errorMessage {
-                    Text(errorMessage)
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
             }
         }
     }

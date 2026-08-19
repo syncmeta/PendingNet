@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct PendingNetIOSApp: App {
     @StateObject private var controller = PendingNetIOSController()
+    /// 短暂浮层提示。错误 / 成功消息不再常驻在卡片里，改成弹一下自动消失--
+    /// 否则一条一次性的报错会一直挂在界面上，问题修好了也还在。
+    @StateObject private var toast = PendingToastCenter()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -17,6 +20,7 @@ struct PendingNetIOSApp: App {
                     .tabItem { Label("设置", systemImage: "gearshape") }
             }
             .environmentObject(controller)
+            .environmentObject(toast)
             .tint(PendingNetTheme.Palette.accent)
             // 从「文件」、AirDrop 或别的 App 点开一个 .pdn 就直接配对，不用
             // 先进 App 再点导入。类型声明在 project.yml 的 info 段里；只声明
@@ -30,6 +34,18 @@ struct PendingNetIOSApp: App {
                 // 不一致，正是这一轮在消灭的那类东西。
                 guard url.pathExtension.lowercased() == "pdn" else { return }
                 Task { await importPairing(from: url) }
+            }
+            // Errors / success messages are now toasts, not inline banners that
+            // linger. Observed at the root so both tabs surface them, and they
+            // dismiss themselves; nil (cleared at the start of each op) is ignored.
+            .onChange(of: controller.errorMessage) { _, value in
+                if let value { toast.show(value) }
+            }
+            .onChange(of: controller.message) { _, value in
+                if let value { toast.show(value, kind: .success) }
+            }
+            .overlay(alignment: .top) {
+                PendingToastOverlay(center: toast)
             }
         }
         // 回到前台顺手拉一次 iCloud —— 在 Mac 上配好的 VPS 不用重开 App 就能

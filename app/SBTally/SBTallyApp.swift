@@ -9,6 +9,9 @@ struct SBTallyApp: App {
     @StateObject private var vpsPairing: VPSPairingController
     @StateObject private var updater = PendingNetUpdateController()
     @StateObject private var navigation = PendingNetNavigation()
+    /// 短暂浮层提示。错误 / 成功消息不再常驻在卡片里，改成弹一下自动消失--
+    /// 否则一条一次性的报错会一直挂在界面上，问题修好了也还在。
+    @StateObject private var toast = PendingToastCenter()
     @Environment(\.openWindow) private var openWindow
 
     /// 每个 controller 都在自己的 init 里读 `UserDefaults`，所以旧域的搬迁必须
@@ -31,6 +34,7 @@ struct SBTallyApp: App {
                 .environmentObject(vpsPairing)
                 .environmentObject(updater)
                 .environmentObject(navigation)
+                .environmentObject(toast)
                 // 内容并成一张卡之后不需要那么宽；最小值仍留足侧栏 + 一排药丸
                 // 不被截断的余量。
                 .frame(minWidth: 640, minHeight: 440)
@@ -66,6 +70,18 @@ struct SBTallyApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     engine.stopBeforeTermination()
                 }
+                // 错误改成 toast 弹出，不再写进卡片常驻。在主窗口根上观察：不论
+                // 当前停在连接 / 实时 / 设置哪个分区，引擎或配对失败都能弹到用户
+                // 面前，然后自己消失。`nil` 是被成功路径清掉的，忽略即可。
+                .onChange(of: engine.lastError) { _, _ in
+                    if let text = engine.friendlyErrorText() { toast.show(text) }
+                }
+                .onChange(of: vpsPairing.lastError) { _, value in
+                    if let value { toast.show(value) }
+                }
+                .overlay(alignment: .top) {
+                    PendingToastOverlay(center: toast)
+                }
         }
         .defaultSize(width: 720, height: 500)
 
@@ -76,6 +92,15 @@ struct SBTallyApp: App {
                 .environmentObject(vpsPairing)
                 .environmentObject(updater)
                 .environmentObject(navigation)
+                .environmentObject(toast)
+                // 主窗口关掉时，菜单栏是唯一在场的入口；引擎失败也得在这里
+                // 弹出来，不能因为主窗口没开就静默。
+                .onChange(of: engine.lastError) { _, _ in
+                    if let text = engine.friendlyErrorText() { toast.show(text) }
+                }
+                .overlay(alignment: .top) {
+                    PendingToastOverlay(center: toast)
+                }
         } label: {
             // 用 PendingNet 的应用图标（PendingNetMenuBarIcon，明暗两套变体），
             // 不再用 SF Symbol 的 network 图标。停止时半透明，保留一眼可辨的连接状态。

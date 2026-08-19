@@ -53,6 +53,27 @@ final class EngineController: ObservableObject {
         allowsLAN = userEngine.allowsLAN
     }
 
+    /// 把原始 `lastError` 翻成用户能照着做的一句话。连接页和菜单栏都靠它--
+    /// 错误现在以 toast 弹出，不再常驻在卡片里，所以这份"人话"要在推送 toast
+    /// 的地方（应用根层，不分当前在哪个分区）也能取到，不能只活在某个视图的
+    /// 计算属性里。
+    func friendlyErrorText() -> String? {
+        guard let error = lastError else { return nil }
+        if error.localizedCaseInsensitiveContains("operation not permitted") {
+            // Pending approval is the common case; a leftover legacy
+            // registration is only plausible once approval is done.
+            if helperNeedsApproval {
+                return "请在系统设置 -> 通用 -> 登录项与扩展中允许 PendingNet 后台项目。"
+            }
+            return "旧版后台服务仍在系统中。请先在系统设置里关闭 PendingNet 后台项目，再回来重新授权。"
+        }
+        if error.localizedCaseInsensitiveContains("could not connect") ||
+            error.localizedCaseInsensitiveContains("助手连接失败") {
+            return "后台服务尚未连接，请重新授权。"
+        }
+        return error
+    }
+
     /// 改端口 / 局域网访问。返回 nil 表示成功，否则是给用户看的人话。
     /// 引擎在跑的话会就地重启到新配置，不用用户自己去关了再开。
     func setLocalInbound(port: Int, allowLAN: Bool) async -> String? {
