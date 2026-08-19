@@ -218,6 +218,58 @@ func restartEngineProcess() -> String? {
     return nil
 }
 
+/// 一个文件现在多少字节，读不到就是 0。
+func fileSize(_ path: String) -> Int {
+    ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?
+        .intValue ?? 0
+}
+
+/// 引擎日志从 `offset` 之后新写进去的那一段。
+func engineLogWritten(since offset: Int) -> String {
+    let current = fileSize(ENGINE_LOG)
+    let start = PendingNetEngineHealth.tailOffset(previousSize: offset, currentSize: current)
+    guard let handle = FileHandle(forReadingAtPath: ENGINE_LOG) else { return "" }
+    defer { try? handle.close() }
+    guard (try? handle.seek(toOffset: UInt64(start))) != nil else { return "" }
+    let data = (try? handle.readToEnd()) ?? Data()
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
+/// 重启引擎，并确认新实例真的绑上了网卡；没绑上就再来一次（最多两次）。
+///
+/// launchd 报 running 只说明进程还在。系统那会儿如果还没有默认路由，sing-box 的
+/// `auto_detect_interface` 就绑不到网卡，日志里吐 `missing default interface`——
+/// 进程活着，整机没网。判据和重试预算都在 `PendingNetEngineHealth` 里，有单测；
+/// 这里只负责取日志、睡觉、再踢一脚，每一步都写进 helper 日志。
+///
+/// `context` 是写进日志的那个称呼（谁要求的这次重启）。返回 nil 表示引擎在跑；
+/// 补救到头还是绑不上时也返回 nil —— 引擎确实起来了，而这时候把 VPS 配置回滚掉
+/// 只会让事情更糟，留一行日志给人看更实在。
+func restartEngine(context: String) -> String? {
+    var retries = 0
+    while true {
+        let before = fileSize(ENGINE_LOG)
+        if let error = restartEngineProcess() { return error }
+        guard waitForEngine() else { return "sing-box 重启后未进入运行状态" }
+        Thread.sleep(forTimeInterval: PendingNetEngineHealth.defaultSettleDelay)
+        switch PendingNetEngineHealth.verdict(
+            freshLog: engineLogWritten(since: before), retriesSoFar: retries
+        ) {
+        case .healthy:
+            return nil
+        case .retry(let attempt, let after):
+            helperLog("\(context)：引擎起来了却绑不到网卡（\(PendingNetEngineHealth.unboundInterfaceMarker)），"
+                + "\(Int(after)) 秒后重启第 \(attempt) 次")
+            Thread.sleep(forTimeInterval: after)
+            retries = attempt
+        case .giveUp(let restarts):
+            helperLog("\(context)：连着重启 \(restarts) 次，引擎仍然绑不到网卡，不再重试——"
+                + "引擎在跑，但这台机器现在可能没有外网")
+            return nil
+        }
+    }
+}
+
 /// What the engine's Clash API said, or why it could not be asked at all.
 enum ClashResponse {
     case answered(status: Int, body: Data)
@@ -401,8 +453,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
         guard wasRunning else { return reply(nil) }
-        if let error = restartEngineProcess() { return reply(error) }
-        guard waitForEngine() else { return reply("sing-box 重启后未进入运行状态") }
+        if let error = restartEngine(context: "切换接管模式") { return reply(error) }
         if let configData = try? readData(path: "\(ETC)/master.json") {
             reapplyStoredRouteMode(configData: configData)
         }
@@ -481,13 +532,9 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 try writeConfig(active, path: masterPath)
                 try writeConfig(Data((selectorTag + "\n").utf8), path: ACTIVE_SELECTOR)
                 if wasRunning {
-                    if let error = restartEngineProcess() {
+                    if let error = restartEngine(context: "应用 VPS 配置") {
                         throw NSError(domain: "PendingNetHelper", code: 2,
                                       userInfo: [NSLocalizedDescriptionKey: error])
-                    }
-                    guard waitForEngine() else {
-                        throw NSError(domain: "PendingNetHelper", code: 3,
-                                      userInfo: [NSLocalizedDescriptionKey: "sing-box 重启后未进入运行状态"])
                     }
                     if let error = activatePendingSelector(configData: active) {
                         throw NSError(domain: "PendingNetHelper", code: 4,
@@ -504,7 +551,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 } else {
                     try? FileManager.default.removeItem(atPath: ACTIVE_SELECTOR)
                 }
-                if wasRunning { _ = restartEngineProcess() }
+                if wasRunning { _ = restartEngine(context: "回滚 VPS 配置") }
                 throw error
             }
             reply(nil)
@@ -684,11 +731,8 @@ final class LinkSelfHealer {
 
     private func heal(reason: String) {
         helperLog("自愈：\(reason)")
-        if let error = restartEngineProcess() {
-            return helperLog("自愈失败：重启引擎没成功：\(error)")
-        }
-        guard waitForEngine() else {
-            return helperLog("自愈失败：sing-box 重启后未进入运行状态")
+        if let error = restartEngine(context: "换网卡自愈") {
+            return helperLog("自愈失败：\(error)")
         }
         // 重启等于回到 default_mode，用户选的 VPS 和路由档位要照 startEngine 那样补回来。
         if let configData = try? readData(path: "\(ETC)/master.json") {
