@@ -10,7 +10,9 @@ import SBTallyCore
 /// control that never explained itself).
 @MainActor
 enum PendingNetRoutingWorkflow {
-    private static let listModes = ["Whitelist", "Blacklist"]
+    /// 需要分流名单的那两档，用的还是 `clashName` 那一份对照表——这里再手写
+    /// 一遍 "Whitelist" 就等于又开了一处会和它走散的写法。
+    private static let listModes = [PendingNetRouteMode.whitelist, .blacklist].map(\.clashName)
 
     static func select(
         mode: String,

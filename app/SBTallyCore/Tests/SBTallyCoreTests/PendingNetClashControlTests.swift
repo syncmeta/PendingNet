@@ -77,4 +77,33 @@ final class PendingNetClashControlTests: XCTestCase {
         XCTAssertNil(PendingNetRouteMode.clashNamed("Direct"))
         XCTAssertNil(PendingNetRouteMode.clashNamed(""))
     }
+
+    /// 老用户磁盘上存着的那些字符串，改完映射之后必须还认得。
+    ///
+    /// 两端存的**不是**同一套词汇：macOS 的 `pendingnet.route-mode` 存的是
+    /// Clash 写法（界面点一下就写下去的那个），iOS 存的是枚举 rawValue。
+    /// 谁也别去认对方的写法——认错一档就是用户以为在白名单、实际在全局。
+    func testHistoricallyPersistedModeStringsStillRead() {
+        // macOS：自 5d0929f 起这个键里只可能是这三个值。
+        XCTAssertEqual(PendingNetRouteMode.clashNamed("Global"), .global)
+        XCTAssertEqual(PendingNetRouteMode.clashNamed("Whitelist"), .whitelist)
+        XCTAssertEqual(PendingNetRouteMode.clashNamed("Blacklist"), .blacklist)
+
+        // iOS：rawValue，外加改名前的老写法。
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "global"), .global)
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "whitelist"), .whitelist)
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "blacklist"), .blacklist)
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "bypassCN"), .whitelist)
+        XCTAssertEqual(PendingNetRouteMode.stored(rawValue: "direct"), .global)
+    }
+
+    func testTheTwoVocabulariesDoNotReadEachOther() {
+        // Clash 的 "Direct"（不走代理）和 iOS 老存档里那个已取消的「全局直连」
+        // 长得一样、意思不一样，各认各的。
+        XCTAssertNil(PendingNetRouteMode.clashNamed("bypassCN"))
+        XCTAssertNil(PendingNetRouteMode.stored(rawValue: "Global"))
+        // 引擎报回一个我们不认识的档（老配置里的 "Rule"）时宁可一颗都不点亮，
+        // 也不猜一个最像的——猜错就是界面和引擎各说各话。
+        XCTAssertNil(PendingNetRouteMode.clashNamed("Rule"))
+    }
 }

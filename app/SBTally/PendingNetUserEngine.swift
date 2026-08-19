@@ -107,7 +107,7 @@ final class PendingNetUserEngine {
     func enableListMode(_ requestedMode: PendingNetRouteMode) async -> Bool {
         let sets = ruleSets
         guard await sets.download(throughLocalProxyPort: isRunning ? proxyPort : nil),
-              let directory = sets.configuredDirectory else { return false }
+              let configured = sets.configured else { return false }
         guard fileManager.fileExists(atPath: configURL.path) else {
             return sets.isReady(for: requestedMode)
         }
@@ -118,8 +118,7 @@ final class PendingNetUserEngine {
             }
             let updated = try PendingNetProxyOnlyConfig.applyingRouteRules(
                 to: current,
-                ruleSetDirectory: directory,
-                availableRuleSetTags: sets.availableRuleSetTags
+                ruleSets: configured
             )
             try validate(updated)
             let wasRunning = isRunning
@@ -140,8 +139,7 @@ final class PendingNetUserEngine {
             cachePath: engineDirectory.appendingPathComponent("cache.db").path,
             listenPort: proxyPort,
             listenAddress: listenAddress,
-            ruleSetDirectory: ruleSets.configuredDirectory,
-            availableRuleSetTags: ruleSets.availableRuleSetTags
+            ruleSets: ruleSets.configured
         )
         let config = try PendingNetLocalConfigComposer.merge(
             baseConfig: base,

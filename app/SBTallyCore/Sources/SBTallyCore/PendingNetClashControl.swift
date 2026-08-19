@@ -56,7 +56,15 @@ public struct PendingNetClashEndpoint: Sendable, Equatable {
 }
 
 extension PendingNetRouteMode {
-    /// Clash API 与配置里 `clash_mode` 用的写法。
+    /// 档位 ↔ Clash 写法，全项目就这一份对照表。
+    ///
+    /// 枚举的 rawValue（`global`）和 Clash 的写法（`Global`）只是碰巧差一个
+    /// 大小写，**不能**靠 `lowercased()` / `capitalized` 互相拼——那等于把两套
+    /// 词汇的对应关系写成一次字符串变换，哪天某一边多一档、或者写法不再只差
+    /// 大小写（`bypassCN` 这种老写法就是），转换会安静地转出个 nil，界面上
+    /// 表现为「一颗药丸都没点亮」，没人知道是哪一步丢的。
+    ///
+    /// 下面这个 switch 是穷举的：新增档位时编译器会逼着这里一起加。
     public var clashName: String {
         switch self {
         case .global: "Global"

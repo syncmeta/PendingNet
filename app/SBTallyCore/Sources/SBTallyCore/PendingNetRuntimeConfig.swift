@@ -196,6 +196,25 @@ public enum PendingNetProxyOnlyConfig {
         "geosite-gfw": "geosite-gfw.srs",
     ]
 
+    /// 规则集此刻的处境：缓存在哪个目录、以及**真正落在盘上**的是哪几份。
+    ///
+    /// 目录和可用名单绑成一个值是刻意的。它们原本是两个各自可省的参数，
+    /// 省掉名单时按「假设全都在」处理 —— 于是一个只传了目录的调用方，会
+    /// 让配置声明出引擎根本加载不了的 rule_set（文件还没下下来），把「名单
+    /// 没下全」这种真故障吞成一次启动失败。现在给不出可用名单，就表达不了
+    /// 「有目录」；`nil` 的含义也从「全都有」翻成了「一份都没有」。
+    public struct RuleSets {
+        public let directory: String
+        /// 只保留 `ruleSetFiles` 认识的 tag —— 认不出的 tag 落进配置就是一条
+        /// 指向不存在文件的 rule_set。
+        public let availableTags: Set<String>
+
+        public init(directory: String, availableTags: Set<String>) {
+            self.directory = directory
+            self.availableTags = availableTags.intersection(ruleSetFiles.keys)
+        }
+    }
+
     /// 本机入站只允许这两种监听地址：只给本机，或者给整个局域网。
     public static let loopbackListen = "127.0.0.1"
     public static let anyListen = "0.0.0.0"
@@ -206,8 +225,7 @@ public enum PendingNetProxyOnlyConfig {
         listenPort: Int = 2080,
         listenAddress: String = loopbackListen,
         controlPort: Int = 29090,
-        ruleSetDirectory: String? = nil,
-        availableRuleSetTags: Set<String>? = nil
+        ruleSets: RuleSets? = nil
     ) throws -> Data {
         guard !controlSecret.isEmpty, !cachePath.isEmpty,
               (1024...65535).contains(listenPort),
@@ -228,10 +246,7 @@ public enum PendingNetProxyOnlyConfig {
                 ["type": "selector", "tag": "proxy", "outbounds": ["direct"]],
                 ["type": "direct", "tag": "direct"],
             ],
-            "route": route(
-                ruleSetDirectory: ruleSetDirectory,
-                availableRuleSetTags: availableRuleSetTags
-            ),
+            "route": route(ruleSets: ruleSets),
             "experimental": [
                 "clash_api": [
                     "external_controller": "127.0.0.1:\(controlPort)",
@@ -253,16 +268,12 @@ public enum PendingNetProxyOnlyConfig {
     /// 白名单/黑名单 without re-pairing the VPS.
     public static func applyingRouteRules(
         to configData: Data,
-        ruleSetDirectory: String?,
-        availableRuleSetTags: Set<String>? = nil
+        ruleSets: RuleSets?
     ) throws -> Data {
         guard var root = try JSONSerialization.jsonObject(with: configData) as? [String: Any] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
-        root["route"] = route(
-            ruleSetDirectory: ruleSetDirectory,
-            availableRuleSetTags: availableRuleSetTags
-        )
+        root["route"] = route(ruleSets: ruleSets)
         return try JSONSerialization.data(
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -320,10 +331,7 @@ public enum PendingNetProxyOnlyConfig {
         })
     }
 
-    private static func route(
-        ruleSetDirectory: String?,
-        availableRuleSetTags: Set<String>?
-    ) -> [String: Any] {
+    private static func route(ruleSets requested: RuleSets?) -> [String: Any] {
         var rules: [[String: Any]] = [
             ["action": "sniff"],
             ["clash_mode": "Direct", "outbound": "direct"],
@@ -334,10 +342,10 @@ public enum PendingNetProxyOnlyConfig {
         // switched to — when some route rule names it. Without these, the GUI's
         // 白名单/黑名单 were accepted by the Clash API (204) and then silently
         // ignored, leaving the engine in 全局.
-        if let ruleSetDirectory, !ruleSetDirectory.isEmpty {
-            let available = availableRuleSetTags ?? Set(ruleSetFiles.keys)
+        if let requested, !requested.directory.isEmpty {
             let supportedModes = [PendingNetRouteMode.whitelist, .blacklist].filter { mode in
-                Set(PendingNetTunnelConfig.ruleSetTags(mode: mode)).isSubset(of: available)
+                let tags = Set(PendingNetTunnelConfig.ruleSetTags(mode: mode))
+                return !tags.isEmpty && tags.isSubset(of: requested.availableTags)
             }
             if supportedModes.contains(.blacklist) {
                 // 黑名单：只有被墙的域名走代理，其余直连。
@@ -362,7 +370,7 @@ public enum PendingNetProxyOnlyConfig {
                     "type": "local",
                     "tag": tag,
                     "format": "binary",
-                    "path": ruleSetDirectory + "/" + ruleSetFiles[tag]!,
+                    "path": requested.directory + "/" + ruleSetFiles[tag]!,
                 ]
             }
         }

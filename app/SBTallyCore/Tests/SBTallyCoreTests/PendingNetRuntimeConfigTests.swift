@@ -63,7 +63,10 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         let with = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",
             cachePath: "/tmp/pendingnet-cache.db",
-            ruleSetDirectory: "/tmp/pendingnet-rule-sets"
+            ruleSets: .init(
+                directory: "/tmp/pendingnet-rule-sets",
+                availableTags: Set(PendingNetProxyOnlyConfig.ruleSetFiles.keys)
+            )
         )
         XCTAssertTrue(PendingNetProxyOnlyConfig.declaresListModes(with))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: with) as? [String: Any])
@@ -88,8 +91,7 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         let whitelist = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",
             cachePath: "/tmp/pendingnet-cache.db",
-            ruleSetDirectory: directory,
-            availableRuleSetTags: ["geoip-cn", "geosite-cn"]
+            ruleSets: .init(directory: directory, availableTags: ["geoip-cn", "geosite-cn"])
         )
         XCTAssertEqual(PendingNetProxyOnlyConfig.declaredListModes(whitelist), [.whitelist])
         let whitelistRoot = try XCTUnwrap(
@@ -106,8 +108,7 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         let blacklist = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",
             cachePath: "/tmp/pendingnet-cache.db",
-            ruleSetDirectory: directory,
-            availableRuleSetTags: ["geosite-gfw"]
+            ruleSets: .init(directory: directory, availableTags: ["geosite-gfw"])
         )
         XCTAssertEqual(PendingNetProxyOnlyConfig.declaredListModes(blacklist), [.blacklist])
         let blacklistRoot = try XCTUnwrap(
@@ -120,6 +121,63 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
             }),
             ["geosite-gfw"]
         )
+    }
+
+    /// 配置只能引用**明确报告在盘上**的那几份规则集。
+    ///
+    /// 这里钉的是原先那个哑雷：目录和可用名单是两个各自可省的参数，只给目录
+    /// 会按「假设全都在」处理，于是下了一半的缓存会生成一份引用着不存在文件
+    /// 的配置 —— sing-box 起不来，而根因（名单没下全）被埋在启动失败里。
+    /// 现在两者绑成一个值，`nil` 的含义是「一份都没有」而不是「全都有」。
+    func testRouteOnlyReferencesRuleSetsReportedPresent() throws {
+        func route(_ ruleSets: PendingNetProxyOnlyConfig.RuleSets?) throws -> [String: Any] {
+            let data = try PendingNetProxyOnlyConfig.make(
+                controlSecret: "test-secret",
+                cachePath: "/tmp/pendingnet-cache.db",
+                ruleSets: ruleSets
+            )
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            return try XCTUnwrap(root["route"] as? [String: Any])
+        }
+        func declaredTags(_ route: [String: Any]) -> Set<String> {
+            Set((route["rule_set"] as? [[String: Any]] ?? []).compactMap { $0["tag"] as? String })
+        }
+
+        // 没有规则集时缺省是「一份都没有」：不声明任何档位、不引用任何文件。
+        let none = try route(nil)
+        XCTAssertTrue(PendingNetProxyOnlyConfig.declaredListModes(
+            try JSONSerialization.data(withJSONObject: ["route": none])
+        ).isEmpty)
+        XCTAssertNil(none["rule_set"])
+        XCTAssertTrue(declaredTags(try route(
+            .init(directory: "/tmp/pendingnet-rule-sets", availableTags: [])
+        )).isEmpty)
+
+        // 下了一半：白名单要 geoip-cn + geosite-cn，只到一份就一档都不该声明。
+        let half = try route(.init(
+            directory: "/tmp/pendingnet-rule-sets",
+            availableTags: ["geoip-cn"]
+        ))
+        XCTAssertTrue(declaredTags(half).isEmpty)
+        XCTAssertTrue((half["rules"] as? [[String: Any]] ?? []).allSatisfy {
+            $0["rule_set"] == nil
+        })
+
+        // 认不出的 tag 不得落进配置 —— 那会是一条指向不存在文件的 rule_set。
+        let stray = try route(.init(
+            directory: "/tmp/pendingnet-rule-sets",
+            availableTags: ["geosite-gfw", "geosite-not-a-real-list"]
+        ))
+        XCTAssertEqual(declaredTags(stray), ["geosite-gfw"])
+
+        // 任何一档只要被声明，它引用到的每一份都必须在可用名单里。
+        for tags in [["geosite-gfw"], ["geoip-cn", "geosite-cn"],
+                     Array(PendingNetProxyOnlyConfig.ruleSetFiles.keys)] {
+            let declared = declaredTags(try route(
+                .init(directory: "/tmp/pendingnet-rule-sets", availableTags: Set(tags))
+            ))
+            XCTAssertTrue(declared.isSubset(of: Set(tags)), "declared \(declared) from \(tags)")
+        }
     }
 
     /// 名单下载完成后要能就地补上，不能逼用户重新配对 VPS。
@@ -143,7 +201,10 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         )
         let upgraded = try PendingNetProxyOnlyConfig.applyingRouteRules(
             to: merged,
-            ruleSetDirectory: "/tmp/pendingnet-rule-sets"
+            ruleSets: .init(
+                directory: "/tmp/pendingnet-rule-sets",
+                availableTags: Set(PendingNetProxyOnlyConfig.ruleSetFiles.keys)
+            )
         )
         XCTAssertTrue(PendingNetProxyOnlyConfig.declaresListModes(upgraded))
         let before = try XCTUnwrap(JSONSerialization.jsonObject(with: merged) as? [String: Any])

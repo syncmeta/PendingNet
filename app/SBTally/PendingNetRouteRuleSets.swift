@@ -48,6 +48,14 @@ struct PendingNetRouteRuleSets {
     /// Path to hand the config builder once at least one list mode is usable.
     var configuredDirectory: String? { availableModes.isEmpty ? nil : directory.path }
 
+    /// What the config builder needs, as one value — 目录和可用名单在这里配对，
+    /// 调用方没有机会只给出其中一半。
+    var configured: PendingNetProxyOnlyConfig.RuleSets? {
+        configuredDirectory.map {
+            PendingNetProxyOnlyConfig.RuleSets(directory: $0, availableTags: availableRuleSetTags)
+        }
+    }
+
     /// 每一份规则集此刻在不在本机。设置页按份显示，别让用户对着一个笼统的
     /// 「未下载」猜是哪一份没下来。
     var presence: [String: Bool] {
