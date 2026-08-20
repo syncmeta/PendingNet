@@ -270,6 +270,22 @@ func restartEngine(context: String) -> String? {
     }
 }
 
+/// 冲一次 macOS 的系统 DNS 缓存。root 才做得了，这个 daemon 正好是 root。
+///
+/// 该在哪些时刻冲、两条命令谁是主力、失败怎么降级都在 `PendingNetDNSCacheFlush`
+/// 里，有单测；这里只负责真去跑，然后留一行日志说清是哪个时刻触发的。
+///
+/// 失败一律只记日志：缓存没冲掉是「外网可能还打不开」，把引擎启停整个判失败
+/// 是「现在一定没网」，后者更糟。
+func flushSystemDNSCache(_ trigger: PendingNetDNSCacheFlush.Trigger) {
+    let results = PendingNetDNSCacheFlush.commands.map { command in
+        let (code, _) = sh([command.executable] + command.arguments)
+        return PendingNetDNSCacheFlush.CommandResult(command: command, exitCode: code)
+    }
+    helperLog(PendingNetDNSCacheFlush.logLine(
+        trigger: trigger, outcome: PendingNetDNSCacheFlush.outcome(results: results)))
+}
+
 /// What the engine's Clash API said, or why it could not be asked at all.
 enum ClashResponse {
     case answered(status: Int, body: Data)
@@ -423,20 +439,38 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             reply(message)
         }
         _ = launchctl(["bootout", LABEL])   // idempotent
-        let err = launchctl(["bootstrap", "system", "/Library/LaunchDaemons/io.sbtally.singbox.plist"])
-        guard err == nil else { return fail(err) }
-        guard waitForEngine() else { return fail("sing-box 启动后未进入运行状态") }
-        let configData = try? readData(path: "\(ETC)/master.json")
-        if let configData, let selectionError = activatePendingSelector(configData: configData) {
-            return fail(selectionError)
-        }
-        if let configData { reapplyStoredRouteMode(configData: configData) }
-        if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
+        // 引擎起来之后冲一次系统 DNS 缓存——开机那几秒进去的投毒记录只有这一步清得掉。
+        let failure = PendingNetDNSCacheFlush.afterEngineUp(.engineStarted, bringUp: {
+            let err = launchctl(
+                ["bootstrap", "system", "/Library/LaunchDaemons/io.sbtally.singbox.plist"])
+            guard err == nil else { return err }
+            guard waitForEngine() else { return "sing-box 启动后未进入运行状态" }
+            let configData = try? readData(path: "\(ETC)/master.json")
+            if let configData,
+               let selectionError = activatePendingSelector(configData: configData) {
+                return selectionError
+            }
+            if let configData { reapplyStoredRouteMode(configData: configData) }
+            if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
+            return nil
+        }, flush: flushSystemDNSCache)
+        guard failure == nil else { return fail(failure) }
         reply(nil)
     }
     func stopEngine(reply: @escaping (String?) -> Void) {
         disableOwnedSystemProxy()
-        reply(launchctl(["bootout", LABEL]))
+        // 停这一侧也得冲：TUN 在的时候解析出来的是 fake-ip（198.18.x.x），引擎一走
+        // 那些地址就没人接了，缓存里留着它们连直连都打不开。等那个进程真的没了再冲，
+        // 不然 TUN 还在，冲完立刻又被塞回一批 fake-ip。
+        let running = enginePID()
+        reply(PendingNetDNSCacheFlush.afterEngineDown(.engineStopped, stop: {
+            let error = launchctl(["bootout", LABEL])
+            if let running {
+                _ = waitForProcessToExit(
+                    running, timeout: PendingNetEngineRestart.gracefulStopTimeout)
+            }
+            return error
+        }, flush: flushSystemDNSCache))
     }
     func setTakeover(_ mode: String, reply: @escaping (String?) -> Void) {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
@@ -453,7 +487,11 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
         } catch { return reply("\(error)") }
         guard wasRunning else { return reply(nil) }
-        if let error = restartEngine(context: "切换接管模式") { return reply(error) }
+        if let error = PendingNetDNSCacheFlush.afterEngineUp(
+            .takeoverSwitched,
+            bringUp: { restartEngine(context: "切换接管模式") },
+            flush: flushSystemDNSCache
+        ) { return reply(error) }
         if let configData = try? readData(path: "\(ETC)/master.json") {
             reapplyStoredRouteMode(configData: configData)
         }
@@ -532,7 +570,11 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 try writeConfig(active, path: masterPath)
                 try writeConfig(Data((selectorTag + "\n").utf8), path: ACTIVE_SELECTOR)
                 if wasRunning {
-                    if let error = restartEngine(context: "应用 VPS 配置") {
+                    if let error = PendingNetDNSCacheFlush.afterEngineUp(
+                        .serverConfigurationApplied,
+                        bringUp: { restartEngine(context: "应用 VPS 配置") },
+                        flush: flushSystemDNSCache
+                    ) {
                         throw NSError(domain: "PendingNetHelper", code: 2,
                                       userInfo: [NSLocalizedDescriptionKey: error])
                     }
@@ -731,7 +773,11 @@ final class LinkSelfHealer {
 
     private func heal(reason: String) {
         helperLog("自愈：\(reason)")
-        if let error = restartEngine(context: "换网卡自愈") {
+        if let error = PendingNetDNSCacheFlush.afterEngineUp(
+            .linkSelfHealed,
+            bringUp: { restartEngine(context: "换网卡自愈") },
+            flush: flushSystemDNSCache
+        ) {
             return helperLog("自愈失败：\(error)")
         }
         // 重启等于回到 default_mode，用户选的 VPS 和路由档位要照 startEngine 那样补回来。
