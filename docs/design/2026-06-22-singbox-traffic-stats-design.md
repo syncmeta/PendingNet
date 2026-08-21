@@ -108,7 +108,7 @@ sbtally/                            # Go module: "sbtally"
       Dashboard/                    # 统计视图(Swift Charts)
       Services/{ClashAPIClient,StatsProvider,HelperClient}.swift
       Models.swift                  # 与 Go DTO 对应的 Codable
-  docs/superpowers/specs/2026-06-22-singbox-traffic-stats-design.md
+  docs/design/2026-06-22-singbox-traffic-stats-design.md
   README.md
 ```
 

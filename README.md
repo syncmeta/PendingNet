@@ -14,7 +14,7 @@ PendingNet 正在从本机 sing-box 统计与控制工具，升级为一套统�
 - 共享运行时转换：把节点资料生成 Reality/Hysteria2 sing-box outbounds，不混入路由或 TUN 策略。
 - 本机数据面：现有 sing-box 配置生成、VPS/协议/路由模式控制、统计面板继续可用。
 
-目前仍是开发里程碑：Debian 12 amd64 的安装、旧服务切换、macOS 配对与安全应用配置，以及 Reality/Hysteria2 真实流量已经通过端到端验证；arm64 VPS、iOS 代理内核和真实隧道尚未完成。完整清单见[统一设计](docs/superpowers/specs/2026-07-31-pendingnet-server-client-design.md)。
+目前仍是开发里程碑：Debian 12 amd64 的安装、旧服务切换、macOS 配对与安全应用配置，以及 Reality/Hysteria2 真实流量已经通过端到端验证；arm64 VPS、iOS 代理内核和真实隧道尚未完成。完整清单见[统一设计](docs/design/2026-07-31-pendingnet-server-client-design.md)。
 
 macOS 0.3.9 可以直接导入或双击 `.pdn`。应用只把 VPS 下发的协议 outbounds 合并到客户端自己生成的运行配置；`.pdn` 不包含 DNS、路由、TUN、规则集或应用规则。“仅端口”由应用以当前用户身份运行，通过 `sing-box check` 后写入 `~/Library/Application Support/PendingNet/engine/`，默认监听 `127.0.0.1:2080`，不会修改系统代理，也不需要后台服务授权。系统代理与 TUN 仍保留为后续公证版本的特权模式。配对和节点 API 使用独立的直连通道，不依赖或改写系统中已有的代理；该通道只信任 `.pdn` 中固定的 SHA-256 服务端证书指纹，不需要全局放宽 ATS。
 
