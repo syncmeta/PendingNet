@@ -3,8 +3,7 @@ set -euo pipefail
 
 # 构建 Libbox.xcframework 供 PendingNet iOS Packet Tunnel Extension 链接。
 #
-# 逻辑照搬已验证的 SFI fork 构建路径：
-#   /Users/hey/Untitled/sing-box-for-apple-pd/scripts/testflight-dev.sh 的 --rebuild-libbox 分支。
+# 逻辑照搬 sing-box-for-apple（SFI）自带构建脚本里 --rebuild-libbox 那条已验证的路径。
 #
 # 关键点（与直觉不符，勿自行推导）：
 #   1. 必须用 SagerNet fork 的 gomobile/gobind（v0.1.12），官方 golang.org/x/mobile 不行。
