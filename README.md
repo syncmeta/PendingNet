@@ -1,32 +1,61 @@
 # PendingNet
 
-PendingNet 正在从本机 sing-box 统计与控制工具，升级为一套统一的 VPS 服务端、macOS 客户端和 iOS 客户端。
+自建代理的一套自用客户端：一台 VPS 上跑 `pendingnet-server`，它生成一份一次性配对文件，Mac 和 iPhone 导入之后就能连上，之后节点参数由服务端自己下发、自己轮换，不用再手工维护 sing-box 的 JSON 配置。
 
-核心约定：VPS 生成的 `*.pdn` 是一次性配对文件，不是 sing-box 配置文件。它只包含 VPS 身份、控制端点、TLS 证书指纹和短期令牌；Reality/Hysteria2 连接材料在配对后通过认证 API 获取，路由、TUN 和应用规则始终由客户端管理。
+这是个人实验项目，不是产品。作者自己每天在用，但没做过多人、多平台或长期运维的验证。
 
-## 当前实现
+![PendingNet macOS 连接页](docs/screenshots/macos-connect.png)
 
-- `pendingnet-server`：VPS 身份与 TLS 初始化、systemd 自安装、一次性配对文件、设备令牌、认证状态与节点 API。
-- 全新 VPS 数据面：直接下载并校验官方 Xray/Hysteria2 Release，生成 Reality/Hysteria2 密钥、证书、配置和 systemd 服务，不执行外部安装脚本。
-- 旧 `singbox-script-for-vps` 迁移：安全读取 `/etc/singb/config.env` 和 `/etc/singb/state.env`，保留现有密钥，不执行 shell 文件。
-- macOS：导入或双击 `.pdn`、证书固定、实际注册设备、Keychain 保存令牌、读取 VPS 协议能力，并安全生成本机配置；“仅端口”由应用直接运行，不需要后台服务授权。
-- iOS：独立 App target、同一套配对/认证/节点模型、Packet Tunnel Extension target。
-- 共享运行时转换：把节点资料生成 Reality/Hysteria2 sing-box outbounds，不混入路由或 TUN 策略。
-- 本机数据面：现有 sing-box 配置生成、VPS/协议/路由模式控制、统计面板继续可用。
+> 其余界面（实时流量、按应用统计、域名榜、设置）和 iOS 版的截图还没补，等补齐会放在 `docs/screenshots/`。
 
-目前仍是开发里程碑：Debian 12 amd64 的安装、旧服务切换、macOS 配对与安全应用配置，以及 Reality/Hysteria2 真实流量已经通过端到端验证；arm64 VPS、iOS 代理内核和真实隧道尚未完成。完整清单见[统一设计](docs/design/2026-07-31-pendingnet-server-client-design.md)。
+## 解决的是什么问题
 
-macOS 0.3.9 可以直接导入或双击 `.pdn`。应用只把 VPS 下发的协议 outbounds 合并到客户端自己生成的运行配置；`.pdn` 不包含 DNS、路由、TUN、规则集或应用规则。“仅端口”由应用以当前用户身份运行，通过 `sing-box check` 后写入 `~/Library/Application Support/PendingNet/engine/`，默认监听 `127.0.0.1:2080`，不会修改系统代理，也不需要后台服务授权。系统代理与 TUN 仍保留为后续公证版本的特权模式。配对和节点 API 使用独立的直连通道，不依赖或改写系统中已有的代理；该通道只信任 `.pdn` 中固定的 SHA-256 服务端证书指纹，不需要全局放宽 ATS。
+自建代理的常见用法是：VPS 上跑个脚本，脚本吐出一份 sing-box / Clash 的完整配置，你把它复制到每台设备上。这套做法有三个一直烦人的地方：
 
-0.3.9 起内置 Sparkle 2 更新器。PendingNet 与 PendingCrew 共用 `updates.pendingname.com` + Cloudflare R2 的发布基础设施，并分别使用 `pendingnet/`、`pendingcrew/` 产品目录和独立签名密钥。客户端会按计划检查更新、验证 appcast、更新包签名与 Developer ID 身份，并原子替换应用。发布包还必须完成 Apple notarization，具体流程见 `docs/macos-updates.md`。
+1. **配置文件同时装着两类互不相干的东西。** 服务端的连接材料（Reality 公钥、Hysteria2 密码、端口）和客户端的策略（走不走 TUN、哪些域名直连、哪个 App 单独放行）挤在同一份 JSON 里。换服务端密钥要重下配置，重下配置就把本机策略冲掉了。
+2. **换台设备要重来一遍。** 每台设备一份配置，服务端一改，所有设备一起手工同步。
+3. **配置文件本身就是长期凭据。** 泄露一份，代理就归别人用了，而且没法单独吊销某台设备。
 
-iOS 版走的是另一条完全独立的通道：App Store Connect / TestFlight。打包与上传用
-`scripts/build-ios-testflight.sh`（默认只导出、不上传），账号那边还差什么用
-`scripts/asc-api.py preflight` 查，哪几步只能在浏览器里点见 `docs/ios-testflight.md`。
+PendingNet 的做法是把这两类东西拆开：
 
-## 全新 VPS 试用
+- VPS 生成的 `.pdn` **不是** sing-box 配置。它只有 VPS 身份、控制端点、TLS 证书 SHA-256 指纹和一个短期一次性令牌，默认十分钟过期、用一次就作废。
+- 导入成功后，客户端换到一个独立的长期设备令牌（存进 Keychain），之后通过控制 API 取当前的连接材料。服务端换密钥，客户端下次刷新就跟上，不用你做任何事。
+- 路由模式、规则集、TUN / 系统代理的选择**始终由客户端保存**，服务端下发的东西碰不到它们。这条在代码里是有测试守着的——每个配置生成的测试都带一条断言，确认服务端返回的数据影响不了客户端策略。
 
-构建 Linux 二进制并上传到 VPS 后：
+## 现在能做什么
+
+| | 状态 |
+| --- | --- |
+| **VPS 端**（Go） | 全新部署：下载并校验官方 Xray / Hysteria2 Release，生成 Reality / Hysteria2 密钥与证书，写 systemd 服务并启动。也能接管已有的 `singbox-script-for-vps` 部署（读它的 env 文件迁移节点资料，不执行任何 shell 文件）。Debian 12 amd64 上跑通过真实流量。 |
+| **macOS 客户端**（SwiftUI） | 导入或双击 `.pdn` 配对；三种接管方式（仅端口 / 系统代理 / TUN）；三档路由（全局 / 白名单 / 黑名单）；协议在 Reality 与 Hysteria2 之间切换、可测延迟；按应用和按域名的流量统计；Sparkle 2 自动更新（Developer ID 签名 + 公证 + EdDSA 签名 appcast）。当前 0.3.28。 |
+| **iOS 客户端**（SwiftUI + Network Extension） | 内嵌 sing-box libbox 内核的 Packet Tunnel Extension，配对、启停隧道、协议选择、三档路由。0.3.28(328) 已上传 TestFlight，Apple 处理通过。 |
+| **本机统计**（Go，项目最早的部分） | `sbtally` 从 sing-box 的 Clash API 订阅连接流，按 (应用, 域名) 累计流量写进 SQLite，提供本地 JSON / SSE 接口和一个命令行报表。 |
+
+## 现在还不能做什么
+
+这一节是认真写的，不是免责声明：
+
+- **arm64 VPS 没验证过。** 下载和校验的 arm64 分支代码里有（`internal/pnserver/release.go`），但从没在真的 arm64 机器上跑过。
+- **iOS 隧道没做过真机长跑验收。** 代码是完整的，TestFlight 构建 Apple 那边也过了，但设计文档里定的验收线（承载流量 10 分钟后常驻内存 < 40MB、goroutine 数不单调增长）没有留下跑过的记录，所以这里不打勾。
+- **升级、凭据轮换、卸载、完整回滚**这几条 VPS 生命周期命令还没补齐。现在只有安装、部署、接管、查状态。
+- **没有设备管理。** 配对之后没法列出、吊销或轮换某台设备的令牌。
+- **多 VPS 的支持是半截的**：能存多台、能切换，但没有自动选路或故障转移。
+- **没有 CI。** 测试都能在本机一条命令跑完（见下），但没有 GitHub Actions 在跑它们。
+- **没发过 GitHub Release。** macOS 版的更新是通过自建的 Sparkle appcast 分发的，不走 GitHub。怎么补一个 Release 见 [docs/release.md](docs/release.md)。
+- **只在作者自己的机器和 VPS 上用过。** 别的网络环境、别的 VPS 供应商、别的 macOS 版本都没试过。
+
+## 跑起来
+
+### 一、VPS 端
+
+需要一台 Debian 12 amd64 的 VPS。先在本机交叉编译再上传：
+
+```sh
+GOOS=linux GOARCH=amd64 go build -o pendingnet-server ./cmd/pendingnet-server
+scp pendingnet-server root@<你的VPS>:/root/
+```
+
+全新部署：
 
 ```sh
 sudo ./pendingnet-server install \
@@ -41,27 +70,23 @@ sudo pendingnet-server pair create --out /root/my-vps.pdn
 sudo pendingnet-server status
 ```
 
-默认使用 TCP/443 运行 Reality、UDP/443 运行 Hysteria2、TCP/7443 运行 PendingNet 控制服务。VPS 防火墙和云厂商安全组必须允许这三个入口；`provision` 不会擅自修改防火墙。
+默认 TCP/443 跑 Reality、UDP/443 跑 Hysteria2、TCP/7443 跑控制服务。**这三个入口要自己在防火墙和云厂商安全组里放行**——`provision` 不会替你改防火墙。
 
-## 迁移已有 VPS
+（上面的 `203.0.113.10` 是 RFC 5737 的文档保留地址，换成你自己的。）
 
-已有 `singbox-script-for-vps` 服务时，可以先只接管控制面而不打断现有代理服务：
+### 二、接管已有的 sing-box 部署
+
+已经在跑 `singbox-script-for-vps` 的话，可以只接管控制面，代理服务原样不动：
 
 ```sh
-sudo ./pendingnet-server install \
-  --name "My VPS" \
-  --endpoint "https://203.0.113.10:7443"
-
+sudo ./pendingnet-server install --name "My VPS" --endpoint "https://203.0.113.10:7443"
 sudo pendingnet-server import-singb
 sudo pendingnet-server pair create --out /root/my-vps.pdn
-sudo pendingnet-server status
 ```
 
-`install` 是前置步骤：它初始化状态目录并启动控制服务，`import-singb` 需要已初始化的状态才能写入节点资料。这一步只新增 TCP/7443，不碰现有的 TCP/443 与 UDP/443。
+`import-singb` 读现有的 `/etc/singb/config.env` 和 `/etc/singb/state.env`，只取客户端连接需要的字段，不导入 Xray 私钥、完整服务端配置或任何路由规则，也不执行那些 shell 文件。这一步只新增 TCP/7443。
 
-`import-singb` 默认读取现有 `/etc/singb/config.env` 和 `/etc/singb/state.env`。它只导入客户端连接所需字段，不导入 Xray 私钥、完整服务端配置或任何路由规则。
-
-确认没有客户端正在使用旧服务后，可以让 PendingNet 生成新凭据并接管 TCP/443 与 UDP/443：
+确认没有客户端还在用旧服务之后，才可以让 PendingNet 生成新凭据、接管 TCP/443 和 UDP/443：
 
 ```sh
 sudo pendingnet-server provision \
@@ -71,62 +96,101 @@ sudo pendingnet-server provision \
   --skip-download
 ```
 
-`--replace-existing` 必须与 `--skip-download` 同时使用，否则命令直接报错退出：接管已有 VPS 时沿用机器上已验证过的 Xray/Hysteria2 二进制，不重新下载引擎。
-
-切换过程会先验证新配置；若启动失败，会尝试恢复原有 `xray.service` 和 `hysteria-server.service`。旧配置不会被删除。
-
-只接管控制面本身就是一个**可以长期保持的终态**，不是必须往下走的中间步骤。两种终态对客户端完全等价：`.pdn`、配对、节点下发和 app 里的使用体验都一样，区别只在底层由谁扛流量、密钥由谁生成。
-
-| | 只接管控制面（`import-singb`） | 完全接管（`provision --replace-existing`） |
+| | 只接管控制面 | 完全接管 |
 | --- | --- | --- |
 | TCP/443、UDP/443 | 原有 `xray.service` / `hysteria-server.service` | `pendingnet-xray.service` / `pendingnet-hysteria.service` |
 | 连接密钥 | 沿用旧服务已有的 | PendingNet 重新生成 |
 | 对旧客户端 | 不受影响 | **立即失效，需要重新配置** |
 
-因为完全接管会让仍在使用旧节点的设备立刻断线，且密钥不可回滚，所以只在确认没有客户端还在用旧服务之后再做。拿不准就停在只接管控制面，随时可以补做后面这一步。
+**只接管控制面是一个可以长期停在这里的终态**，不是必经的中间步骤——两种终态在客户端看来完全一样。完全接管会让还在用旧节点的设备立刻断线且密钥不可回滚，拿不准就停在上一步。
 
-将 `/root/my-vps.pdn` 安全复制到 Mac 或 iPhone 后导入。文件默认十分钟过期且只能使用一次；每台设备应单独生成一份。
+切换过程会先验证新配置；启动失败时会尝试把原来的 `xray.service` / `hysteria-server.service` 拉回来，旧配置不删。`--replace-existing` 必须配 `--skip-download`（接管时沿用机器上已验证过的二进制），否则命令直接报错退出。
 
-## 开发与验证
+### 三、客户端
+
+把 `/root/my-vps.pdn` 安全地传到 Mac 或 iPhone 上导入。文件十分钟过期、只能用一次，**每台设备单独生成一份**。
+
+macOS 上双击 `.pdn` 就能导入。配对和取节点走的是一条独立的直连通道，只信任 `.pdn` 里钉死的那个服务端证书指纹，既不依赖也不改写系统里已有的代理。
+
+## 从源码构建
+
+需要 Go 1.26、Xcode（Swift 6.3）、[XcodeGen](https://github.com/yonaskolb/XcodeGen)。
 
 ```sh
-go test ./...
+# Go：服务端 + 统计 CLI
 go build ./cmd/pendingnet-server
+go build ./cmd/sbtally
+go test ./...
 
-cd app/SBTallyCore
-swift test
+# Swift：共享核心逻辑
+cd app/SBTallyCore && swift test && cd ../..
 
-# 可选：使用一份专门生成的短期配对文件，验证真实配对和双协议流量
-PENDINGNET_LIVE_PAIRING_FILE=/tmp/test.pdn \
-PENDINGNET_LIVE_SING_BOX=/path/to/sing-box \
-swift test --filter PendingNetPairingTests/testLivePendingNetServerWhenPairingFileIsProvided
-
-cd ..
+# macOS / iOS app
+cd app
 xcodegen generate
 xcodebuild -project PendingNet.xcodeproj -scheme PendingNet build
 xcodebuild -project PendingNet.xcodeproj -scheme PendingNetIOS \
   -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build
 ```
 
-## 原有本机能力
+iOS 的 Packet Tunnel 要链接 `app/Vendor/Libbox.xcframework`（约 358 MB，不进版本库）。用 `scripts/build-libbox-xcframework.sh` 自己构建一份。
 
-PendingNet 的统计服务从 sing-box Clash API 读取连接数据；sing-box 需要启用 `experimental.clash_api` 和 `route.find_process`。
+## 测试
+
+49 个测试文件，272 个用例。最近一次实测（2026-08-21，macOS 26 / Apple Silicon）：
+
+| | 用例 | 通过 | 跳过 | 失败 |
+| --- | --- | --- | --- | --- |
+| Go（`go test ./...`，11 个包） | 72 | 70 | 2 | 0 |
+| Swift（`swift test`） | 200 | 199 | 1 | 0 |
+
+跳过的三个都是要外部东西才能跑的，不是坏掉的测试：
+
+- 两个 Go 用例校验生成出来的 Xray / Hysteria2 配置能不能被真的引擎接受，要本机装了那两个二进制并用 `PENDINGNET_XRAY_BIN` / `PENDINGNET_HYSTERIA_BIN` 指过去。
+- 一个 Swift 用例是端到端联机配对，要一份现生成的 `.pdn` 和一个 sing-box 可执行文件：
 
 ```sh
-go build ./cmd/sbtally
-SBTALLY_SECRET=<clash-secret> ./sbtally daemon \
-  --clash-api 127.0.0.1:9090 --listen 127.0.0.1:7777
-
-./sbtally apps --since 7d --top 20
-./sbtally domains --since 24h
-./sbtally app Safari --since 7d
+PENDINGNET_LIVE_PAIRING_FILE=/tmp/test.pdn \
+PENDINGNET_LIVE_SING_BOX=/path/to/sing-box \
+swift test --filter PendingNetPairingTests/testLivePendingNetServerWhenPairingFileIsProvided
 ```
 
-旧的完整 sing-box JSON 导入/生成仍作为过渡入口保留：
+macOS / iOS app 本身没有 UI 测试——能抽成纯函数的逻辑都放进了 `SBTallyCore` 用 `swift test` 覆盖，界面部分靠手工验证。
 
-```sh
-sbtally config import path/to/config.json
-sbtally config generate --vps vpsA=vpsA.json --vps vpsB=vpsB.json --out master.json
+## 项目结构
+
+```
+cmd/pendingnet-server/   VPS 端：安装、部署、接管、配对、状态
+cmd/sbtally/             本机统计的命令行
+internal/pnserver/       服务端核心：状态、HTTP API、Release 下载校验、systemd
+internal/pairing/        .pdn 的生成与严格校验
+internal/source/         Clash API 的 WebSocket 连接流订阅
+internal/core/           流量累加、SQLite 存储、查询
+internal/daemon/         统计守护进程 + 本地 HTTP/SSE 接口
+internal/sbconfig/       sing-box 配置的导入与生成
+app/SBTallyCore/         Swift 共享层（模型、配置生成、Keychain、控制协议）+ 全部 Swift 测试
+app/SBTally/             macOS app
+app/PendingNetHelper/    macOS 特权助手（root，按代码签名校验 XPC 调用方）
+app/PendingNetIOS/       iOS app
+app/PacketTunnel/        iOS Packet Tunnel Extension（内嵌 libbox）
+scripts/                 构建、签名、公证、发布、App Store Connect 查询
+deploy/                  本机 launchd 部署脚本（早期的自用统计服务）
 ```
 
-后续主流程不再要求用户导入或维护完整 sing-box JSON。
+## 文档
+
+- [docs/design/](docs/design/) —— 设计文档，按时间排。想知道为什么这么设计看这里，特别是 [统一设计](docs/design/2026-07-31-pendingnet-server-client-design.md)（产品边界、配对协议、配置归属）和 [iOS 设计](docs/design/2026-08-07-pendingnet-ios-design.md)（隧道内的内存约束和 DNS 那个坑）。
+- [docs/macos-updates.md](docs/macos-updates.md) —— macOS 的 Sparkle 更新链怎么发。
+- [docs/ios-testflight.md](docs/ios-testflight.md) —— iOS 上 TestFlight 的完整流程。
+- [docs/release.md](docs/release.md) —— 怎么出一个 GitHub Release。
+- [docs/icloud-sync.md](docs/icloud-sync.md) —— iCloud 键值同步用到的 entitlement。
+
+设计文档里有几份带着「历史文档，别照抄标识符」的抬头——2026-08-08 做过一次 bundle id 归一，那些文档写在之前，标识符是旧的，正文原样保留。当前值以 `app/project.yml` 为准。
+
+## 技术栈
+
+Go 1.26（`modernc.org/sqlite` 纯 Go 实现，不用 cgo；`github.com/coder/websocket`）· Swift 6 / SwiftUI · NetworkExtension · sing-box libbox · XcodeGen · Sparkle 2 · systemd · Xray-core · Hysteria2
+
+## 许可证
+
+[MIT](LICENSE)
