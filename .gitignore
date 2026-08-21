@@ -10,3 +10,9 @@
 
 # Developer ID 描述文件：本机发版用，别进仓库
 *.provisionprofile
+
+# Wrangler 的本机缓存，里面有账号信息
+/.wrangler/
+
+# 截图暂存，整理好的放 docs/screenshots/
+/screenshot/
