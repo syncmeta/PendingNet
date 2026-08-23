@@ -123,6 +123,10 @@ PendingNet 的做法是把这两类东西拆开：
 
 这一节是认真写的，不是免责声明：
 
+- **一键部署脚本只在 Docker 里验过。** `deploy/vps-install.sh` 的全流程（下预编译资产并核 sha256、
+  回退到源码编译、`install`、`provision`、`pair create`）在带 systemd 的 `debian:13` 容器里从头跑通过，
+  重跑、`--force-provision`、端口被占、校验不过这几条也各验了一遍。**但它没在真的 VPS 上跑过**——
+  容器里验不到的是公网入站真的通不通（防火墙、云厂商安全组）和客户端真的连上来这一步。
 - **arm64 VPS 没验证过。** 下载和校验的 arm64 分支代码里有（`internal/pnserver/release.go`），但从没在真的 arm64 机器上跑过。
 - **iOS 隧道没做过真机长跑验收。** 代码是完整的，TestFlight 构建 Apple 那边也过了，但设计文档里定的验收线（承载流量 10 分钟后常驻内存 < 40MB、goroutine 数不单调增长）没有留下跑过的记录，所以这里不打勾。
 - **升级、凭据轮换、卸载、完整回滚**这几条 VPS 生命周期命令还没补齐。现在只有安装、部署、接管、查状态。
@@ -158,7 +162,40 @@ macOS / iOS app 本身没有 UI 测试——能抽成纯函数的逻辑都放进
 
 ### 一、VPS 端
 
-需要一台 Debian 12 amd64 的 VPS。先在本机交叉编译再上传：
+需要一台 Debian 13 / 12 的 VPS（amd64 验证过，arm64 只是代码里有那条分支）。
+
+**一条命令**——在全新的 VPS 上用 root 跑，跑完直接打印一条可用的配对链接：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash
+```
+
+脚本（[deploy/vps-install.sh](deploy/vps-install.sh)）把下面「或者手工来」那几步全吞掉：
+
+1. 前置检查：root、Debian / Ubuntu、amd64 / arm64、systemd 在位，
+   以及 443/tcp、443/udp、7443/tcp 没被别的服务占（被占了会说清是谁占的，然后停下，不动机器）。
+2. 拿 `pendingnet-server`：先下 Release 里的 `pendingnet-server-linux-<arch>` 并核 sha256，
+   下不到或核不过就退回到在 VPS 上装官方 Go 工具链、clone 本仓库现场编译（多花几分钟，结果一样）。
+3. 公网 IP 自动探测（多个源交叉验证），`install` → `provision` → `pair create`。
+4. 最后把 `pendingnet://` 链接和要放行的三个端口打在屏幕上。
+
+管道执行时传参用环境变量，命令行参数也认（`sudo bash vps-install.sh --help` 看全部）：
+
+```sh
+# 自动探不到公网 IP（NAT、多网卡）时自己指定；换 Reality 伪装域名同理
+curl -fsSL <上面那个地址> | sudo PENDINGNET_SERVER_IP=203.0.113.10 PENDINGNET_REALITY_SNI=www.microsoft.com bash
+```
+
+**再跑一次是安全的**：检测到已经装过就只补一条新的配对链接，不碰在跑的服务。
+要把部署整个重做（重新生成密钥）得显式加 `--force-provision`——**那会让已经配对的客户端立刻失效**。
+
+**防火墙脚本一个字都不改**，只在结尾列出要放行的 TCP/443、UDP/443、TCP/7443，
+检测到 ufw / firewalld 在跑时把对应命令打出来给你自己按。云厂商的安全组也得自己开。
+
+<details>
+<summary><b>或者手工来</b>（脚本跑不通、或者想自己盯着每一步时）</summary>
+
+先在本机交叉编译再上传：
 
 ```sh
 GOOS=linux GOARCH=amd64 go build -o pendingnet-server ./cmd/pendingnet-server
@@ -185,6 +222,8 @@ sudo pendingnet-server status
 默认 TCP/443 跑 Reality、UDP/443 跑 Hysteria2、TCP/7443 跑控制服务。**这三个入口要自己在防火墙和云厂商安全组里放行**——`provision` 不会替你改防火墙。
 
 （上面的 `203.0.113.10` 是 RFC 5737 的文档保留地址，换成你自己的。）
+
+</details>
 
 ### 二、接管已有的 sing-box 部署
 
@@ -274,7 +313,7 @@ app/PendingNetHelper/    macOS 特权助手（root，按代码签名校验 XPC �
 app/PendingNetIOS/       iOS app
 app/PacketTunnel/        iOS Packet Tunnel Extension（内嵌 libbox）
 scripts/                 构建、签名、公证、发布、App Store Connect 查询
-deploy/                  本机 launchd 部署脚本（早期的自用统计服务）
+deploy/                  vps-install.sh（VPS 一键部署）+ 本机 launchd 部署脚本（早期的自用统计服务）
 ```
 
 **技术栈**：Go 1.26（`modernc.org/sqlite` 纯 Go 实现，不用 cgo；`github.com/coder/websocket`）·
