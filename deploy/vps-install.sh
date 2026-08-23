@@ -32,6 +32,9 @@ XRAY_PORT="${PENDINGNET_XRAY_PORT:-443}"
 HY2_PORT="${PENDINGNET_HY2_PORT:-443}"
 PAIR_TTL="${PENDINGNET_PAIR_TTL:-10m}"
 GO_VERSION="${PENDINGNET_GO_VERSION:-1.26.4}"
+# 内网镜像 / 私有 fork 用这两个改取件地址，默认都指向 GitHub 上的 $REPO。
+RELEASE_BASE_URL="${PENDINGNET_RELEASE_BASE_URL:-}"
+REPO_URL="${PENDINGNET_REPO_URL:-}"
 GITHUB_TOKEN="${PENDINGNET_GITHUB_TOKEN:-}"
 FORCE_PROVISION="${PENDINGNET_FORCE_PROVISION:-0}"
 SOURCE_ONLY="${PENDINGNET_SOURCE_ONLY:-0}"
@@ -81,6 +84,12 @@ usage() {
   --repo <owner/name>     源码仓库，默认 syncmeta/PendingNet
   --ref <分支或 tag>      源码分支，默认 main
   --go-version <版本>     源码编译用的 Go 版本，默认 1.26.4
+  --release-base-url <URL> 从别处取预编译资产（内网镜像），默认取
+                          https://github.com/<repo>/releases/latest/download
+                          环境变量 PENDINGNET_RELEASE_BASE_URL
+  --repo-url <URL>        源码 clone 地址（内网镜像 / 私有 fork），
+                          默认 https://github.com/<repo>.git
+                          环境变量 PENDINGNET_REPO_URL
   -h, --help              打印这段
 
 私有仓库把 PENDINGNET_GITHUB_TOKEN 设成有 repo 读权限的 token，
@@ -101,6 +110,8 @@ parse_args() {
             --repo)           REPO="${2:?--repo 后面要跟 owner/name}"; shift 2 ;;
             --ref)            REF="${2:?--ref 后面要跟分支名}"; shift 2 ;;
             --go-version)     GO_VERSION="${2:?--go-version 后面要跟版本号}"; shift 2 ;;
+            --release-base-url) RELEASE_BASE_URL="${2:?--release-base-url 后面要跟 URL}"; shift 2 ;;
+            --repo-url)       REPO_URL="${2:?--repo-url 后面要跟 URL}"; shift 2 ;;
             --force-provision) FORCE_PROVISION=1; shift ;;
             --source-only)    SOURCE_ONLY=1; shift ;;
             -h|--help)        usage; exit 0 ;;
@@ -215,8 +226,16 @@ check_ports() {
             warn "${proto^^}/$port（$role 要用）已经被占了: $holder"
         fi
     done
-    if [[ $blocked -eq 1 ]]; then
-        cat >&2 <<EOF
+    if [[ $blocked -eq 0 ]]; then
+        local -a checked=()
+        for entry in "${checks[@]}"; do
+            read -r proto port role <<<"$entry"
+            checked+=("${proto^^}/$port")
+        done
+        info "${checked[*]} 都是空的"
+        return 0
+    fi
+    cat >&2 <<EOF
 
 上面这些端口得先腾出来。两条路，挑一条:
 
@@ -230,9 +249,7 @@ check_ports() {
 已经在跑别的代理（singb 之类）又想保住它的话，别用这个脚本——
 README「二、接管已有的 sing-box 部署」那条路是专门为这种情况写的。
 EOF
-        die "端口被占，没往下走。机器上什么都没改。"
-    fi
-    info "TCP/$XRAY_PORT、UDP/$HY2_PORT、TCP/$CONTROL_PORT 都是空的"
+    die "端口被占，没往下走。机器上什么都没改。"
 }
 
 valid_ipv4() {
@@ -300,8 +317,11 @@ download_release_binary() {
     local asset="pendingnet-server-linux-$ARCH"
     local dest="$WORK_DIR/pendingnet-server"
     local sums="$WORK_DIR/SHA256SUMS"
-    log "找预编译的服务端二进制（$REPO 的最新 Release，资产名 $asset）"
-    if [[ -n "$GITHUB_TOKEN" ]]; then
+    log "找预编译的服务端二进制（资产名 $asset）"
+    if [[ -n "$RELEASE_BASE_URL" ]]; then
+        curl -fsSL --max-time 300 -o "$dest" "$RELEASE_BASE_URL/$asset" </dev/null || { info "下不到 $RELEASE_BASE_URL/$asset"; return 1; }
+        curl -fsSL --max-time 60 -o "$sums" "$RELEASE_BASE_URL/SHA256SUMS" </dev/null || { info "下不到 $RELEASE_BASE_URL/SHA256SUMS"; return 1; }
+    elif [[ -n "$GITHUB_TOKEN" ]]; then
         local release_json asset_id sums_id
         release_json="$(curl_auth "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)"
         [[ -n "$release_json" ]] || { info "Release API 读不到"; return 1; }
@@ -355,9 +375,11 @@ build_from_source() {
     ensure_packages git ca-certificates
     install_go_toolchain
     local src="$WORK_DIR/src"
-    local clone_url="https://github.com/$REPO.git"
-    [[ -z "$GITHUB_TOKEN" ]] || clone_url="https://x-access-token:$GITHUB_TOKEN@github.com/$REPO.git"
-    log "clone $REPO（$REF）"
+    local clone_url="${REPO_URL:-https://github.com/$REPO.git}"
+    if [[ -z "$REPO_URL" && -n "$GITHUB_TOKEN" ]]; then
+        clone_url="https://x-access-token:$GITHUB_TOKEN@github.com/$REPO.git"
+    fi
+    log "clone ${REPO_URL:-$REPO}（$REF）"
     git clone --quiet --depth 1 --branch "$REF" "$clone_url" "$src" </dev/null \
         || die "clone 不下来。私有仓库要设 PENDINGNET_GITHUB_TOKEN；分支名不对就用 --ref 指定。"
     log "编译 ./cmd/pendingnet-server"
@@ -370,7 +392,7 @@ build_from_source() {
         /usr/local/go/bin/go build -o "$WORK_DIR/pendingnet-server" ./cmd/pendingnet-server </dev/null
     ) || die "编译失败。上面是 go build 的原始输出。"
     chmod 0755 "$WORK_DIR/pendingnet-server"
-    BINARY_SOURCE="源码编译（$REPO@$REF）"
+    BINARY_SOURCE="源码编译（${REPO_URL:-$REPO}@$REF）"
 }
 
 obtain_binary() {
@@ -416,7 +438,6 @@ do_provision() {
             args+=(--skip-download)
             info "沿用机器上已经校验过的 xray / hysteria 二进制"
         fi
-        systemctl stop pendingnet-xray.service pendingnet-hysteria.service >/dev/null 2>&1 || true
     fi
     log "部署节点：Reality (TCP/$XRAY_PORT, SNI $REALITY_SNI) + Hysteria2 (UDP/$HY2_PORT)"
     if [[ " ${args[*]} " == *" --skip-download "* ]]; then
@@ -503,9 +524,6 @@ main() {
     [[ -n "$SERVER_IP" ]] || detect_public_ip
     valid_ipv4 "$SERVER_IP" || die "--server-ip 得是一个 IPv4 地址，收到的是「$SERVER_IP」。"
 
-    if [[ "$FORCE_PROVISION" == "1" ]] && already_provisioned; then
-        systemctl stop pendingnet-xray.service pendingnet-hysteria.service >/dev/null 2>&1 || true
-    fi
     check_ports
 
     if already_installed && ! already_provisioned; then
