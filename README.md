@@ -170,6 +170,9 @@ macOS / iOS app 本身没有 UI 测试——能抽成纯函数的逻辑都放进
 curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash
 ```
 
+（`curl` 得先在机器上——绝大多数 VPS 镜像自带，没有就 `apt-get install -y curl`。
+Ubuntu 也认，`apt-get` 和 `systemd` 是脚本对系统仅有的两个硬要求。）
+
 脚本（[deploy/vps-install.sh](deploy/vps-install.sh)）把下面「或者手工来」那几步全吞掉：
 
 1. 前置检查：root、Debian / Ubuntu、amd64 / arm64、systemd 在位，
