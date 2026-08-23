@@ -186,8 +186,16 @@ ensure_packages() {
     done
     [[ ${#missing[@]} -gt 0 ]] || return 0
     log "装依赖: ${missing[*]}"
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq </dev/null
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}" </dev/null
+    # apt / dpkg 的解包刷屏对用户没有信息量，出错时才把它整段打出来。
+    local apt_log="${WORK_DIR:-/tmp}/apt.log"
+    if ! {
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq </dev/null &&
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            -o Dpkg::Use-Pty=0 "${missing[@]}" </dev/null
+    } >"$apt_log" 2>&1; then
+        cat "$apt_log" >&2
+        die "装不上 ${missing[*]}。上面是 apt 的原始输出——软件源不通的话先修好源再重跑。"
+    fi
 }
 
 # port_holder <tcp|udp> <端口> —— 打印占用者，没人占就打印空。
