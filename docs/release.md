@@ -1,8 +1,8 @@
 # 怎么出一个 GitHub Release
 
-**现状：这个仓库一个 GitHub Release 都没发过。** macOS 版的更新一直走自建的 Sparkle appcast（见 [macos-updates.md](macos-updates.md)），装了 app 的人从 `updates.pendingname.com` 收更新，跟 GitHub 无关。所以「没有 Release」不影响老用户，只影响第一次打开这个仓库的人——他看不到任何可以下载的东西。
+macOS 版的日常更新走的是自建的 Sparkle appcast（见 [macos-updates.md](macos-updates.md)），装了 app 的人从 `updates.pendingname.com` 收更新，跟 GitHub 无关。GitHub Release 是给第一次打开这个仓库的人看的：到 2026-08-23 为止发过 `pendingnet/v0.3.29` 和 `pendingnet/v0.3.30`，都只挂了 macOS 的 zip。
 
-这份文档记的是补上这条通道要做什么。**下面的步骤没有一条被自动执行过**，因为它们要么会推东西到远端，要么会创建对外可见的对象。
+这份文档记的是怎么发下一个。**下面的步骤没有一条被自动执行过**，因为它们要么会推东西到远端，要么会创建对外可见的对象。
 
 ## 两条发布通道的关系
 
@@ -36,8 +36,6 @@ scripts/build-linux-server.sh
 
 资产名是 `vps-install.sh` 按字面找的，**别改名**。arm64 那个只是编出来了，从没在真的
 arm64 机器上跑过。
-
-
 
 `scripts/build-macos-update.sh` 每次跑完，会在 `dist/updates/pendingnet/` 留下 `PendingNet-<版本>.zip`。这个 zip 是完整的发布产物：Developer ID 签名 → Apple 公证 → staple 之后重新打的包。
 
@@ -88,7 +86,7 @@ gh release create pendingnet/v0.3.28 \
 
 Release 已经发出去了才想起来补 Linux 那三个：`gh release upload pendingnet/v0.3.28 dist/server/*`。
 
-想先看看效果再决定，加 `--draft`；仓库还是私有的时候，Release 也只有你自己看得见。
+想先看看效果再决定，加 `--draft`。
 
 补历史版本的话，把要补的 tag 一起推上去，然后对每个 tag 各跑一次 `gh release create`。**没必要全补**——从最新的一个开始，往回补两三个就够了。
 
@@ -109,4 +107,4 @@ iOS 不能通过 GitHub Release 分发——安装包只能从 App Store 或 Tes
 
 - **没有 CHANGELOG。** 现在只能靠 commit 日志凑发布说明。
 - **发 Release 这一步没有自动化。** `build-macos-update.sh` 管到 Sparkle appcast 为止，GitHub 这条是纯手工。真要自动化，在那个脚本里加一段 `gh release create` 就行，但那意味着一次发布同时推两个远端，出错的面变大——现在是故意分开的。
-- **仓库还是私有的**，所以现在发的 Release 外面也看不到。
+- **Linux 服务端那三个资产还一次都没挂过。** `scripts/build-linux-server.sh` 编得出来，但至今没发过带它们的 Release——所以 `deploy/vps-install.sh` 现在在真机上一定走的是「回退到源码编译」那条路（能跑通，只是慢几分钟）。下一次发 Release 挂上就好。
