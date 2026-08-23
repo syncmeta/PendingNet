@@ -71,12 +71,16 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 	hy2Binary := fs.String("hysteria-binary", pnserver.DefaultHysteriaBinary, "Hysteria2 executable path")
 	skipDownload := fs.Bool("skip-download", false, "use already installed engine binaries")
 	replaceExisting := fs.Bool("replace-existing", false, "replace imported xray.service and hysteria-server.service with PendingNet-managed services")
+	force := fs.Bool("force", false, "re-provision a VPS PendingNet already provisioned (regenerates keys; existing clients stop working immediately)")
 	dryRun := fs.Bool("dry-run", false, "generate and validate in memory without changing the VPS")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *serverIP == "" {
 		return errors.New("--server-ip is required")
+	}
+	if *force && *replaceExisting {
+		return errors.New("--force and --replace-existing cover different situations: --replace-existing takes over an imported singb deployment, --force redoes a PendingNet deployment")
 	}
 	store := pnserver.NewStore(*stateDir)
 	if _, err := store.Load(); err != nil {
@@ -105,11 +109,19 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 	} else if !errors.Is(err, pnserver.ErrNodeProfileNotFound) {
 		return err
 	}
-	if hadExistingNode && !*replaceExisting {
+	if hadExistingNode && !*replaceExisting && !*force {
 		return pnserver.ErrAlreadyProvisioned
 	}
 	if *replaceExisting && !*skipDownload {
 		return errors.New("--replace-existing requires --skip-download so existing verified engine binaries are preserved")
+	}
+	layout := pnserver.DefaultProvisionLayout(*servicesDir)
+	if *force {
+		// 重新 provision 自己装过的机器：先把自己的两个服务停掉，
+		// 否则下面的端口探测一定会撞上上一轮还在监听的 443。
+		for _, unitPath := range []string{layout.XrayUnitPath, layout.HysteriaUnitPath} {
+			_ = runSystemctl(io.Discard, io.Discard, "disable", "--now", filepath.Base(unitPath))
+		}
 	}
 	oldUnits := []string{"xray.service", "hysteria-server.service"}
 	rollbackOldUnits := false
@@ -152,7 +164,6 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 			}
 		}
 	}
-	layout := pnserver.DefaultProvisionLayout(*servicesDir)
 	if err := pnserver.ApplyProvisionArtifacts(artifacts, layout); err != nil {
 		return err
 	}
@@ -193,7 +204,7 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 	return writeIndentedJSON(stdout, map[string]any{
 		"server_ip": *serverIP, "protocols": []string{"vless-reality", "hysteria2"},
 		"xray_version": versions.Xray, "hysteria2_version": versions.Hysteria2,
-		"replaced_existing": *replaceExisting,
+		"replaced_existing": *replaceExisting, "forced": *force,
 	})
 }
 

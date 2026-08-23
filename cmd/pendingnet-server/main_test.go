@@ -165,3 +165,40 @@ func TestProvisionDryRun(t *testing.T) {
 		t.Fatalf("unexpected provision plan: %s", out.String())
 	}
 }
+
+// 一键脚本的 --force-provision 走的是这条：--force 允许覆盖 PendingNet 自己写的
+// node profile，--replace-existing 是接管 singb 那条，两个混用只会让人误以为
+// 「重装一次」还能保住旧客户端。
+func TestProvisionForceAndReplaceExistingAreMutuallyExclusive(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := run([]string{
+		"provision", "--server-ip", "203.0.113.20",
+		"--force", "--replace-existing", "--skip-download",
+	}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected --force with --replace-existing to be rejected")
+	}
+	if !strings.Contains(err.Error(), "--force and --replace-existing") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProvisionForceIsAcceptedByDryRun(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if err := run([]string{
+		"init", "--state-dir", dir, "--name", "VPS Test", "--endpoint", "https://203.0.113.20:7443",
+	}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{
+		"provision", "--dry-run", "--force", "--skip-download",
+		"--state-dir", dir, "--server-ip", "203.0.113.20",
+	}, &out, &errOut); err != nil {
+		t.Fatalf("provision --force dry run: %v (%s)", err, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"changes_applied": false`) {
+		t.Fatalf("unexpected provision plan: %s", out.String())
+	}
+}
