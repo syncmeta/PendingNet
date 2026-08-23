@@ -116,12 +116,25 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 		return errors.New("--replace-existing requires --skip-download so existing verified engine binaries are preserved")
 	}
 	layout := pnserver.DefaultProvisionLayout(*servicesDir)
+	ownUnits := []string{filepath.Base(layout.XrayUnitPath), filepath.Base(layout.HysteriaUnitPath)}
+	// 重新 provision 自己装过的机器：先把自己的两个服务停掉，否则下面的端口
+	// 探测一定会撞上上一轮还在监听的 443。停下来之后到落盘新配置之前的任何
+	// 失败都要把它们拉回来——重装一次不该让一台在用的机器变成没有代理。
+	restoreOwnUnits := false
 	if *force {
-		// 重新 provision 自己装过的机器：先把自己的两个服务停掉，
-		// 否则下面的端口探测一定会撞上上一轮还在监听的 443。
-		for _, unitPath := range []string{layout.XrayUnitPath, layout.HysteriaUnitPath} {
-			_ = runSystemctl(io.Discard, io.Discard, "disable", "--now", filepath.Base(unitPath))
+		for _, unitName := range ownUnits {
+			_ = runSystemctl(io.Discard, io.Discard, "disable", "--now", unitName)
 		}
+		restoreOwnUnits = true
+		defer func() {
+			if runErr == nil || !restoreOwnUnits {
+				return
+			}
+			for _, unitName := range ownUnits {
+				_ = runSystemctl(io.Discard, io.Discard, "enable", "--now", unitName)
+			}
+			fmt.Fprintln(stderr, "provision --force failed before anything was written; the previous services were restarted")
+		}()
 	}
 	oldUnits := []string{"xray.service", "hysteria-server.service"}
 	rollbackOldUnits := false
@@ -167,6 +180,8 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 	if err := pnserver.ApplyProvisionArtifacts(artifacts, layout); err != nil {
 		return err
 	}
+	// 新配置已经盖掉旧的了，再把旧服务拉回来只会拿新配置启动一次并失败。
+	restoreOwnUnits = false
 	validate := exec.Command(*xrayBinary, "run", "-test", "-config", filepath.Join(*servicesDir, "xray.json"))
 	validate.Stdout, validate.Stderr = stdout, stderr
 	if err := validate.Run(); err != nil {
@@ -176,7 +191,7 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 		return err
 	}
 
-	unitNames := []string{filepath.Base(layout.XrayUnitPath), filepath.Base(layout.HysteriaUnitPath)}
+	unitNames := ownUnits
 	if err := runSystemctl(stdout, stderr, "daemon-reload"); err != nil {
 		return err
 	}
