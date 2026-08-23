@@ -125,16 +125,29 @@ final class PendingNetIOSController: ObservableObject {
         defaults.set(selectedServerID, forKey: selectedKey)
     }
 
+    /// 导入一份 `.pdn` 文件。
     func importAndEnroll(url: URL) async {
+        await enroll {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            return try PendingNetPairingFile.decode(Data(contentsOf: url))
+        }
+    }
+
+    /// 导入用户粘进来的一段文本：一条 `pendingnet://` 配对链接，或者 `.pdn`
+    /// 原文。走的是同一条配对流程 —— 凭据长什么样、怎么用，和从哪儿来无关。
+    func importAndEnroll(pasted text: String) async {
+        await enroll { try PendingNetPairingFile.decode(pasted: text) }
+    }
+
+    private func enroll(_ readPairing: () throws -> PendingNetPairingFile) async {
         working = true
         message = nil
         errorMessage = nil
         defer { working = false }
 
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         do {
-            let pairing = try PendingNetPairingFile.decode(Data(contentsOf: url))
+            let pairing = try readPairing()
             let result = try await PendingNetEnrollmentClient().enroll(
                 pairing: pairing,
                 deviceName: UIDevice.current.name

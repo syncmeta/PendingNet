@@ -345,17 +345,29 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	stateDir := fs.String("state-dir", defaultStateDir, "private PendingNet Server state directory")
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-time pairing file lifetime (max 24h)")
-	out := fs.String("out", "", "write pairing file to this path (default stdout)")
+	out := fs.String("out", "", "write the pairing credential to this path (default stdout)")
+	format := fs.String("format", "link", "pairing credential format: link (pendingnet:// URL) or json (*.pdn document)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *format != "link" && *format != "json" {
+		return fmt.Errorf("unknown --format %q, expected link or json", *format)
 	}
 	store := pnserver.NewStore(*stateDir)
 	pairFile, err := store.CreatePairing(*ttl)
 	if err != nil {
 		return err
 	}
-	b, err := pairFile.Marshal(time.Now())
-	if err != nil {
+	// 令牌是一次性的：走到这里它已经发出去了，两种形态装的是同一份凭据，
+	// 只是包装不同。默认给链接——点一下就唤起导入，粘贴也认。
+	var b []byte
+	if *format == "link" {
+		link, linkErr := pairFile.URL(time.Now())
+		if linkErr != nil {
+			return linkErr
+		}
+		b = []byte(link)
+	} else if b, err = pairFile.Marshal(time.Now()); err != nil {
 		return err
 	}
 	b = append(b, '\n')

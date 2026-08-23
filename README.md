@@ -176,9 +176,11 @@ sudo pendingnet-server provision \
   --server-ip "203.0.113.10" \
   --reality-sni "www.cloudflare.com"
 
-sudo pendingnet-server pair create --out /root/my-vps.pdn
+sudo pendingnet-server pair create
 sudo pendingnet-server status
 ```
+
+`pair create` 默认在终端里打印一条 `pendingnet://pair?v=1&d=…` 链接：在装了 PendingNet 的机器上点一下就唤起导入，链接被聊天软件吞掉时也可以整条复制、粘进 App 连接页的「粘贴链接导入」框。加 `--format json` 仍然吐原来那份 `.pdn` 文档（配 `--out` 存成文件），两种形态装的是同一份凭据。凭据规则一个字没变：默认十分钟过期、只能用一次、一台设备一份，所以它跟密码一样，别往公开地方贴。
 
 默认 TCP/443 跑 Reality、UDP/443 跑 Hysteria2、TCP/7443 跑控制服务。**这三个入口要自己在防火墙和云厂商安全组里放行**——`provision` 不会替你改防火墙。
 
@@ -191,7 +193,8 @@ sudo pendingnet-server status
 ```sh
 sudo ./pendingnet-server install --name "My VPS" --endpoint "https://203.0.113.10:7443"
 sudo pendingnet-server import-singb
-sudo pendingnet-server pair create --out /root/my-vps.pdn
+sudo pendingnet-server pair create
+sudo pendingnet-server status
 ```
 
 `import-singb` 读现有的 `/etc/singb/config.env` 和 `/etc/singb/state.env`，只取客户端连接需要的字段，不导入 Xray 私钥、完整服务端配置或任何路由规则，也不执行那些 shell 文件。这一步只新增 TCP/7443。

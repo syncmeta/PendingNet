@@ -103,6 +103,15 @@ targets:
         # 隐私范畴：没有这句话系统连授权弹窗都不弹，功能就是打开了也不通，
         # 而且不报错。审核那边也会问这个功能凭什么要本地网络权限。
         NSLocalNetworkUsageDescription: 打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。
+        # 点一条 pendingnet:// 配对链接就唤起导入。链接是 .pdn 之外的第二种
+        # 形态（同一份凭据、整体 base64url 塞在 d 参数里），聊天软件里传得动、
+        # 从手机传到电脑也不用挪文件。只有声明了这个 scheme，系统才会把链接
+        # 交给我们；不声明的话点了就是「无法打开」。
+        CFBundleURLTypes:
+          - CFBundleURLName: com.pendingname.pendingnet.pairing
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - pendingnet
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor
@@ -213,6 +222,15 @@ targets:
         CFBundleDisplayName: PendingNet
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # 点一条 pendingnet:// 配对链接就唤起导入。链接是 .pdn 之外的第二种
+        # 形态（同一份凭据、整体 base64url 塞在 d 参数里），聊天软件里传得动、
+        # 从手机传到电脑也不用挪文件。只有声明了这个 scheme，系统才会把链接
+        # 交给我们；不声明的话点了就是「无法打开」。
+        CFBundleURLTypes:
+          - CFBundleURLName: com.pendingname.pendingnet.pairing
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - pendingnet
         CFBundleDocumentTypes:
           - CFBundleTypeName: PendingNet Pairing
             CFBundleTypeRole: Editor

@@ -6,12 +6,14 @@ package pairing
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +21,11 @@ import (
 const (
 	Format  = "pendingnet-pairing"
 	Version = 1
+
+	// URLScheme and URLHost form the fixed prefix of a pairing link:
+	// pendingnet://pair?v=1&d=<base64url payload>.
+	URLScheme = "pendingnet"
+	URLHost   = "pair"
 )
 
 // File is the versioned on-disk *.pdn pairing document.
@@ -70,6 +77,63 @@ func (f File) Marshal(now time.Time) ([]byte, error) {
 		return nil, err
 	}
 	return json.MarshalIndent(f, "", "  ")
+}
+
+// URL renders the pairing document as a single pendingnet:// pairing link.
+//
+// The whole *.pdn JSON document is base64url-encoded (no padding) into one "d"
+// parameter instead of being spread over query fields. A client base64-decodes
+// it and hands the bytes straight to Parse, so a second transport shape does
+// not mean a second parser — and no field can drift between the two.
+func (f File) URL(now time.Time) (string, error) {
+	if err := f.Validate(now); err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(f)
+	if err != nil {
+		return "", fmt.Errorf("encode pairing link: %w", err)
+	}
+	// Built by hand rather than with url.Values.Encode: the base64url alphabet
+	// needs no escaping, and this keeps v before d as documented.
+	return fmt.Sprintf("%s://%s?v=%d&d=%s",
+		URLScheme, URLHost, Version, base64.RawURLEncoding.EncodeToString(payload)), nil
+}
+
+// ParseURL decodes a pendingnet:// pairing link and validates the document it
+// carries. Surrounding whitespace is tolerated because links arrive pasted.
+func ParseURL(raw string, now time.Time) (File, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return File{}, fmt.Errorf("parse pairing link: %w", err)
+	}
+	if !strings.EqualFold(u.Scheme, URLScheme) {
+		return File{}, fmt.Errorf("not a %s:// pairing link", URLScheme)
+	}
+	if !strings.EqualFold(u.Host, URLHost) || (u.Path != "" && u.Path != "/") {
+		return File{}, fmt.Errorf("pairing link must be %s://%s", URLScheme, URLHost)
+	}
+	query, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return File{}, fmt.Errorf("parse pairing link: %w", err)
+	}
+	for key, values := range query {
+		if key != "v" && key != "d" {
+			return File{}, fmt.Errorf("pairing link has unknown parameter %q", key)
+		}
+		if len(values) != 1 {
+			return File{}, fmt.Errorf("pairing link repeats parameter %q", key)
+		}
+	}
+	if version := query.Get("v"); version != strconv.Itoa(Version) {
+		return File{}, fmt.Errorf("unsupported pairing link version %q", version)
+	}
+	// Padding is not emitted, but a link that picked some up on the way stays
+	// readable: the payload itself is what has to be exact, not its padding.
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(query.Get("d"), "="))
+	if err != nil {
+		return File{}, fmt.Errorf("pairing link payload is not base64url: %w", err)
+	}
+	return Parse(payload, now)
 }
 
 // Validate enforces the v1 trust and expiry invariants.

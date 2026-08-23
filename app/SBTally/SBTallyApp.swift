@@ -56,11 +56,12 @@ struct SBTallyApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     vpsPairing.refreshFromCloud()
                 }
+                // 双击一份 .pdn，或者点一条 pendingnet:// 配对链接 —— 两条
+                // 路进来的都走同一条配对流程，认不出来的 URL 一律不理。
                 .onOpenURL { url in
-                    guard url.pathExtension.lowercased() == "pdn" else { return }
                     Task {
                         await PendingNetConnectionWorkflow.importAndConnect(
-                            url: url,
+                            opened: url,
                             pairing: vpsPairing,
                             engine: engine,
                             state: state
