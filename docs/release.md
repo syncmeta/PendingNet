@@ -17,6 +17,28 @@
 
 ## 产物从哪来
 
+一次 Release 要挂两类东西：
+
+| 资产 | 给谁 | 谁产的 |
+| --- | --- | --- |
+| `PendingNet-<版本>.zip` | 下载 macOS 客户端的人 | `scripts/build-macos-update.sh`（签名 + 公证 + staple） |
+| `pendingnet-server-linux-amd64`<br>`pendingnet-server-linux-arm64`<br>`SHA256SUMS` | VPS 上的一键部署脚本 | `scripts/build-linux-server.sh` |
+
+`deploy/vps-install.sh` 在 VPS 上第一件事就是去最新的 Release 找那三个东西：
+下到二进制、用 `SHA256SUMS` 核过才敢用。**缺了不会失败**——它会退回到在 VPS 上现装
+Go 工具链、clone 仓库、现场编译，能跑通，但要多花好几分钟。所以每次发 Release 都该把它们挂上。
+
+`scripts/build-linux-server.sh` 只交叉编译，不推任何东西，产物在 `dist/server/`：
+
+```sh
+scripts/build-linux-server.sh
+```
+
+资产名是 `vps-install.sh` 按字面找的，**别改名**。arm64 那个只是编出来了，从没在真的
+arm64 机器上跑过。
+
+
+
 `scripts/build-macos-update.sh` 每次跑完，会在 `dist/updates/pendingnet/` 留下 `PendingNet-<版本>.zip`。这个 zip 是完整的发布产物：Developer ID 签名 → Apple 公证 → staple 之后重新打的包。
 
 `dist/` 在 `.gitignore` 里，所以产物只在发布机本地。
@@ -51,12 +73,20 @@ codesign -dv --verbose=2 "$D/PendingNet.app"    # 签名身份对不对
 # 1. 把 tag 推上去（Release 必须挂在远端 tag 上）
 git push origin pendingnet/v0.3.28
 
-# 2. 创建 Release 并挂上产物
+# 2. 编出 Linux 服务端的三个资产（macOS 的 zip 打包时已经有了）
+scripts/build-linux-server.sh
+
+# 3. 创建 Release 并挂上全部产物
 gh release create pendingnet/v0.3.28 \
   dist/updates/pendingnet/PendingNet-0.3.28.zip \
+  dist/server/pendingnet-server-linux-amd64 \
+  dist/server/pendingnet-server-linux-arm64 \
+  dist/server/SHA256SUMS \
   --title "PendingNet 0.3.28" \
   --notes-file /tmp/release-notes.md
 ```
+
+Release 已经发出去了才想起来补 Linux 那三个：`gh release upload pendingnet/v0.3.28 dist/server/*`。
 
 想先看看效果再决定，加 `--draft`；仓库还是私有的时候，Release 也只有你自己看得见。
 
@@ -68,7 +98,7 @@ gh release create pendingnet/v0.3.28 \
 
 - 这是什么、给谁用（一句话，链回 README）
 - **系统要求和硬性前提**：macOS 版本下限、需要 Developer ID 公证过的包（已经是了）、装完要去「系统设置 → 通用 → 登录项与扩展」里给后台项目打开开关——不打开，TUN 和系统代理两种模式都用不了
-- **要连上还需要一台自己的 VPS**，装了 `pendingnet-server` 并生成一份 `.pdn`。这个前提要写在最前面，不然下载的人打开 app 会一脸茫然
+- **要连上还需要一台自己的 VPS**，装了 `pendingnet-server` 并生成一份 `.pdn`。这个前提要写在最前面，不然下载的人打开 app 会一脸茫然。VPS 那头现在有一键脚本了（`deploy/vps-install.sh`），这里可以直接把那条 `curl ... | sudo bash` 贴上去
 - 这一版改了什么。没有 CHANGELOG 的话，`git log --oneline pendingnet/v0.3.27..pendingnet/v0.3.28` 能凑出一份
 
 ## iOS 那边
