@@ -104,10 +104,16 @@ struct SBTallyApp: App {
         } label: {
             // 用 PendingNet 的应用图标（PendingNetMenuBarIcon，明暗两套变体），
             // 不再用 SF Symbol 的 network 图标。停止时半透明，保留一眼可辨的连接状态。
+            //
+            // 宽高必须一起钉死。图片资源是 756×630 且没标 scale，对 SwiftUI 来说
+            // 固有宽度就是 756pt；`.resizable()` 之后只给 `.frame(height:)`，宽度
+            // 仍按固有值上报，菜单栏项就会被撑成 700 多点宽，把整条菜单栏占满。
+            // 22×18 是按 756:630 的比例贴着 18pt 高算出来的，`scaledToFit()` 在这
+            // 个框里等比缩放，图不会变形。
             Image("PendingNetMenuBarIcon")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 20)
+                .frame(width: 22, height: 18)
                 .opacity(engine.running ? 1.0 : 0.5)
         }
         .menuBarExtraStyle(.window)
