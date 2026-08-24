@@ -481,7 +481,7 @@ sync_server_binary() {
         info "版本：$(installed_version_line)"
         return 0
     fi
-    log "服务端要升级：已装 ${old_sum:0:12}… → 这次的 ${new_sum:0:12}…"
+    log "服务端要换版本：已装 ${old_sum:0:12}… → 这次的 ${new_sum:0:12}…"
     info "升级前：$(installed_version_line)"
     binary_runs "$staged" || die "这次取到的二进制在这台机器上跑不起来（架构不对或文件是坏的），已装的那份一个字节都没动。"
     local backup="$INSTALLED_BIN.previous"
@@ -493,12 +493,12 @@ sync_server_binary() {
     mv -f "$staging" "$INSTALLED_BIN"
     if ! systemctl cat pendingnet-server.service >/dev/null 2>&1; then
         warn "机器上没有 pendingnet-server.service 这个单元，只换了二进制，没重启任何服务。"
-        log "服务端已升级：$(installed_version_line)"
+        log "服务端已换成这次取到的那一份：$(installed_version_line)"
         return 0
     fi
     log "重启 pendingnet-server.service"
     if systemctl restart pendingnet-server.service && server_service_settled; then
-        log "服务端已升级：$(installed_version_line)"
+        log "服务端已升级：$(installed_version_line)（来源：$BINARY_SOURCE）"
         info "旧的那份留在 $backup（要手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
         return 0
     fi
