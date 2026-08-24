@@ -3,10 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash
 #
-# 跑完会在屏幕上打印一条 pendingnet:// 配对链接，客户端点一下（或整条粘进
-# App 的粘贴框）就能连上。脚本做的事：装 pendingnet-server（优先下预编译的
-# Release 资产并校验 sha256，没有就现场装 Go 工具链从源码编译）、install、
-# provision、pair create。
+# 屏幕上只有进度行，最后给一条 pendingnet:// 配对链接，别的都不打。细节（下了
+# 什么、校验了什么、版本从哪一版换到哪一版）进 /tmp/pendingnet-install.log，
+# 出错时会指出来。链接怎么用、有什么规矩、要放行哪几个端口，看 --help。
+# 脚本做的事：装 pendingnet-server（优先下预编译的 Release 资产并校验 sha256，
+# 没有就现场装 Go 工具链从源码编译）、install、provision、pair create。
 #
 # 管道执行下没法传命令行参数，所有可覆盖项都同时认环境变量：
 #
@@ -45,22 +46,39 @@ FORCE_PROVISION="${PENDINGNET_FORCE_PROVISION:-0}"
 SOURCE_ONLY="${PENDINGNET_SOURCE_ONLY:-0}"
 NO_UPGRADE="${PENDINGNET_NO_UPGRADE:-0}"
 
+# 屏幕上只留进度和链接，絮叨全进这个文件——出错时 on_error 会把路径指出来。
+DETAIL_LOG="${PENDINGNET_LOG:-/tmp/pendingnet-install.log}"
+
 WORK_DIR=""
 ARCH=""
 GOARCH=""
 BINARY_SOURCE=""
 
 if [[ -t 1 ]]; then
-    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'
     C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_CYAN=$'\033[36m'
 else
-    C_RESET=""; C_BOLD=""; C_DIM=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_CYAN=""
+    C_RESET=""; C_BOLD=""; C_RED=""; C_GREEN=""; C_YELLOW=""; C_CYAN=""
 fi
 
 log()  { printf '%s==>%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
-info() { printf '    %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+# info 不上屏：细节只写进 $DETAIL_LOG。日志写不进去（磁盘满、目录不可写）
+# 也不能让部署整体失败——它只是日志。
+info() { printf '%s\n' "$*" >>"$DETAIL_LOG" 2>/dev/null || true; }
 warn() { printf '%s警告:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
 die()  { printf '%s错误:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+
+# 跑一个话多的命令：stdout / stderr 全进 $DETAIL_LOG，只有它失败时才把这一段
+# 原样吐到屏幕上。成功路径上屏幕干净，出错时一个字都不少。
+run_quiet() {
+    local before=0 code=0
+    before="$(wc -c <"$DETAIL_LOG" 2>/dev/null || echo 0)"
+    "$@" </dev/null >>"$DETAIL_LOG" 2>&1 || code=$?
+    if (( code != 0 )); then
+        tail -c "+$((before + 1))" "$DETAIL_LOG" >&2 2>/dev/null || true
+    fi
+    return "$code"
+}
 
 usage() {
     cat <<'EOF'
@@ -104,6 +122,27 @@ usage() {
 
 私有仓库把 PENDINGNET_GITHUB_TOKEN 设成有 repo 读权限的 token，
 下载 Release 资产和 clone 源码都会带上它。
+
+配对链接怎么用:
+  在装了 PendingNet 的 Mac / iPhone 上点一下那条链接，App 会自己起来开始配对。
+  被聊天软件吞掉的话整条复制，粘进 App 连接页的「粘贴链接导入」框。
+
+配对链接的规矩:
+  · 默认 10m 过期（--pair-ttl 可改，最长 24h）、只能用一次、一台设备一份。
+  · 它跟密码等价——谁拿到谁就能连上这台 VPS，别往公开地方贴。
+  · 再要一条（换设备 / 过期了 / 用掉了）: sudo pendingnet-server pair create
+
+要放行的入口（脚本一个字都不改防火墙，云厂商的安全组也得自己开）:
+  TCP/443    Reality       （--xray-port 改）
+  UDP/443    Hysteria2     （--hy2-port 改）
+  TCP/7443   控制 API      （--control-port 改）
+
+  ufw:       sudo ufw allow 443/tcp && sudo ufw allow 443/udp && sudo ufw allow 7443/tcp
+  firewalld: sudo firewall-cmd --permanent --add-port=443/tcp --add-port=443/udp --add-port=7443/tcp
+             sudo firewall-cmd --reload
+
+跑的时候屏幕上只有进度和链接。细节在 /tmp/pendingnet-install.log
+（PENDINGNET_LOG 可改路径），装的是哪一版用 sudo pendingnet-server version 查。
 EOF
 }
 
@@ -136,6 +175,7 @@ on_error() {
     printf '\n%s部署没走完%s（第 %s 行，退出码 %s）。查这几处:\n' "$C_RED$C_BOLD" "$C_RESET" "$line" "$code" >&2
     cat >&2 <<EOF
 
+  $DETAIL_LOG                        这次跑的详细日志
   journalctl -u pendingnet-server -n 50 --no-pager     控制服务的日志
   journalctl -u pendingnet-xray -n 50 --no-pager       Reality 的日志
   journalctl -u pendingnet-hysteria -n 50 --no-pager   Hysteria2 的日志
@@ -160,7 +200,7 @@ detect_os() {
         . /etc/os-release
         id="${ID:-}"; id_like="${ID_LIKE:-}"; pretty="${PRETTY_NAME:-$id}"
     fi
-    log "系统: $pretty"
+    log "系统 $pretty · $(uname -m)"
     if [[ "$id" != "debian" && "$id" != "ubuntu" && "$id_like" != *debian* ]]; then
         warn "这个脚本只在 Debian / Ubuntu 上验证过。$pretty 上它会照样用 apt-get 和 systemd 的方式走，很可能失败。"
         warn "要继续的话，请自己确认 apt-get 和 systemd 都在。"
@@ -180,7 +220,7 @@ detect_arch() {
             ;;
         *) die "不支持的 CPU 架构 $machine，只支持 x86_64 / aarch64。" ;;
     esac
-    log "架构: $machine → $ARCH"
+    info "架构 $machine → $ARCH"
 }
 
 ensure_packages() {
@@ -198,7 +238,7 @@ ensure_packages() {
         esac
     done
     [[ ${#missing[@]} -gt 0 ]] || return 0
-    log "装依赖: ${missing[*]}"
+    log "装依赖 ${missing[*]}"
     # apt / dpkg 的解包刷屏对用户没有信息量，出错时才把它整段打出来。
     local apt_log="${WORK_DIR:-/tmp}/apt.log"
     if ! {
@@ -293,7 +333,7 @@ detect_public_ip() {
     )
     local -a answers=()
     local source answer
-    log "探测公网 IP"
+    info "探测公网 IP"
     for source in "${sources[@]}"; do
         answer="$(curl -fsS --max-time 8 "$source" 2>/dev/null | tr -d '[:space:]' || true)"
         if valid_ipv4 "$answer"; then
@@ -308,7 +348,8 @@ detect_public_ip() {
         count="$(printf '%s\n' "${answers[@]}" | grep -cxF "$candidate" || true)"
         if (( count >= 2 )); then
             SERVER_IP="$candidate"
-            log "公网 IP: $SERVER_IP（$count 个源一致）"
+            log "公网 IP $SERVER_IP"
+            info "$count 个源给出同一个地址"
             return 0
         fi
     done
@@ -338,7 +379,7 @@ download_release_binary() {
     local asset="pendingnet-server-linux-$ARCH"
     local dest="$WORK_DIR/pendingnet-server"
     local sums="$WORK_DIR/SHA256SUMS"
-    log "找预编译的服务端二进制（资产名 $asset）"
+    info "找预编译的服务端二进制（资产名 $asset）"
     if [[ -n "$RELEASE_BASE_URL" ]]; then
         curl -fsSL --max-time 300 -o "$dest" "$RELEASE_BASE_URL/$asset" </dev/null || { info "下不到 $RELEASE_BASE_URL/$asset"; return 1; }
         curl -fsSL --max-time 60 -o "$sums" "$RELEASE_BASE_URL/SHA256SUMS" </dev/null || { info "下不到 $RELEASE_BASE_URL/SHA256SUMS"; return 1; }
@@ -369,7 +410,8 @@ download_release_binary() {
     fi
     chmod 0755 "$dest"
     info "sha256 校验通过: $expected"
-    BINARY_SOURCE="Release 预编译资产 $asset"
+    BINARY_SOURCE="预编译资产"
+    info "来源 Release 资产 $asset"
     return 0
 }
 
@@ -381,7 +423,7 @@ install_go_toolchain() {
     fi
     ensure_packages tar
     local tarball="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
-    log "装 Go 工具链 $GO_VERSION 到 /usr/local/go（官方 tarball，约 80 MB）"
+    log "装 Go 工具链 $GO_VERSION"
     curl -fsSL --max-time 600 -o "$WORK_DIR/$tarball" "https://go.dev/dl/$tarball" </dev/null \
         || die "Go 工具链下不下来（https://go.dev/dl/$tarball）。这台机器连不上 go.dev 的话，改用 README「一、VPS 端」的手工路径：在本机交叉编译好再 scp 上来。"
     rm -rf /usr/local/go
@@ -391,8 +433,7 @@ install_go_toolchain() {
 }
 
 build_from_source() {
-    log "回退到源码编译（下预编译资产这条没走通）"
-    info "要装 Go 工具链、clone 仓库、编译一遍，网络正常的话大约 3-6 分钟。"
+    log "源码编译服务端（下预编译资产没走通，要几分钟）"
     ensure_packages git ca-certificates
     install_go_toolchain
     local src="$WORK_DIR/src"
@@ -400,10 +441,10 @@ build_from_source() {
     if [[ -z "$REPO_URL" && -n "$GITHUB_TOKEN" ]]; then
         clone_url="https://x-access-token:$GITHUB_TOKEN@github.com/$REPO.git"
     fi
-    log "clone ${REPO_URL:-$REPO}（$REF）"
+    info "clone ${REPO_URL:-$REPO}（$REF）"
     git clone --quiet --depth 1 --branch "$REF" "$clone_url" "$src" </dev/null \
         || die "clone 不下来。私有仓库要设 PENDINGNET_GITHUB_TOKEN；分支名不对就用 --ref 指定。"
-    log "编译 ./cmd/pendingnet-server"
+    info "编译 ./cmd/pendingnet-server"
     (
         cd "$src"
         GOTOOLCHAIN=auto \
@@ -413,7 +454,8 @@ build_from_source() {
         /usr/local/go/bin/go build -o "$WORK_DIR/pendingnet-server" ./cmd/pendingnet-server </dev/null
     ) || die "编译失败。上面是 go build 的原始输出。"
     chmod 0755 "$WORK_DIR/pendingnet-server"
-    BINARY_SOURCE="源码编译（${REPO_URL:-$REPO}@$REF）"
+    BINARY_SOURCE="源码编译"
+    info "来源 ${REPO_URL:-$REPO}@$REF"
 }
 
 obtain_binary() {
@@ -422,7 +464,7 @@ obtain_binary() {
     elif ! download_release_binary; then
         build_from_source
     fi
-    log "服务端二进制就绪：$BINARY_SOURCE"
+    log "取到服务端二进制（$BINARY_SOURCE）"
 }
 
 already_provisioned() { [[ -f "$STATE_DIR/node.json" ]]; }
@@ -476,13 +518,13 @@ sync_server_binary() {
     new_sum="$(sha256_of "$staged")"
     old_sum="$(sha256_of "$INSTALLED_BIN")"
     if [[ "$new_sum" == "$old_sum" ]]; then
-        log "已装的服务端就是这次该用的那一份，不动它"
+        log "服务端已是这次该用的版本，不动它"
         info "sha256 $new_sum"
-        info "版本：$(installed_version_line)"
+        info "版本 $(installed_version_line)"
         return 0
     fi
-    log "服务端要换版本：已装 ${old_sum:0:12}… → 这次的 ${new_sum:0:12}…"
-    info "升级前：$(installed_version_line)"
+    log "换服务端二进制 ${old_sum:0:12}… → ${new_sum:0:12}…"
+    info "换之前 $(installed_version_line)"
     binary_runs "$staged" || die "这次取到的二进制在这台机器上跑不起来（架构不对或文件是坏的），已装的那份一个字节都没动。"
     local backup="$INSTALLED_BIN.previous"
     local staging="$INSTALLED_BIN.new"
@@ -493,13 +535,13 @@ sync_server_binary() {
     mv -f "$staging" "$INSTALLED_BIN"
     if ! systemctl cat pendingnet-server.service >/dev/null 2>&1; then
         warn "机器上没有 pendingnet-server.service 这个单元，只换了二进制，没重启任何服务。"
-        log "服务端已换成这次取到的那一份：$(installed_version_line)"
+        log "服务端已换成 $(installed_version_line)"
         return 0
     fi
-    log "重启 pendingnet-server.service"
+    info "重启 pendingnet-server.service"
     if systemctl restart pendingnet-server.service && server_service_settled; then
-        log "服务端已升级：$(installed_version_line)（来源：$BINARY_SOURCE）"
-        info "旧的那份留在 $backup（要手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
+        log "服务端已升级 $(installed_version_line)"
+        info "来源 $BINARY_SOURCE；旧的那份留在 $backup（手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
         return 0
     fi
     warn "新服务端起不来，回滚到升级前那一份"
@@ -527,8 +569,8 @@ server_service_settled() {
 # 建立在「旧二进制还能用」这个假设上——脚本吐 .pdn 原文那个 bug 就是这么来的。
 align_server_binary() {
     if [[ "$NO_UPGRADE" == "1" ]]; then
-        log "--no-upgrade：沿用机器上已装的服务端，不检查版本"
-        info "版本：$(installed_version_line)"
+        log "--no-upgrade：沿用已装的服务端"
+        info "版本 $(installed_version_line)"
         BINARY_SOURCE="机器上已装的那一份（--no-upgrade）"
         installed_supports_link || warn_installed_cannot_link
         return 0
@@ -574,10 +616,13 @@ warn_endpoint_drift() {
 
 do_install() {
     [[ -n "$DISPLAY_NAME" ]] || DISPLAY_NAME="$(hostname 2>/dev/null || echo PendingNet VPS)"
-    log "安装并启动控制服务（名字「$DISPLAY_NAME」，控制地址 https://$SERVER_IP:$CONTROL_PORT）"
-    "$WORK_DIR/pendingnet-server" install \
+    log "安装控制服务"
+    info "名字「$DISPLAY_NAME」，控制地址 https://$SERVER_IP:$CONTROL_PORT"
+    # 被调程序打的那坨 JSON 和 systemctl 的 Created symlink 都不上屏，进日志；
+    # 失败时 run_quiet 会把整段原样打出来。
+    run_quiet "$WORK_DIR/pendingnet-server" install \
         --name "$DISPLAY_NAME" \
-        --endpoint "https://$SERVER_IP:$CONTROL_PORT" </dev/null
+        --endpoint "https://$SERVER_IP:$CONTROL_PORT"
 }
 
 do_provision() {
@@ -594,53 +639,24 @@ do_provision() {
             info "沿用机器上已经校验过的 xray / hysteria 二进制"
         fi
     fi
-    log "部署节点：Reality (TCP/$XRAY_PORT, SNI $REALITY_SNI) + Hysteria2 (UDP/$HY2_PORT)"
+    log "部署节点 Reality TCP/$XRAY_PORT · Hysteria2 UDP/$HY2_PORT"
     if [[ " ${args[*]} " == *" --skip-download "* ]]; then
         info "跳过引擎下载"
     else
-        info "会从 GitHub 下载并校验官方 Xray / Hysteria2 的 Release，慢的话是在下这个"
+        info "会从 GitHub 下载并校验官方 Xray / Hysteria2 的 Release"
     fi
-    "$INSTALLED_BIN" provision "${args[@]}" </dev/null
-}
-
-firewall_notes() {
-    printf '\n%s还要放行这三个入口%s（脚本不替你改防火墙，云厂商的安全组也得自己开）:\n\n' "$C_BOLD" "$C_RESET"
-    printf '    TCP/%s    Reality\n    UDP/%s    Hysteria2\n    TCP/%s   PendingNet 控制 API\n' \
-        "$XRAY_PORT" "$HY2_PORT" "$CONTROL_PORT"
-    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | head -1 | grep -q active; then
-        printf '\n  ufw 正在跑，对应的命令是:\n\n'
-        printf '    sudo ufw allow %s/tcp && sudo ufw allow %s/udp && sudo ufw allow %s/tcp\n' \
-            "$XRAY_PORT" "$HY2_PORT" "$CONTROL_PORT"
-    fi
-    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        printf '\n  firewalld 正在跑，对应的命令是:\n\n'
-        printf '    sudo firewall-cmd --permanent --add-port=%s/tcp --add-port=%s/udp --add-port=%s/tcp\n    sudo firewall-cmd --reload\n' \
-            "$XRAY_PORT" "$HY2_PORT" "$CONTROL_PORT"
-    fi
+    run_quiet "$INSTALLED_BIN" provision "${args[@]}"
 }
 
 print_link() {
-    local link="$1"
-    printf '\n%s%s配对链接（就是下面这一整条）%s\n\n' "$C_BOLD" "$C_GREEN" "$C_RESET"
-    printf '%s\n' "$link"
-    cat <<EOF
-
-$C_BOLD怎么用$C_RESET
-  在装了 PendingNet 的 Mac / iPhone 上$C_BOLD点一下这条链接$C_RESET，App 会自己起来开始配对；
-  链接被聊天软件吞掉的话，$C_BOLD整条复制$C_RESET，粘进 App 连接页的「粘贴链接导入」框里。
-
-$C_BOLD三条规矩$C_RESET
-  · 默认 $PAIR_TTL 过期，只能用一次，一台设备一份。
-  · 它跟密码等价——谁拿到谁就能连上这台 VPS，别往公开地方贴。
-  · 再要一条（换设备、过期了、用掉了）就在这台机器上跑:
-
-        sudo pendingnet-server pair create
-
-EOF
+    printf '\n%s链接：%s\n%s\n' "$C_BOLD$C_GREEN" "$C_RESET" "$1"
 }
 
 main() {
     parse_args "$@"
+    # 每次跑重开一份细节日志，屏幕上只留进度和链接。
+    : >"$DETAIL_LOG" 2>/dev/null || true
+    info "pendingnet vps-install $(date -u '+%F %T UTC') 参数: $*"
     require_root
     detect_os
     detect_arch
@@ -654,7 +670,7 @@ main() {
     # 配对链接，不该顺手把在用的服务重做一遍。但服务端二进制该升还是得升：
     # 旧版吐的是 .pdn JSON 而不是链接，「只补一条链接」正是撞上这个的地方。
     if already_installed && already_provisioned && [[ "$FORCE_PROVISION" != "1" ]]; then
-        log "这台机器已经部署过了，只生成一条新的配对链接"
+        log "已部署过，只补一条配对链接"
         info "要重做部署（重新生成密钥、已配对的客户端立刻失效）加 --force-provision"
         if [[ -n "$SERVER_IP" ]]; then
             warn_endpoint_drift
@@ -668,7 +684,6 @@ main() {
         fi
         assert_pairing_link "$quick_link" || exit 1
         print_link "$quick_link"
-        firewall_notes
         exit 0
     fi
 
@@ -687,7 +702,7 @@ main() {
 
     if already_installed; then
         if ! already_provisioned; then
-            log "控制服务已经装过（上次大概停在部署节点这一步），跳过 install"
+            info "控制服务已经装过（上次大概停在部署节点这一步），跳过 install"
         fi
         align_server_binary
     else
@@ -697,7 +712,7 @@ main() {
     fi
 
     if already_provisioned && [[ "$FORCE_PROVISION" != "1" ]]; then
-        log "节点已经部署过，跳过"
+        info "节点已经部署过，跳过"
     else
         do_provision
     fi
@@ -707,10 +722,7 @@ main() {
     link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
     assert_pairing_link "$link" || exit 1
 
-    printf '\n%s部署完成%s  服务端: %s\n' "$C_GREEN$C_BOLD" "$C_RESET" "$BINARY_SOURCE"
-    "$INSTALLED_BIN" status </dev/null || true
     print_link "$link"
-    firewall_notes
 }
 
 main "$@"

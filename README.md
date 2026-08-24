@@ -180,7 +180,12 @@ Ubuntu 也认，`apt-get` 和 `systemd` 是脚本对系统仅有的两个硬要�
 2. 拿 `pendingnet-server`：先下 Release 里的 `pendingnet-server-linux-<arch>` 并核 sha256，
    下不到或核不过就退回到在 VPS 上装官方 Go 工具链、clone 本仓库现场编译（多花几分钟，结果一样）。
 3. 公网 IP 自动探测（多个源交叉验证），`install` → `provision` → `pair create`。
-4. 最后把 `pendingnet://` 链接和要放行的三个端口打在屏幕上。
+4. 最后把 `pendingnet://` 链接打在屏幕上。
+
+屏幕上只有进度行 + 最后那条链接，别的都不打。细节（下了什么、校验了什么、
+服务端从哪一版换到哪一版）进 `/tmp/pendingnet-install.log`（`PENDINGNET_LOG` 可改），
+出错时脚本会把这个路径指出来；链接怎么用、有什么规矩、要放行哪几个端口，
+`sudo bash vps-install.sh --help` 里都有。
 
 管道执行时传参用环境变量，命令行参数也认（`sudo bash vps-install.sh --help` 看全部）：
 
@@ -199,8 +204,12 @@ curl -fsSL <上面那个地址> | sudo PENDINGNET_SERVER_IP=203.0.113.10 PENDING
 但那时如果它吐不出链接，脚本会明确警告，不会让你拿着一段 JSON 发懵。
 装的是哪一版随时查得到：`sudo pendingnet-server version`。
 
-**防火墙脚本一个字都不改**，只在结尾列出要放行的 TCP/443、UDP/443、TCP/7443，
-检测到 ufw / firewalld 在跑时把对应命令打出来给你自己按。云厂商的安全组也得自己开。
+**防火墙脚本一个字都不改**：要放行的 TCP/443（Reality）、UDP/443（Hysteria2）、
+TCP/7443（控制 API）以及 ufw / firewalld 的对应命令写在 `--help` 里，自己按。
+云厂商的安全组也得自己开。
+
+**配对链接的规矩**（`--help` 里也有）：默认十分钟过期、只能用一次、一台设备一份；
+它跟密码等价，别往公开地方贴；再要一条就在 VPS 上跑 `sudo pendingnet-server pair create`。
 
 <details>
 <summary><b>或者手工来</b>（脚本跑不通、或者想自己盯着每一步时）</summary>
