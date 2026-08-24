@@ -15,6 +15,11 @@
 #
 # 防火墙脚本一律不改（见结尾的提示）。第二次跑默认只补一条新链接，要重做
 # 部署得显式 --force-provision——那会让已经配对的客户端立刻失效。
+#
+# 每次跑都会把 /usr/local/bin/pendingnet-server 对齐到这次取到的版本（sha256
+# 一样就一个字节都不动）。这一步不能省：装过一次的机器上留着旧版服务端时，
+# 它的 pair create 吐的是老格式的 .pdn JSON，不是 pendingnet:// 链接。要沿用
+# 已装的那份加 --no-upgrade。
 set -Eeuo pipefail
 
 readonly STATE_DIR=/etc/pendingnet
@@ -38,6 +43,7 @@ REPO_URL="${PENDINGNET_REPO_URL:-}"
 GITHUB_TOKEN="${PENDINGNET_GITHUB_TOKEN:-}"
 FORCE_PROVISION="${PENDINGNET_FORCE_PROVISION:-0}"
 SOURCE_ONLY="${PENDINGNET_SOURCE_ONLY:-0}"
+NO_UPGRADE="${PENDINGNET_NO_UPGRADE:-0}"
 
 WORK_DIR=""
 ARCH=""
@@ -81,6 +87,10 @@ usage() {
                           环境变量 PENDINGNET_FORCE_PROVISION=1
   --source-only           跳过预编译资产，直接从源码编译
                           环境变量 PENDINGNET_SOURCE_ONLY=1
+  --no-upgrade            不检查版本，沿用机器上已装的服务端二进制。
+                          旧版服务端吐的是 .pdn JSON 而不是配对链接，
+                          脚本检测到这种情况会明确警告。
+                          环境变量 PENDINGNET_NO_UPGRADE=1
   --repo <owner/name>     源码仓库，默认 syncmeta/PendingNet
   --ref <分支或 tag>      源码分支，默认 main
   --go-version <版本>     源码编译用的 Go 版本，默认 1.26.4
@@ -114,6 +124,7 @@ parse_args() {
             --repo-url)       REPO_URL="${2:?--repo-url 后面要跟 URL}"; shift 2 ;;
             --force-provision) FORCE_PROVISION=1; shift ;;
             --source-only)    SOURCE_ONLY=1; shift ;;
+            --no-upgrade)     NO_UPGRADE=1; shift ;;
             -h|--help)        usage; exit 0 ;;
             *) usage >&2; die "不认识的参数: $1" ;;
         esac
@@ -132,6 +143,8 @@ on_error() {
 
 改完之后原样再跑一遍这个脚本就行——已经装好的部分会跳过。
 要把部署整个重做（重新生成密钥，已配对的客户端立刻失效）加 --force-provision。
+卡在「取服务端二进制」这一步、而这台机器只是想再要一条配对链接，可以加
+--no-upgrade 沿用已装的那一份（是旧版的话它吐 .pdn JSON，脚本会明确警告）。
 EOF
 }
 trap 'on_error $? $LINENO' ERR
@@ -415,6 +428,140 @@ obtain_binary() {
 already_provisioned() { [[ -f "$STATE_DIR/node.json" ]]; }
 already_installed()   { [[ -x "$INSTALLED_BIN" && -f "$STATE_DIR/state.json" ]]; }
 
+sha256_of() { sha256sum "$1" | awk '{print $1}'; }
+
+# 这份二进制在这台机器上能不能 exec 起来。126/127 是「根本没跑起来」
+# （架构不对、文件是坏的），别的退出码都说明它跑了——pair create -h 本来
+# 就以非 0 退出。
+binary_runs() {
+    local code=0
+    "$1" pair create -h >/dev/null 2>&1 </dev/null || code=$?
+    (( code != 126 && code != 127 ))
+}
+
+# 已装的服务端报得出版本就打它，报不出就老实说不知道（version 是后来才加的
+# 子命令，早于它的版本一律答不上来）。
+installed_version_line() {
+    local reported
+    reported="$("$INSTALLED_BIN" version 2>/dev/null </dev/null | head -1 || true)"
+    if [[ -n "$reported" ]]; then
+        printf '%s' "$reported"
+    else
+        printf '%s' "版本不详（旧到没有 version 子命令）"
+    fi
+}
+
+# 已装的这份会不会吐 pendingnet:// 链接？看 pair create 有没有 -format 这个
+# 旗标——链接功能就是跟它一起进来的。这个探测不写任何状态：旗标解析失败
+# 发生在生成凭据之前，不会白烧掉一个一次性令牌。
+installed_supports_link() {
+    local help
+    help="$("$INSTALLED_BIN" pair create -h 2>&1 </dev/null || true)"
+    [[ "$help" == *-format* ]]
+}
+
+warn_installed_cannot_link() {
+    warn "已装的服务端是「配对链接」功能之前的旧版：它的 pair create 吐的是老格式的 .pdn JSON 文档，不是 pendingnet:// 链接。"
+    warn "那份 JSON 客户端认（存成 .pdn 文件走文件导入），但你要的一条链接它给不出来。"
+    warn "去掉 --no-upgrade 原样再跑一遍，脚本会先把服务端升上去再出链接。"
+}
+
+# 把 $INSTALLED_BIN 对齐到 $WORK_DIR 里这次取到的那一份。sha256 一样就一个
+# 字节都不动；不一样就备份、原子替换、重启控制服务。新的起不来就把旧的原样
+# 换回去再起一次，并明确报错。代理节点那两个服务（pendingnet-xray /
+# pendingnet-hysteria）跟这份二进制无关，全程不碰。
+sync_server_binary() {
+    local staged="$WORK_DIR/pendingnet-server"
+    local new_sum old_sum
+    new_sum="$(sha256_of "$staged")"
+    old_sum="$(sha256_of "$INSTALLED_BIN")"
+    if [[ "$new_sum" == "$old_sum" ]]; then
+        log "已装的服务端就是这次该用的那一份，不动它"
+        info "sha256 $new_sum"
+        info "版本：$(installed_version_line)"
+        return 0
+    fi
+    log "服务端要升级：已装 ${old_sum:0:12}… → 这次的 ${new_sum:0:12}…"
+    info "升级前：$(installed_version_line)"
+    binary_runs "$staged" || die "这次取到的二进制在这台机器上跑不起来（架构不对或文件是坏的），已装的那份一个字节都没动。"
+    local backup="$INSTALLED_BIN.previous"
+    local staging="$INSTALLED_BIN.new"
+    cp -f "$INSTALLED_BIN" "$backup" || die "备份旧二进制到 $backup 失败，没敢往下动。"
+    cp -f "$staged" "$staging"
+    chmod 0755 "$staging"
+    # rename 是原子的，也不去写正在执行的那个 inode——直接 cp 覆盖会 ETXTBSY。
+    mv -f "$staging" "$INSTALLED_BIN"
+    if ! systemctl cat pendingnet-server.service >/dev/null 2>&1; then
+        warn "机器上没有 pendingnet-server.service 这个单元，只换了二进制，没重启任何服务。"
+        log "服务端已升级：$(installed_version_line)"
+        return 0
+    fi
+    log "重启 pendingnet-server.service"
+    if systemctl restart pendingnet-server.service && server_service_settled; then
+        log "服务端已升级：$(installed_version_line)"
+        info "旧的那份留在 $backup（要手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
+        return 0
+    fi
+    warn "新服务端起不来，回滚到升级前那一份"
+    cp -f "$backup" "$staging"
+    chmod 0755 "$staging"
+    mv -f "$staging" "$INSTALLED_BIN"
+    if systemctl restart pendingnet-server.service && server_service_settled; then
+        die "服务端升级失败，已经回滚到升级前那一份并重启好了（控制服务在跑，机器还能用）。查 journalctl -u pendingnet-server -n 50 --no-pager 看新版本为什么起不来。"
+    fi
+    die "服务端升级失败，回滚之后控制服务也没起来。立刻查 journalctl -u pendingnet-server -n 50 --no-pager；升级前的二进制在 $backup。"
+}
+
+# Type=simple 的服务，systemctl restart 一 fork 出来就算成功了。所以盯几秒
+# 看它是不是真的活着——启动就崩的二进制只有在这一步才露出来。
+server_service_settled() {
+    local _tick
+    for _tick in 1 2 3 4 5; do
+        sleep 1
+        systemctl is-active --quiet pendingnet-server.service || return 1
+    done
+    return 0
+}
+
+# 每次跑都要保证服务路径上那份服务端是这次该用的版本。「只补一条链接」不能
+# 建立在「旧二进制还能用」这个假设上——脚本吐 .pdn 原文那个 bug 就是这么来的。
+align_server_binary() {
+    if [[ "$NO_UPGRADE" == "1" ]]; then
+        log "--no-upgrade：沿用机器上已装的服务端，不检查版本"
+        info "版本：$(installed_version_line)"
+        BINARY_SOURCE="机器上已装的那一份（--no-upgrade）"
+        installed_supports_link || warn_installed_cannot_link
+        return 0
+    fi
+    obtain_binary
+    sync_server_binary
+}
+
+# 兜底断言：pair create 之后必须是一条 pendingnet:// 链接。不是就不算成功——
+# 这是旧版服务端吐 .pdn 原文那个 bug 的直接防线。
+assert_pairing_link() {
+    local credential="$1"
+    [[ "$credential" == pendingnet://* ]] && return 0
+    printf '\n%s%s拿到的不是配对链接%s\n' "$C_BOLD" "$C_RED" "$C_RESET" >&2
+    cat >&2 <<EOF
+
+pair create 实际吐出来的是下面这段。它是一次性凭据，已经发出去了，所以
+照样给你——别丢:
+
+$credential
+
+这是老格式的 .pdn JSON 文档，不是 pendingnet:// 链接。原因就一个:
+$INSTALLED_BIN 是「配对链接」功能之前的旧版服务端。
+
+怎么办:
+  · 不带 --no-upgrade 原样再跑一遍这个脚本，它会把服务端升到最新再出链接。
+  · 想先看清是哪一版: sudo pendingnet-server version
+    （报 unknown command 就是旧版；新版会打版本号和 features 那一行。）
+  · 上面这一份现在也能用: 存成 pendingnet.pdn，在 App 里按文件导入。
+EOF
+    return 1
+}
+
 warn_endpoint_drift() {
     local recorded
     recorded="$(grep -oE '"control_endpoint": *"[^"]+"' "$STATE_DIR/state.json" 2>/dev/null | head -1 | sed 's/.*"\(https[^"]*\)"/\1/' || true)"
@@ -499,19 +646,27 @@ main() {
     detect_arch
     ensure_packages curl ca-certificates iproute2 coreutils
 
+    WORK_DIR="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$WORK_DIR'" EXIT
+
     # 快路径：装过了就只补一条链接。第二次跑这个脚本的人多半只是想再要一条
-    # 配对链接，不该顺手把在用的服务重做一遍。
+    # 配对链接，不该顺手把在用的服务重做一遍。但服务端二进制该升还是得升：
+    # 旧版吐的是 .pdn JSON 而不是链接，「只补一条链接」正是撞上这个的地方。
     if already_installed && already_provisioned && [[ "$FORCE_PROVISION" != "1" ]]; then
         log "这台机器已经部署过了，只生成一条新的配对链接"
         info "要重做部署（重新生成密钥、已配对的客户端立刻失效）加 --force-provision"
         if [[ -n "$SERVER_IP" ]]; then
             warn_endpoint_drift
         fi
+        align_server_binary
+        log "生成配对链接"
         local quick_link
         quick_link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
         if ! systemctl is-active --quiet pendingnet-server.service; then
             warn "pendingnet-server.service 没在跑，客户端会连不上：systemctl status pendingnet-server"
         fi
+        assert_pairing_link "$quick_link" || exit 1
         print_link "$quick_link"
         firewall_notes
         exit 0
@@ -525,18 +680,18 @@ main() {
         sleep 5
     fi
 
-    WORK_DIR="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$WORK_DIR'" EXIT
-
     [[ -n "$SERVER_IP" ]] || detect_public_ip
     valid_ipv4 "$SERVER_IP" || die "--server-ip 得是一个 IPv4 地址，收到的是「$SERVER_IP」。"
 
     check_ports
 
-    if already_installed && ! already_provisioned; then
-        log "控制服务已经装过（上次大概停在部署节点这一步），跳过下载和安装"
+    if already_installed; then
+        if ! already_provisioned; then
+            log "控制服务已经装过（上次大概停在部署节点这一步），跳过 install"
+        fi
+        align_server_binary
     else
+        [[ "$NO_UPGRADE" != "1" ]] || info "--no-upgrade 在这台机器上没什么可沿用的：还没装过服务端，照样装一份新的"
         obtain_binary
         do_install
     fi
@@ -550,6 +705,7 @@ main() {
     log "生成配对链接"
     local link
     link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
+    assert_pairing_link "$link" || exit 1
 
     printf '\n%s部署完成%s  服务端: %s\n' "$C_GREEN$C_BOLD" "$C_RESET" "$BINARY_SOURCE"
     "$INSTALLED_BIN" status </dev/null || true
