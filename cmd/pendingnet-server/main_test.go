@@ -202,3 +202,19 @@ func TestProvisionForceIsAcceptedByDryRun(t *testing.T) {
 		t.Fatalf("unexpected provision plan: %s", out.String())
 	}
 }
+
+func TestVersionCommandReportsFeatures(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if err := run([]string{"version"}, &out, &errOut); err != nil {
+		t.Fatalf("version: %v (%s)", err, errOut.String())
+	}
+	got := out.String()
+	// 版本串没注入时必须老实报 dev，不许编一个数字出来。
+	if !strings.HasPrefix(got, "pendingnet-server dev\n") {
+		t.Fatalf("uninjected build should report dev, got %q", got)
+	}
+	// deploy/vps-install.sh 靠这一行判断已装的服务端会不会吐链接。
+	if !strings.Contains(got, "features  "+featurePairingLink) {
+		t.Fatalf("version output must advertise %s: %q", featurePairingLink, got)
+	}
+}

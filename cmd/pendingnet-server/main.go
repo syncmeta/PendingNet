@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,6 +26,15 @@ import (
 
 const defaultStateDir = "/etc/pendingnet"
 
+// version 是构建期注入的：go build -ldflags "-X main.version=0.3.31"。
+// 没注入就老实说 dev——「这台机器上装的是哪一版」这种问题上编一个版本号
+// 出来比不知道更糟。scripts/build-linux-server.sh 负责传它。
+var version = "dev"
+
+// pairCredentialFormats 出现在 version 的 features 行里。deploy/vps-install.sh
+// 靠这一行判断已装的服务端吐不吐 pendingnet:// 链接，别改这个字符串。
+const featurePairingLink = "pairing-link"
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -33,7 +44,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|status|serve> [flags]")
+		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|status|serve|version> [flags]")
 	}
 	switch args[0] {
 	case "init":
@@ -53,9 +64,38 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runStatus(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "version":
+		return runVersion(args[1:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runVersion(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "pendingnet-server %s\n", version)
+	fmt.Fprintf(stdout, "  platform  %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(stdout, "  go        %s\n", runtime.Version())
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				fmt.Fprintf(stdout, "  revision  %s\n", setting.Value)
+			case "vcs.time":
+				fmt.Fprintf(stdout, "  committed %s\n", setting.Value)
+			case "vcs.modified":
+				if setting.Value == "true" {
+					fmt.Fprintln(stdout, "  worktree  dirty")
+				}
+			}
+		}
+	}
+	fmt.Fprintf(stdout, "  features  %s\n", featurePairingLink)
+	return nil
 }
 
 func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
