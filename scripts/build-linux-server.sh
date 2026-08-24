@@ -21,6 +21,17 @@ targets=(amd64 arm64)
 
 command -v go >/dev/null 2>&1 || { echo "没找到 go——交叉编译要本机的 Go 工具链" >&2; exit 1; }
 
+# 版本串注入进二进制，装到 VPS 上之后 `pendingnet-server version` 能报出来。
+# 读不到就传 dev——宁可说不知道，也别编一个版本号糊上去。
+version="$(sed -n 's/.*MARKETING_VERSION: *//p' "$root/app/project.yml" | head -1 | tr -d '"'"'"' ')"
+revision="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || true)"
+if [[ -n "$version" ]]; then
+    stamp="$version${revision:++$revision}"
+else
+    stamp="dev"
+fi
+echo "==> 版本串 $stamp"
+
 rm -rf "$out"
 mkdir -p "$out"
 
@@ -30,7 +41,7 @@ for arch in "${targets[@]}"; do
     # CGO_ENABLED=0：产物要能扔进任何一台 Debian，不依赖目标机的 libc 版本。
     # -trimpath 把发布机的绝对路径从二进制里去掉。
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-        go build -trimpath -ldflags "-s -w" -o "$out/$name" "$root/cmd/pendingnet-server"
+        go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o "$out/$name" "$root/cmd/pendingnet-server"
     chmod 0755 "$out/$name"
 done
 
@@ -46,7 +57,6 @@ echo "==> 写 SHA256SUMS"
     cat SHA256SUMS
 )
 
-version="$(sed -n 's/.*MARKETING_VERSION: *//p' "$root/app/project.yml" | head -1 | tr -d '"'"'"' ')"
 cat <<EOF
 
 ==> 产物在 $out
