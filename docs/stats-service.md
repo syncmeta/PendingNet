@@ -20,6 +20,11 @@ SQLite，再从 `http://127.0.0.1:7777` 把结果吐给 App。这份文档写清
 跑：root 建出来的库和它的 `-wal`/`-shm` 会是 root 所有，之后「仅端口」那份就再也
 写不进去，而且是静默写不进去。
 
+降身份是采集器**自己**做的（`-drop-to-uid` / `-drop-to-gid`，fork 之后 exec 之前
+setgid/setuid），**不要**改成 `sudo -u`：sudo 从 1.9.14 起默认 `use_pty`，会套一个
+伪终端并自己当中间人——密钥走 stdin 进来会被回显抄进日志，管子断掉的 EOF 也传不到
+孙子进程。
+
 助手握着采集器 stdin 的写端，那根管子同时是**命脉**：写端一关（换接管方式、停
 引擎、助手自己被 SIGKILL），采集器自己退场，不会留下一个还占着 7777 的孤儿。
 
@@ -65,7 +70,7 @@ App 不需要知道自己处在哪种接管方式：「仅端口」下它看自�
 
 切到**系统代理**、上会儿网、看应用页。期望同上。
 
-### 3. 采集器确实降到了你的身份，库没被 root 占
+### 3. 采集器确实降到了你的身份，库没被 root 占（最容易翻车的一条）
 
 ```
 ps -o user=,command= -p "$(lsof -nP -tiTCP:7777 -sTCP:LISTEN)"
@@ -74,6 +79,11 @@ ls -l ~/Library/Application\ Support/sbtally/
 
 **期望**：进程的 user 是**你**（不是 root）；`sbtally.db` 和它的 `-wal`/`-shm`
 属主也是**你**。任何一个是 root 都算这条不通过——那会让「仅端口」模式后续写不进去。
+
+顺带确认密钥没漏：`grep -c the-secret /var/log/pendingnet-stats.log` 之类没意义
+（真密钥你不知道），改看**命令行上有没有密钥**——
+`ps -o command= -p "$(lsof -nP -tiTCP:7777 -sTCP:LISTEN)"`
+期望只看到 `-secret-stdin`，看不到任何一串随机十六进制。
 
 ### 4. 三种模式切来切去，不打架也不断档
 
