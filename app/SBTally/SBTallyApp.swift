@@ -74,6 +74,11 @@ struct SBTallyApp: App {
                 // 错误改成 toast 弹出，不再写进卡片常驻。在主窗口根上观察：不论
                 // 当前停在连接 / 实时 / 设置哪个分区，引擎或配对失败都能弹到用户
                 // 面前，然后自己消失。`nil` 是被成功路径清掉的，忽略即可。
+                // 统计服务刚起来就拉一次数据。不然用户连上之后还得自己点一下
+                // 刷新，而在那一下之前页面上写的是「这段时间没有流量」。
+                .onChange(of: engine.statsDaemon) { _, value in
+                    if case .running = value { Task { await state.refresh() } }
+                }
                 .onChange(of: engine.lastError) { _, _ in
                     if let text = engine.friendlyErrorText() { toast.show(text) }
                 }

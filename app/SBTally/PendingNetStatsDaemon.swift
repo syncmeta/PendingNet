@@ -90,10 +90,12 @@ final class PendingNetStatsDaemon {
             state = .failed("端口 \(value) 上还有另一个统计服务在跑，PendingNet 没能接管它。")
             return
         case .allOccupied(let candidates):
+            let first = candidates.first ?? PendingNetStatsService.defaultPort
+            let last = candidates.last ?? first
             state = .failed(
-                "端口 \(candidates.first ?? PendingNetStatsService.defaultPort) 被别的程序占用了"
-                + "（\(candidates.first ?? 0)–\(candidates.last ?? 0) 也都不空）。"
-                + "腾出其中一个端口，再重新连接一次。")
+                "统计接口要的端口 \(first) 被别的程序占着，备用的 \(first + 1)–\(last) 也都不空。"
+                + "腾出其中一个端口，再断开重连一次。"
+                + "（查是谁占的：终端里跑 lsof -nP -iTCP:\(first) -sTCP:LISTEN）")
             return
         }
 
