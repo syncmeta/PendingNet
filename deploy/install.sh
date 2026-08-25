@@ -2,6 +2,12 @@
 # sbtally cutover installer — replaces SFM with a standalone sing-box CLI (TUN)
 # plus the sbtally stats daemon, both under launchd.
 #
+# NOTE: PendingNet.app 现在自己带 sbtally、自己按引擎的生命周期起停它（见
+# app/SBTally/PendingNetStatsDaemon.swift）。这个脚本装的用户级 LaunchAgent
+# 是 App 之前那条手工路径；App 下次启动引擎时会把它 bootout 并把 plist 改名挪走
+# （改回 .plist 就能还原），免得两个采集器抢同一个 7777 和同一个 SQLite 库。
+# 也就是说：用 PendingNet.app 的机器不需要再跑这个脚本。
+#
 # Usage:  deploy/install.sh <master.json> <clash-secret>
 #
 # Prereqs:
