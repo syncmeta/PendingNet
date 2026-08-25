@@ -9,11 +9,14 @@ import (
 )
 
 type ClashSource struct {
-	addr   string // host:port
-	secret string
+	addr string // host:port
+	// secret is resolved at每次拨号 rather than captured once: the engine can
+	// regenerate its control secret, and a captured one would leave the tap
+	// silently unauthorized forever. nil means「没有 secret」.
+	secret func() string
 }
 
-func NewClashSource(addr, secret string) *ClashSource {
+func NewClashSource(addr string, secret func() string) *ClashSource {
 	return &ClashSource{addr: addr, secret: secret}
 }
 
@@ -40,11 +43,18 @@ func (cs *ClashSource) Snapshots(ctx context.Context) (<-chan Snapshot, error) {
 	return ch, nil
 }
 
+func (cs *ClashSource) currentSecret() string {
+	if cs.secret == nil {
+		return ""
+	}
+	return cs.secret()
+}
+
 func (cs *ClashSource) stream(ctx context.Context, ch chan<- Snapshot) error {
 	u := "ws://" + cs.addr + "/connections"
 	opts := &websocket.DialOptions{}
-	if cs.secret != "" {
-		opts.HTTPHeader = http.Header{"Authorization": {"Bearer " + cs.secret}}
+	if secret := cs.currentSecret(); secret != "" {
+		opts.HTTPHeader = http.Header{"Authorization": {"Bearer " + secret}}
 	}
 	c, _, err := websocket.Dial(ctx, u, opts)
 	if err != nil {

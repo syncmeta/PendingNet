@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +19,7 @@ import (
 	"sbtally/internal/core"
 	"sbtally/internal/daemon"
 	"sbtally/internal/sbconfig"
+	"sbtally/internal/secret"
 	"sbtally/internal/source"
 )
 
@@ -54,7 +56,8 @@ func runDaemon(args []string) {
 	listen := fs.String("listen", "127.0.0.1:7777", "stats HTTP listen addr")
 	dbPath := fs.String("db", defaultDBPath(), "SQLite path")
 	flush := fs.Duration("flush", 10*time.Second, "DB flush interval")
-	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update")
+	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update; empty disables rule-set management")
+	secretFile := fs.String("secret-file", "", "file holding the Clash API secret; re-read on every use (overrides SBTALLY_SECRET)")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -66,9 +69,14 @@ func runDaemon(args []string) {
 	}
 	defer st.Close()
 
-	secret := os.Getenv("SBTALLY_SECRET")
+	// 现读优先于启动时读死：引擎重新生成 secret 之后，采集端下一次重连就自己
+	// 恢复，不需要有人来重启它。SBTALLY_SECRET 保留给老的 launchd 单元。
+	secretSource := secret.Static(os.Getenv("SBTALLY_SECRET"))
+	if *secretFile != "" {
+		secretSource = secret.FromFile(*secretFile)
+	}
 	hub := daemon.NewLiveHub()
-	src := source.NewClashSource(*clashAPI, secret)
+	src := source.NewClashSource(*clashAPI, secretSource)
 	d := daemon.New(src, st, hub)
 	d.FlushInterval = *flush
 
@@ -76,12 +84,25 @@ func runDaemon(args []string) {
 	defer stop()
 
 	mux := daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })
-	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secret))
-	rsu := daemon.NewRuleSetUpdater(*rulesetDir, "")
-	daemon.RegisterRuleSets(mux, rsu)
-	go rsu.RunEvery(ctx, 24*time.Hour)
-	srv := &http.Server{Addr: *listen, Handler: mux}
-	go func() { _ = srv.ListenAndServe() }()
+	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secretSource))
+	// 空 ruleset-dir = 这份规则集由别人管（App 自带的下载器就是），采集端别去
+	// 碰它：两个写同一个目录只会互相踩。
+	if *rulesetDir != "" {
+		rsu := daemon.NewRuleSetUpdater(*rulesetDir, "")
+		daemon.RegisterRuleSets(mux, rsu)
+		go rsu.RunEvery(ctx, 24*time.Hour)
+	}
+
+	// 先自己 Listen 再交给 http.Server：从前这里是
+	// `go func() { _ = srv.ListenAndServe() }()`，端口被别人占了错误直接进垃圾桶，
+	// 进程照样活着、一个字节都不服务 —— 统计页只会说「尚未启用」，没有任何地方
+	// 说得出是端口被占了。现在占了就是启动失败，说清是哪个端口。
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		fatal(fmt.Errorf("统计接口监听 %s 失败（端口多半被其它程序占了）：%w", *listen, err))
+	}
+	srv := &http.Server{Handler: mux}
+	go func() { _ = srv.Serve(ln) }()
 	defer srv.Close()
 
 	fmt.Printf("sbtally daemon: clash=%s listen=%s db=%s\n", *clashAPI, *listen, *dbPath)

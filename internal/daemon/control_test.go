@@ -40,7 +40,7 @@ func TestControlSelectModeAndProxies(t *testing.T) {
 	}))
 	defer clash.Close()
 
-	ctrl := clashapi.New(strings.TrimPrefix(clash.URL, "http://"), "")
+	ctrl := clashapi.New(strings.TrimPrefix(clash.URL, "http://"), nil)
 	mux := http.NewServeMux()
 	RegisterControl(mux, ctrl)
 

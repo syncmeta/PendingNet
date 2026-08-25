@@ -30,7 +30,7 @@ func TestClashSourceReceivesSnapshots(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	cs := NewClashSource(addr, "sek")
+	cs := NewClashSource(addr, func() string { return "sek" })
 	ch, err := cs.Snapshots(ctx)
 	if err != nil {
 		t.Fatal(err)

@@ -13,12 +13,15 @@ import (
 )
 
 type Client struct {
-	base   string
-	secret string
+	base string
+	// secret is resolved per request, not captured at construction: the engine
+	// can regenerate its control secret and a captured one turns every later
+	// call into a silent 401. nil means「没有 secret」.
+	secret func() string
 	http   *http.Client
 }
 
-func New(addr, secret string) *Client {
+func New(addr string, secret func() string) *Client {
 	return &Client{base: "http://" + addr, secret: secret, http: &http.Client{Timeout: 5 * time.Second}}
 }
 
@@ -44,8 +47,10 @@ func (c *Client) do(ctx context.Context, method, path string, body any) (*http.R
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if c.secret != "" {
-		req.Header.Set("Authorization", "Bearer "+c.secret)
+	if c.secret != nil {
+		if secret := c.secret(); secret != "" {
+			req.Header.Set("Authorization", "Bearer "+secret)
+		}
 	}
 	return c.http.Do(req)
 }

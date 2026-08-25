@@ -21,7 +21,7 @@ func TestSetMode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(strings.TrimPrefix(srv.URL, "http://"), "sek")
+	c := New(strings.TrimPrefix(srv.URL, "http://"), func() string { return "sek" })
 	if err := c.SetMode(context.Background(), "Global"); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestSelectProxy(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(strings.TrimPrefix(srv.URL, "http://"), "")
+	c := New(strings.TrimPrefix(srv.URL, "http://"), nil)
 	if err := c.SelectProxy(context.Background(), "proxy", "vpsB"); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestMode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(strings.TrimPrefix(srv.URL, "http://"), "")
+	c := New(strings.TrimPrefix(srv.URL, "http://"), nil)
 	m, err := c.Mode(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestProxies(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(strings.TrimPrefix(srv.URL, "http://"), "")
+	c := New(strings.TrimPrefix(srv.URL, "http://"), nil)
 	ps, err := c.Proxies(context.Background())
 	if err != nil {
 		t.Fatal(err)
