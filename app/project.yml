@@ -295,3 +295,10 @@ targets:
           mkdir -p "$APP/Contents/Library/LaunchDaemons" "$APP/Contents/MacOS"
           cp "$BUILT_PRODUCTS_DIR/PendingNetHelper" "$APP/Contents/MacOS/"
           cp "$SRCROOT/PendingNetHelper/com.pendingname.pendingnet.helper.plist" "$APP/Contents/Library/LaunchDaemons/"
+      # 统计程序（sbtally）跟着 App 走。从前它只可能来自手工跑过 deploy/install.sh
+      # 的机器上的 /usr/local/bin —— 于是新用户装完 App，统计页永远是空的，界面上
+      # 也没有任何地方能把它装上。这里现编现放，签名由 scripts/sign-macos-development.sh
+      # 接手（它在 Contents/MacOS 里，和特权 helper 同一条路子）。
+      - name: Embed sbtally
+        script: |
+          exec "$SRCROOT/../scripts/embed-sbtally.sh"

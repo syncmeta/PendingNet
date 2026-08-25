@@ -16,6 +16,9 @@ set -eu
 
 app="${1:?usage: scripts/sign-macos-development.sh /path/to/PendingNet.app}"
 helper="$app/Contents/MacOS/PendingNetHelper"
+# 统计程序。和 helper 一样是包内的第二个可执行文件，必须先于外层 app 单独签名 ——
+# 漏签的话外层 `codesign --verify --deep --strict` 直接失败，公证也过不去。
+tally="$app/Contents/MacOS/sbtally"
 identity="${PENDINGNET_SIGN_IDENTITY:--}"
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
 profile="${PENDINGNET_PROVISION_PROFILE:-}"
@@ -23,6 +26,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 entitlements_src="$root/app/SBTally/PendingNet.entitlements"
 
 test -x "$helper"
+test -x "$tally" || { echo "包里没有 sbtally —— 统计页装上去会永远空白。构建阶段 Embed sbtally 没跑成？" >&2; exit 2; }
 
 # 描述文件在手：把它放进包里，并把 entitlements 里的 $(AppIdentifierPrefix) /
 # $(TeamIdentifierPrefix) 展开成描述文件里那个 team —— 手工 codesign 不认构建
@@ -49,6 +53,10 @@ if test "$identity" = "-"; then
     --requirements '=designated => identifier "com.pendingname.pendingnet.helper"' \
     "$helper"
   /usr/bin/codesign --force --sign - \
+    --identifier com.pendingname.pendingnet.sbtally \
+    --requirements '=designated => identifier "com.pendingname.pendingnet.sbtally"' \
+    "$tally"
+  /usr/bin/codesign --force --sign - \
     --identifier com.pendingname.pendingnet \
     --requirements '=designated => identifier "com.pendingname.pendingnet"' \
     "$app"
@@ -71,6 +79,8 @@ else
   fi
   /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
     --identifier com.pendingname.pendingnet.helper "$helper"
+  /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
+    --identifier com.pendingname.pendingnet.sbtally "$tally"
   if test -n "$profile"; then
     prepare_entitlements
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
