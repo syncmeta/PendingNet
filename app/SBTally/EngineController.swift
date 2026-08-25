@@ -492,17 +492,36 @@ final class EngineController: ObservableObject {
             adoptLocalEngineState()
             return
         }
-        // 系统代理 / TUN 那份引擎是特权助手用 root 另起的，它的控制口密钥
-        // App 看不到，统计服务也就连不上去 —— 这两种接管方式下没有统计。
-        statsDaemon = .failed("系统代理 / TUN 接管方式下暂时没有统计。切回「仅端口」就能看到。")
+        // 系统代理 / TUN 下采集器归特权助手管（那份引擎的控制密钥不出助手），
+        // 统计接口固定在默认端口 —— 上一轮「仅端口」若挪过端口，这里要挪回来。
+        PendingNetStatsEndpoint.shared.port = PendingNetStatsService.defaultPort
         guard helperReady else {
             running = false
+            statsDaemon = .stopped
             return
         }
         guard let result = await helperStatus() else { return }
         running = result.0
         takeover = result.1
         logTail = result.2
+        statsDaemon = await helperStatsState()
+    }
+
+    /// 助手那侧采集器的状态。够不着助手（旧版、没响应）不当成「没有统计」——
+    /// 那是助手的问题，说清楚是它。
+    private func helperStatsState() async -> PendingNetStatsService.DaemonState {
+        let unreachable = PendingNetStatsService.DaemonState.failed(
+            "后台服务还不是这一版，统计要等它更新。退出 PendingNet 再打开一次；"
+            + "还不行就在设置里重新授权后台服务。")
+        return await withCompatibleHelper(unreachable, timeout: Self.quickTimeout) { p, reply in
+            p.statsStatus { running, port, failure in
+                if running {
+                    PendingNetStatsEndpoint.shared.port = port
+                    return reply(.running(port: port))
+                }
+                reply(failure.map { .failed($0) } ?? .stopped)
+            }
+        }
     }
 
     private func helperStatus() async -> (Bool, String, String)? {
@@ -577,7 +596,9 @@ final class EngineController: ObservableObject {
             registerHelper()
             return
         }
-        if takeover == "local", running { await userEngine.stop() }
+        // 无条件停，不看 `running`：那是 app 这边的看法，可能是旧的，而这一侧
+        // 只要还有采集器活着，助手那份就抢不到统计端口。stop 本身是幂等的。
+        if takeover == "local" { await userEngine.stop() }
         takeover = mode
         await call { p, r in p.setTakeover(mode, reply: r) }
     }

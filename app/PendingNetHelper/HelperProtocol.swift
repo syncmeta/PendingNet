@@ -15,7 +15,7 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 4
+public let pendingNetHelperInterfaceVersion = 5
 
 @objc public protocol HelperProtocol {
     // MARK: - Interface version 1
@@ -79,6 +79,17 @@ public let pendingNetHelperInterfaceVersion = 4
     /// `store_mode` is off, so a restart (switching takeover, applying a VPS)
     /// otherwise drops back to the config's default and quietly loses the pick.
     func setRouteMode(_ mode: String, reply: @escaping (String?) -> Void)
+
+    // MARK: - Interface version 5
+
+    /// 这个 daemon 管着的那份统计采集器：在不在跑、统计接口在哪个端口、起不来的话
+    /// 为什么。
+    ///
+    /// 和 `setRouteMode` 是同一个道理：TUN / 系统代理那份 sing-box 由这个 daemon
+    /// 用 root 起，它的 Clash API 密钥不交给 app，所以采集器也只能由这一侧起。
+    /// app 那边照旧只从统计端口读数据 —— 它不需要知道自己处在哪种接管方式，只需要
+    /// 知道现在有没有人在采、没有的话该跟用户说什么。
+    func statsStatus(reply: @escaping (Bool, Int, String?) -> Void)
 }
 
 /// 这一对身份从前是散在 app、助手、launchd plist、签名脚本里的字面量。

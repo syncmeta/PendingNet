@@ -429,6 +429,27 @@ func activatePendingSelector(configData: Data) -> String? {
 }
 
 final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
+    /// TUN / 系统代理下的统计采集器。它和引擎同生命周期 —— 引擎起来它就起，
+    /// 引擎停掉它就停，配置换了就重来一遍。
+    let stats = StatsCollector()
+
+    /// 现在该不该由这一侧跑采集器。判断用 SBTallyCore 里那份（有单测，App 侧
+    /// 用的是同一个）—— 「同一时刻只有一个 owner」这条不能两边各写一遍。
+    private var ownsCollector: Bool {
+        PendingNetStatsService.collectorOwner(
+            takeover: currentMode(), engineRunning: engineRunning()) == .helper
+    }
+
+    /// 把采集器对齐到现在的状态。引擎不在跑、或者接管方式已经交回 app，就停掉 ——
+    /// 没有引擎就没有东西可采，留着也只是白占统计端口挡住下一个 owner。
+    private func syncStatsCollector() {
+        guard ownsCollector,
+              let configData = try? readData(path: "\(ETC)/master.json") else {
+            return stats.stop()
+        }
+        stats.start(configData: configData)
+    }
+
     func startEngine(reply: @escaping (String?) -> Void) {
         // Invariant: the system proxy is only ever left enabled when the engine
         // is actually running. Every failure path below must therefore tear it
@@ -455,9 +476,13 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             return nil
         }, flush: flushSystemDNSCache)
         guard failure == nil else { return fail(failure) }
+        syncStatsCollector()
         reply(nil)
     }
     func stopEngine(reply: @escaping (String?) -> Void) {
+        // 采集器先停：它是引擎的附庸，引擎都要没了就没有东西可采。也保证不会有
+        // 一个还占着统计端口的进程挡住下一个 owner（切到「仅端口」时是 app）。
+        stats.stop()
         disableOwnedSystemProxy()
         // 停这一侧也得冲：TUN 在的时候解析出来的是 fake-ip（198.18.x.x），引擎一走
         // 那些地址就没人接了，缓存里留着它们连直连都打不开。等那个进程真的没了再冲，
@@ -476,6 +501,10 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
         let variant = mode == "tun" ? "master-tun.json" : "master-notun.json"
         let wasRunning = engineRunning()
+        // 换接管方式一定要先把这一侧的采集器停掉：切到「仅端口」之后 owner 是
+        // app，两个采集器抢同一个统计端口就谁都别想干活。切到另一种 root 模式时
+        // 引擎会重启、控制端点可能变，也得重来一遍。
+        stats.stop()
         // Tear the system proxy down FIRST, before anything that can fail or
         // return early. Doing it after the config writes meant a failed write
         // left the machine pointing at a proxy for a takeover mode it was no
@@ -496,6 +525,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             reapplyStoredRouteMode(configData: configData)
         }
         if mode == "sysproxy" { enableOwnedSystemProxy() }
+        syncStatsCollector()
         reply(nil)
     }
 
@@ -583,6 +613,8 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                                       userInfo: [NSLocalizedDescriptionKey: error])
                     }
                     reapplyStoredRouteMode(configData: active)
+                    // 新配置可能换了控制端点或密钥，采集器手上那份就作废了。
+                    stats.restart(configData: active)
                 }
             } catch {
                 for path in paths {
@@ -604,6 +636,18 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     func status(reply: @escaping (Bool, String, String) -> Void) {
         let (_, tail) = sh(["/usr/bin/tail", "-n", "5", "/var/log/sbtally-singbox.log"])
         reply(engineRunning(), currentMode(), tail)
+    }
+
+    /// 统计采集器的现状。app 拿它把「引擎没跑」「采集器起不来（为什么）」
+    /// 「在采但这段时间没流量」分开说。
+    func statsStatus(reply: @escaping (Bool, Int, String?) -> Void) {
+        // 引擎在跑而采集器不在，多半是它半路挂了、或者当初起的时候端口被占。
+        // 顺手补一次，别让用户为了统计去手动断开重连。
+        if ownsCollector, !stats.snapshot().running {
+            syncStatsCollector()
+        }
+        let snapshot = stats.snapshot()
+        reply(snapshot.running, snapshot.port, snapshot.failure)
     }
 
     func interfaceVersion(reply: @escaping (Int) -> Void) {
@@ -633,6 +677,9 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         guard pendingNetProcessSatisfies(pid: c.processIdentifier, requirement: requirement) else {
             return false
         }
+        // 采集器要降到「现在在用这台机器的人」身上跑（统计库在他的目录里）。
+        // 连过来的这一头就是那个人，比控制台用户更准。
+        stats.noteCaller(uid: c.effectiveUserIdentifier)
         c.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         c.exportedObject = self
         c.resume()
@@ -792,6 +839,13 @@ final class LinkSelfHealer {
            FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER) {
             setSystemProxy(true)
         }
+        // 采集器的 WebSocket 会自己重连（密钥没变），所以正常不用管它；这里补的是
+        // 「它已经不在了」那种情况 —— start 是幂等的，在跑就什么都不做。
+        if PendingNetStatsService.collectorOwner(
+            takeover: currentMode(), engineRunning: engineRunning()) == .helper,
+           let configData = try? readData(path: "\(ETC)/master.json") {
+            delegate.stats.start(configData: configData)
+        }
         helperLog("自愈完成：引擎已重启")
     }
 
@@ -821,6 +875,9 @@ final class LinkSelfHealer {
     }
 }
 
+// 我们握着采集器 stdin 的写端。它先走一步的话，往那根管子写就会吃 SIGPIPE，
+// 默认动作是把这个 daemon 干掉 —— 一个统计采集器不该有能力放倒整机的代理。
+signal(SIGPIPE, SIG_IGN)
 let delegate = Helper()
 let linkSelfHealer = LinkSelfHealer()
 retireLegacyHelperJob()
