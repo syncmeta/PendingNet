@@ -2,7 +2,11 @@ import Foundation
 import SBTallyCore
 
 struct PendingNetLocalAPIProvider: StatsProvider, ControlProvider {
-    private let stats = APIStatsProvider(baseURL: URL(string: "http://127.0.0.1:7777")!)
+    /// 每次现取，不在 init 里定死：统计服务在 7777 被别的程序占住时会挪到隔壁，
+    /// 读的这一侧得跟着挪（见 `PendingNetStatsEndpoint`）。
+    private var stats: APIStatsProvider {
+        APIStatsProvider(baseURL: PendingNetStatsEndpoint.shared.baseURL)
+    }
     private let controlBaseURL = PendingNetUserEngine.controlURL
 
     func summary(since: String) async throws -> Summary { try await stats.summary(since: since) }

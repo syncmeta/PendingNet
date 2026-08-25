@@ -32,6 +32,9 @@ final class EngineController: ObservableObject {
     /// Set after a `start()` attempt whose post-refresh status shows the
     /// engine still isn't running — signals the GUI should surface `logTail`.
     @Published var startFailed = false
+    /// 统计服务这一侧的状态。统计页面要靠它把「引擎没跑」「统计起不来」
+    /// 「真的没流量」分开说，不能再一律「尚未启用」。
+    @Published private(set) var statsDaemon: PendingNetStatsService.DaemonState = .stopped
 
     private let service = SMAppService.daemon(plistName: PendingNetIdentifiers.helperPlistName)
     /// 用户在助手就绪前选中的接管方式。授权成功后自动接着切过去，省得再点一次。
@@ -47,6 +50,14 @@ final class EngineController: ObservableObject {
 
     /// 界面上显示的监听地址 —— 允许局域网访问时就是 0.0.0.0。
     var localListenAddress: String { userEngine.listenAddress }
+
+    /// 把「仅端口」那份引擎的现状抄进已发布的属性里。统计服务的状态和引擎的
+    /// 一起抄 —— 两者同生命周期，分两处更新迟早会有一处忘了。
+    private func adoptLocalEngineState() {
+        running = userEngine.isRunning
+        logTail = userEngine.logTail()
+        statsDaemon = userEngine.statsDaemon.state
+    }
 
     init() {
         localProxyPort = userEngine.proxyPort
@@ -81,13 +92,12 @@ final class EngineController: ObservableObject {
             try await userEngine.setLocalInbound(port: port, allowLAN: allowLAN)
             localProxyPort = userEngine.proxyPort
             allowsLAN = userEngine.allowsLAN
-            running = userEngine.isRunning
-            logTail = userEngine.logTail()
+            adoptLocalEngineState()
             return nil
         } catch {
             localProxyPort = userEngine.proxyPort
             allowsLAN = userEngine.allowsLAN
-            running = userEngine.isRunning
+            adoptLocalEngineState()
             return error.localizedDescription
         }
     }
@@ -124,8 +134,7 @@ final class EngineController: ObservableObject {
     func enableListMode(_ name: String) async -> Bool {
         guard let mode = routeMode(named: name) else { return false }
         let ok = await userEngine.enableListMode(mode)
-        running = userEngine.isRunning
-        logTail = userEngine.logTail()
+        adoptLocalEngineState()
         refreshRuleSetPresence()
         return ok
     }
@@ -480,10 +489,12 @@ final class EngineController: ObservableObject {
             }
         }
         if takeover == "local" {
-            running = userEngine.isRunning
-            logTail = userEngine.logTail()
+            adoptLocalEngineState()
             return
         }
+        // 系统代理 / TUN 那份引擎是特权助手用 root 另起的，它的控制口密钥
+        // App 看不到，统计服务也就连不上去 —— 这两种接管方式下没有统计。
+        statsDaemon = .failed("系统代理 / TUN 接管方式下暂时没有统计。切回「仅端口」就能看到。")
         guard helperReady else {
             running = false
             return
@@ -512,13 +523,14 @@ final class EngineController: ObservableObject {
         if takeover == "local" {
             do {
                 try await userEngine.start()
+                adoptLocalEngineState()
                 running = true
                 lastError = nil
                 startFailed = false
             } catch {
+                adoptLocalEngineState()
                 running = false
                 lastError = error.localizedDescription
-                logTail = userEngine.logTail()
                 startFailed = true
             }
             return
@@ -530,6 +542,7 @@ final class EngineController: ObservableObject {
         startFailed = false
         if takeover == "local" {
             await userEngine.stop()
+            adoptLocalEngineState()
             running = false
             lastError = nil
             return
@@ -553,7 +566,7 @@ final class EngineController: ObservableObject {
                 await call { p, r in p.setTakeover("local", reply: r) }
             }
             takeover = "local"
-            running = userEngine.isRunning
+            adoptLocalEngineState()
             return
         }
         // 助手还没就绪时直接发起授权 —— 从前这里只报错，而「授权后台服务…」按钮
@@ -597,13 +610,12 @@ final class EngineController: ObservableObject {
         if takeover == "local" {
             do {
                 try await userEngine.apply(runtime)
-                running = userEngine.isRunning
+                adoptLocalEngineState()
                 lastError = nil
-                logTail = userEngine.logTail()
                 return true
             } catch {
+                adoptLocalEngineState()
                 lastError = error.localizedDescription
-                logTail = userEngine.logTail()
                 return false
             }
         }

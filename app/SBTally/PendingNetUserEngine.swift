@@ -38,9 +38,15 @@ final class PendingNetUserEngine {
     private let fileManager = FileManager.default
     private let inboundStore: PendingNetLocalInboundStore
 
+    /// 统计服务。刻意挂在引擎身上而不是挂在界面层：引擎的每一条启停路径
+    /// （切端口、开分流、换 VPS 都会就地重启）都从 `start()` / `stop()` 走，
+    /// 挂在这里才谈得上「同生命周期」，不会有哪条路径把它落下。
+    let statsDaemon: PendingNetStatsDaemon
+
     init(defaults: UserDefaults = .standard) {
         inboundStore = PendingNetLocalInboundStore(defaults: defaults)
         localInbound = inboundStore.load()
+        statsDaemon = PendingNetStatsDaemon(engineDirectory: Self.engineDirectory)
     }
 
     var proxyPort: Int { localInbound.port }
@@ -191,7 +197,11 @@ final class PendingNetUserEngine {
                 logHandle = nil
                 throw PendingNetUserEngineError.startFailed(logTail())
             }
-            if await controlIsReady() { return }
+            if await controlIsReady() {
+                // 控制口活了才起统计 —— 它上来第一件事就是连这个口。
+                await statsDaemon.start()
+                return
+            }
             try? await Task.sleep(for: .milliseconds(100))
         }
         await stop()
@@ -201,6 +211,7 @@ final class PendingNetUserEngine {
     }
 
     func stop() async {
+        await statsDaemon.stop()
         guard let process else { return }
         if process.isRunning { process.terminate() }
         for _ in 0..<20 where process.isRunning {
@@ -213,6 +224,7 @@ final class PendingNetUserEngine {
     }
 
     func stopImmediately() {
+        statsDaemon.stopImmediately()
         guard let process else { return }
         if process.isRunning { process.terminate() }
         self.process = nil
@@ -228,10 +240,14 @@ final class PendingNetUserEngine {
             .joined(separator: "\n")
     }
 
-    private var engineDirectory: URL {
-        let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support.appendingPathComponent("PendingNet/engine", isDirectory: true)
-    }
+    /// 引擎的自留地：配置、日志、控制密钥、规则集都在这儿。统计服务也用它
+    /// （日志写进来、密钥从这儿读），所以它得在 init 里就能取到 —— 于是是
+    /// static 而不是实例计算属性。
+    static let engineDirectory: URL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("PendingNet/engine", isDirectory: true)
+
+    private var engineDirectory: URL { Self.engineDirectory }
 
     private func prepareDirectory() throws {
         try fileManager.createDirectory(

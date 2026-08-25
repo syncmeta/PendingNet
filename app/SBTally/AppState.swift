@@ -9,6 +9,10 @@ final class AppState: ObservableObject {
     @Published var summary: Summary?
     @Published var live: [LiveAppGroup] = []
     @Published var lastError: String?
+    /// 读统计接口失败的那一次。刻意和 `lastError` 分开：那一个说的是引擎控制口
+    /// （选 VPS、切模式）出了什么事，统计页面拿它当「统计服务没起来」用了很久，
+    /// 于是切个模式失败也会让统计页说「统计服务尚未启用」。
+    @Published var statsError: String?
     /// 用户选中的路由模式。这是「记住的选择」，不是引擎的当前状态：引擎没跑时
     /// 也照样能改，起来之后再按它生效。
     @Published private(set) var mode: String
@@ -37,18 +41,26 @@ final class AppState: ObservableObject {
             self.apps = try await a
             self.domains = try await d
             self.summary = try await s
-            self.lastError = nil
+            self.statsError = nil
         } catch {
-            self.lastError = String(describing: error)
+            self.statsError = String(describing: error)
         }
     }
 
+    /// 订阅实时流量。断了就重订 —— 统计服务跟着引擎一起启停（换端口、开分流、
+    /// 换 VPS 都会重启一次），从前这里只订一次，重启之后实时页就永远空着，
+    /// 而且看上去和「没有流量」一模一样。
     func startLive() {
         liveTask?.cancel()
         liveTask = Task { [weak self] in
-            guard let self else { return }
-            for await groups in self.provider.live() {
-                self.live = groups.sorted { ($0.upRate + $0.downRate) > ($1.upRate + $1.downRate) }
+            while !Task.isCancelled {
+                guard let self else { return }
+                for await groups in self.provider.live() {
+                    self.live = groups.sorted { ($0.upRate + $0.downRate) > ($1.upRate + $1.downRate) }
+                }
+                if Task.isCancelled { return }
+                self.live = []
+                try? await Task.sleep(for: .seconds(2))
             }
         }
     }
