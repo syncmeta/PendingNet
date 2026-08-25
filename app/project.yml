@@ -9,8 +9,8 @@ settings:
     SWIFT_VERSION: "5.0"
     # 全端共用的版本号。macOS target 下面还会再写一遍同样的值 —— 发布脚本
     # 取的是 MARKETING_VERSION 的最后一次出现，两处要一起改。
-    MARKETING_VERSION: "0.3.32"
-    CURRENT_PROJECT_VERSION: "332"
+    MARKETING_VERSION: "0.3.33"
+    CURRENT_PROJECT_VERSION: "333"
     GENERATE_INFOPLIST_FILE: "YES"
 packages:
   SBTallyCore:
@@ -263,8 +263,8 @@ targets:
         # 分层 .icon（Icon Composer）：macOS 26 由系统上圆角/高光/投影，
         # actool 顺带产出传统 .icns 兜底老系统。见 scripts/make-app-icon.py。
         ASSETCATALOG_COMPILER_APPICON_NAME: PendingNet
-        MARKETING_VERSION: 0.3.32
-        CURRENT_PROJECT_VERSION: 332
+        MARKETING_VERSION: 0.3.33
+        CURRENT_PROJECT_VERSION: 333
         PENDINGNET_UPDATE_FEED_URL: https://updates.pendingname.com/pendingnet/appcast.xml
         # 发布仍是 Developer ID + 手工 codesign（构建时 CODE_SIGNING_ALLOWED=NO），
         # 这里补 team 是为了能在门户/Xcode 侧给这个 App ID 配 iCloud 与钥匙串共享。
