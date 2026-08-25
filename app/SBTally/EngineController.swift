@@ -56,7 +56,7 @@ final class EngineController: ObservableObject {
     private func adoptLocalEngineState() {
         running = userEngine.isRunning
         logTail = userEngine.logTail()
-        statsDaemon = userEngine.statsDaemon.state
+        statsDaemon = userEngine.statsDaemon.currentState()
     }
 
     init() {

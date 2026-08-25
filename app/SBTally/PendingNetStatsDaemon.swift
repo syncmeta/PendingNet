@@ -43,6 +43,18 @@ final class PendingNetStatsDaemon {
 
     var isRunning: Bool { process?.isRunning == true }
 
+    /// 现在真实的状态。`.running` 只在那个进程确实还活着时才算数 —— 采集端半路
+    /// 崩了之后界面还显示「在跑」，用户看到的就又是一个没有下一步的空页面。
+    func currentState() -> PendingNetStatsService.DaemonState {
+        if case .running = state, process?.isRunning != true {
+            let tail = logTail()
+            state = .failed(tail.isEmpty
+                ? "统计服务意外退出了。断开再连接一次会重新拉起它。"
+                : tail)
+        }
+        return state
+    }
+
     /// 起统计服务。已经在跑就什么都不做（幂等）。
     ///
     /// 失败不抛异常 —— 代理本身照常可用，统计起不来只该让统计页说清原因，

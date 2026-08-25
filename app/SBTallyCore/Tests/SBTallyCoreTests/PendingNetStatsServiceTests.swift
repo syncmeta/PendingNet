@@ -163,6 +163,25 @@ final class PendingNetStatsServiceAvailabilityTests: XCTestCase {
         )
     }
 
+    /// 服务在跑却读不到，和「这段时间没有流量」是两件事 —— 从前都显示成没有数据。
+    func testRunningButUnreadableIsNotNoTraffic() {
+        let availability = PendingNetStatsService.availability(
+            engineRunning: true, daemon: .running(port: 7801), hasData: false, readFailed: true)
+        guard case .unavailable(let reason) = availability else {
+            return XCTFail("期望 unavailable，拿到 \(availability)")
+        }
+        XCTAssertTrue(reason.contains("7801"))
+    }
+
+    /// 有数据的时候，一次读失败不该把已经拿到的东西盖掉。
+    func testReadFailureDoesNotHideExistingData() {
+        XCTAssertEqual(
+            PendingNetStatsService.availability(
+                engineRunning: true, daemon: .running(port: 7777), hasData: true, readFailed: true),
+            .ready
+        )
+    }
+
     func testEveryEmptyStateSaysSomethingActionable() {
         let cases: [PendingNetStatsService.Availability] = [
             .engineStopped, .noTraffic, .unavailable(reason: "端口 7777 被占用"),
