@@ -109,6 +109,71 @@ public enum PendingNetStatsService {
         }
     }
 
+    // MARK: - 谁来跑采集器
+
+    /// 这台机器上现在该由谁跑采集器。
+    ///
+    /// 接管方式决定引擎是谁起的，也就决定采集器只能由谁起：「仅端口」那份引擎是
+    /// App 自己的子进程，控制密钥就在用户目录里；TUN / 系统代理那份是特权助手用
+    /// root 起的，密钥按设计不出助手（见 `PendingNetHelper/main.swift` 的
+    /// `clashRequest`），只能请助手代劳 —— 和路由模式走 `setRouteMode` 是同一条路。
+    ///
+    /// 这个函数存在的意义是「同一时刻只有一个 owner」：两边各起一个就会抢同一个
+    /// 统计端口和同一个 SQLite 库。
+    public enum CollectorOwner: Equatable, Sendable {
+        case app
+        case helper
+        /// 没有引擎在跑，也就没有东西可采。
+        case nobody
+    }
+
+    public static func collectorOwner(takeover: String, engineRunning: Bool) -> CollectorOwner {
+        guard engineRunning else { return .nobody }
+        return takeover == "local" ? .app : .helper
+    }
+
+    /// 采集器的命令行。
+    ///
+    /// 密钥**不在里面** —— `ps` 是全机可见的。App 那侧用 `-secret-file` 指向引擎
+    /// 自己那份文件，助手那侧用 `-secret-stdin` 走管子。
+    ///
+    /// - Parameter databasePath: 三种接管方式都写同一个库，切来切去统计不清零。
+    ///   助手那份采集器因此必须降到登录用户身份去跑，不然这个库和它的 -wal/-shm
+    ///   会变成 root 所有，「仅端口」模式下的采集器就再也写不进去了。
+    public static func daemonArguments(
+        clashAPI: String,
+        port: Int,
+        databasePath: String,
+        secret: SecretDelivery
+    ) -> [String] {
+        var arguments = [
+            "daemon",
+            "-clash-api", clashAPI,
+            "-listen", "127.0.0.1:\(port)",
+            "-db", databasePath,
+            // 规则集另有人管（App 侧是自己的下载器，助手侧那份目录 root 才写得进
+            // 去），采集器别去碰。
+            "-ruleset-dir", "",
+        ]
+        switch secret {
+        case .file(let path):
+            arguments += ["-secret-file", path]
+        case .standardInput:
+            arguments.append("-secret-stdin")
+        }
+        return arguments
+    }
+
+    public enum SecretDelivery: Equatable, Sendable {
+        case file(String)
+        case standardInput
+    }
+
+    /// 登录用户的统计库。三种接管方式共用它。
+    public static func databasePath(home: String) -> String {
+        home + "/Library/Application Support/sbtally/sbtally.db"
+    }
+
     // MARK: - 界面上该说什么
 
     /// 统计服务这一侧现在是什么状态。

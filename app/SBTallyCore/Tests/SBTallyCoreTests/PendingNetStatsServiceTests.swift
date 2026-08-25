@@ -200,3 +200,85 @@ final class PendingNetStatsServiceAvailabilityTests: XCTestCase {
         XCTAssertTrue(message.detail.contains("foobar"))
     }
 }
+
+final class PendingNetStatsServiceCollectorOwnerTests: XCTestCase {
+    func testNobodyCollectsWithoutAnEngine() {
+        for takeover in ["local", "sysproxy", "tun"] {
+            XCTAssertEqual(
+                PendingNetStatsService.collectorOwner(takeover: takeover, engineRunning: false),
+                .nobody
+            )
+        }
+    }
+
+    func testAppOwnsPortOnlyMode() {
+        XCTAssertEqual(
+            PendingNetStatsService.collectorOwner(takeover: "local", engineRunning: true),
+            .app
+        )
+    }
+
+    /// TUN 和系统代理那份引擎是特权助手用 root 起的，密钥不出助手 —— 采集器只能
+    /// 由助手代劳。这两种模式恰恰是最该有统计的（按应用分流量靠的就是 TUN）。
+    func testHelperOwnsRootEngineModes() {
+        for takeover in ["tun", "sysproxy"] {
+            XCTAssertEqual(
+                PendingNetStatsService.collectorOwner(takeover: takeover, engineRunning: true),
+                .helper
+            )
+        }
+    }
+
+    /// 同一时刻只能有一个 owner —— 两边各起一个就会抢同一个端口和同一个库。
+    func testOwnerIsNeverAmbiguous() {
+        for takeover in ["local", "sysproxy", "tun", "什么鬼"] {
+            for running in [true, false] {
+                let owner = PendingNetStatsService.collectorOwner(
+                    takeover: takeover, engineRunning: running)
+                XCTAssertEqual([owner].count, 1)
+            }
+        }
+    }
+}
+
+final class PendingNetStatsServiceDaemonArgumentsTests: XCTestCase {
+    /// 密钥绝不能出现在命令行上 —— ps 是全机可见的。
+    func testSecretNeverAppearsOnTheCommandLine() {
+        let viaStdin = PendingNetStatsService.daemonArguments(
+            clashAPI: "127.0.0.1:9090", port: 7777,
+            databasePath: "/Users/tester/db.sqlite", secret: .standardInput)
+        XCTAssertTrue(viaStdin.contains("-secret-stdin"))
+        XCTAssertFalse(viaStdin.contains { $0.contains("hunter2") })
+
+        let viaFile = PendingNetStatsService.daemonArguments(
+            clashAPI: "127.0.0.1:29090", port: 7777,
+            databasePath: "/Users/tester/db.sqlite", secret: .file("/tmp/control-secret"))
+        XCTAssertEqual(viaFile.firstIndex(of: "-secret-file").map { viaFile[$0 + 1] },
+                       "/tmp/control-secret")
+        XCTAssertFalse(viaFile.contains("-secret-stdin"))
+    }
+
+    func testListensOnLoopbackOnly() {
+        let arguments = PendingNetStatsService.daemonArguments(
+            clashAPI: "127.0.0.1:9090", port: 7801,
+            databasePath: "/Users/tester/db.sqlite", secret: .standardInput)
+        XCTAssertEqual(arguments.firstIndex(of: "-listen").map { arguments[$0 + 1] },
+                       "127.0.0.1:7801")
+    }
+
+    /// 规则集目录必须显式传空：助手那份目录 root 才写得进去，App 那边另有下载器。
+    func testRuleSetManagementIsHandedOff() {
+        let arguments = PendingNetStatsService.daemonArguments(
+            clashAPI: "127.0.0.1:9090", port: 7777,
+            databasePath: "/Users/tester/db.sqlite", secret: .standardInput)
+        XCTAssertEqual(arguments.firstIndex(of: "-ruleset-dir").map { arguments[$0 + 1] }, "")
+    }
+
+    /// 三种接管方式写同一个库，切一次模式统计不该清零。
+    func testDatabasePathIsTheUsersOne() {
+        XCTAssertEqual(
+            PendingNetStatsService.databasePath(home: "/Users/tester"),
+            "/Users/tester/Library/Application Support/sbtally/sbtally.db"
+        )
+    }
+}
