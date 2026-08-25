@@ -166,10 +166,15 @@ final class StatsCollector {
 
     private func binaryPath() -> String? {
         // 助手自己就在 PendingNet.app/Contents/MacOS 里，采集器是它的邻居。
-        if let sibling = Bundle.main.executableURL?
-            .deletingLastPathComponent().appendingPathComponent("sbtally").path,
-           FileManager.default.isExecutableFile(atPath: sibling) {
-            return sibling
+        // argv[0] 也算一条：launchd 的 BundleProgram 传的是绝对路径，万一
+        // Bundle.main 对一个非 bundle 的可执行文件给不出东西，这条还在。
+        let siblings = [
+            Bundle.main.executableURL?.deletingLastPathComponent(),
+            CommandLine.arguments.first
+                .map { URL(fileURLWithPath: $0).deletingLastPathComponent() },
+        ].compactMap { $0?.appendingPathComponent("sbtally").path }
+        if let found = siblings.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return found
         }
         return ["/usr/local/bin/sbtally", "/opt/homebrew/bin/sbtally"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }

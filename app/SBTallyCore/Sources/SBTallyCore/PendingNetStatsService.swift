@@ -184,6 +184,22 @@ public enum PendingNetStatsService {
         case failed(String)
     }
 
+    /// 把特权助手报回来的那三样翻成统计状态。
+    ///
+    /// 助手那侧的采集器 App 够不着进程，只能听它报。「没在跑」和「起不来」要分开：
+    /// 前者多半是引擎本来就没起（那该说「先去连接」），后者才是要给用户看原因的
+    /// 那一种。空字符串当没有原因 —— XPC 那头传过来的可能是个空串。
+    public static func daemonState(
+        helperRunning: Bool,
+        port: Int,
+        failure: String?
+    ) -> DaemonState {
+        if helperRunning { return .running(port: port) }
+        guard let failure, !failure.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return .stopped }
+        return .failed(failure)
+    }
+
     /// 统计页面该显示哪一种空状态。「读不到」有好几种成因，从前全被糊成一句
     /// 「统计服务尚未启用」—— 那句话既不说为什么，也不说下一步。
     public enum Availability: Equatable, Sendable {

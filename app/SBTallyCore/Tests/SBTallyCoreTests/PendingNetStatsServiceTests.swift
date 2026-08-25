@@ -282,3 +282,43 @@ final class PendingNetStatsServiceDaemonArgumentsTests: XCTestCase {
         )
     }
 }
+
+final class PendingNetStatsServiceHelperReportTests: XCTestCase {
+    func testRunningCarriesThePort() {
+        XCTAssertEqual(
+            PendingNetStatsService.daemonState(helperRunning: true, port: 7777, failure: nil),
+            .running(port: 7777)
+        )
+    }
+
+    /// 助手说「没在采」而且没给原因 = 引擎本来就没起。那该说「先去连接」，
+    /// 不是「统计服务坏了」。
+    func testNotRunningWithoutAReasonIsMerelyStopped() {
+        XCTAssertEqual(
+            PendingNetStatsService.daemonState(helperRunning: false, port: 7777, failure: nil),
+            .stopped
+        )
+        XCTAssertEqual(
+            PendingNetStatsService.daemonState(helperRunning: false, port: 7777, failure: "  "),
+            .stopped
+        )
+    }
+
+    func testReasonSurvivesToTheUser() {
+        XCTAssertEqual(
+            PendingNetStatsService.daemonState(
+                helperRunning: false, port: 7777, failure: "统计端口 7777 被别的程序占着。"),
+            .failed("统计端口 7777 被别的程序占着。")
+        )
+    }
+
+    /// 助手报的状态最终要能落成一句有下一步的话。
+    func testHelperReportReachesAnActionableMessage() {
+        let state = PendingNetStatsService.daemonState(
+            helperRunning: false, port: 7777, failure: "统计端口 7777 被别的程序占着。")
+        let availability = PendingNetStatsService.availability(
+            engineRunning: true, daemon: state, hasData: false)
+        let message = PendingNetStatsService.emptyMessage(for: availability, subject: "应用流量")
+        XCTAssertTrue(message.detail.contains("7777"))
+    }
+}

@@ -515,11 +515,9 @@ final class EngineController: ObservableObject {
             + "还不行就在设置里重新授权后台服务。")
         return await withCompatibleHelper(unreachable, timeout: Self.quickTimeout) { p, reply in
             p.statsStatus { running, port, failure in
-                if running {
-                    PendingNetStatsEndpoint.shared.port = port
-                    return reply(.running(port: port))
-                }
-                reply(failure.map { .failed($0) } ?? .stopped)
+                if running { PendingNetStatsEndpoint.shared.port = port }
+                reply(PendingNetStatsService.daemonState(
+                    helperRunning: running, port: port, failure: failure))
             }
         }
     }

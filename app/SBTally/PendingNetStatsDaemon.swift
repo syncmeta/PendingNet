@@ -156,16 +156,16 @@ final class PendingNetStatsDaemon {
 
         let newProcess = Process()
         newProcess.executableURL = binary
-        newProcess.arguments = [
-            "daemon",
-            "-clash-api", "127.0.0.1:\(PendingNetUserEngine.controlPort)",
-            "-listen", "127.0.0.1:\(port)",
-            // 密钥走文件不走环境变量：引擎重新生成之后，采集端不重启也能跟上。
-            "-secret-file", secretURL.path,
-            // 规则集由 App 自己的下载器管（见 PendingNetRouteRuleSets），
-            // 采集端别去碰同一个目录。
-            "-ruleset-dir", "",
-        ]
+        // 命令行和助手那侧共用一份构造（见 PendingNetStatsService.daemonArguments）：
+        // 两侧写同一个统计库，切接管方式统计不清零；密钥都不上命令行。这一侧走
+        // 文件——引擎重新生成密钥之后，采集端不重启也能跟上。
+        newProcess.arguments = PendingNetStatsService.daemonArguments(
+            clashAPI: "127.0.0.1:\(PendingNetUserEngine.controlPort)",
+            port: port,
+            databasePath: PendingNetStatsService.databasePath(
+                home: fileManager.homeDirectoryForCurrentUser.path),
+            secret: .file(secretURL.path)
+        )
         newProcess.standardOutput = handle
         newProcess.standardError = handle
         newProcess.terminationHandler = { _ in try? handle.close() }
