@@ -58,6 +58,7 @@ func runDaemon(args []string) {
 	flush := fs.Duration("flush", 10*time.Second, "DB flush interval")
 	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update; empty disables rule-set management")
 	secretFile := fs.String("secret-file", "", "file holding the Clash API secret; re-read on every use (overrides SBTALLY_SECRET)")
+	secretStdin := fs.Bool("secret-stdin", false, "take the Clash API secret from the first line of stdin, and shut down when stdin closes (for a supervisor that must keep the secret off disk, argv and env)")
 	_ = fs.Parse(args)
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
@@ -72,7 +73,17 @@ func runDaemon(args []string) {
 	// 现读优先于启动时读死：引擎重新生成 secret 之后，采集端下一次重连就自己
 	// 恢复，不需要有人来重启它。SBTALLY_SECRET 保留给老的 launchd 单元。
 	secretSource := secret.Static(os.Getenv("SBTALLY_SECRET"))
-	if *secretFile != "" {
+	var lifeline <-chan struct{}
+	switch {
+	case *secretStdin:
+		// 特权助手起的那份引擎：密钥既不落磁盘也不上命令行，走一根管子进来，
+		// 管子断了就是监护人没了，自己退场别当孤儿。
+		var err error
+		secretSource, lifeline, err = secret.FromLifeline(os.Stdin)
+		if err != nil {
+			fatal(err)
+		}
+	case *secretFile != "":
 		secretSource = secret.FromFile(*secretFile)
 	}
 	hub := daemon.NewLiveHub()
@@ -82,6 +93,12 @@ func runDaemon(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if lifeline != nil {
+		go func() {
+			<-lifeline
+			stop()
+		}()
+	}
 
 	mux := daemon.NewServer(st, hub, func() int64 { return time.Now().Unix() })
 	daemon.RegisterControl(mux, clashapi.New(*clashAPI, secretSource))

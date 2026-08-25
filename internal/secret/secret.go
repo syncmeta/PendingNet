@@ -8,6 +8,9 @@
 package secret
 
 import (
+	"bufio"
+	"errors"
+	"io"
 	"os"
 	"strings"
 )
@@ -42,4 +45,33 @@ func Resolve(s Source) string {
 		return ""
 	}
 	return s()
+}
+
+// FromLifeline reads the first line of r as the secret and hands back a channel
+// that closes when r reaches EOF.
+//
+// 这是给「有监护人的采集器」用的：特权助手用 root 起引擎，那份引擎的 Clash 密钥
+// 按设计不落到 App 手里，也不该落到磁盘、命令行或环境变量里 —— 命令行 `ps` 全机
+// 可见，环境变量和磁盘文件同用户可读。走一根管子进来，谁都读不到。
+//
+// 同一根管子顺带当命脉：监护人一走，写端关闭，r 到 EOF，采集器自己退场。没有这
+// 一条的话，助手被 SIGKILL 或者中间隔了一层 sudo，采集器就会变成一个还占着统计
+// 端口的孤儿。
+func FromLifeline(r io.Reader) (Source, <-chan struct{}, error) {
+	reader := bufio.NewReader(r)
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return nil, nil, err
+	}
+	value := strings.TrimSpace(line)
+	if value == "" {
+		return nil, nil, errors.New("stdin 上没有密钥")
+	}
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		// 剩下的字节一概不要，只等这根管子断掉。
+		_, _ = io.Copy(io.Discard, reader)
+	}()
+	return Static(value), closed, nil
 }

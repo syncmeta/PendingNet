@@ -1,9 +1,12 @@
 package secret
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestStatic(t *testing.T) {
@@ -51,5 +54,48 @@ func TestFromFileRereadsAfterRotation(t *testing.T) {
 	}
 	if got := s(); got != "new" {
 		t.Fatalf("after rotation got %q, want new", got)
+	}
+}
+
+func TestFromLifelineReadsFirstLine(t *testing.T) {
+	src, _, err := FromLifeline(strings.NewReader("hunter2\nrest\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src(); got != "hunter2" {
+		t.Fatalf("got %q, want hunter2", got)
+	}
+}
+
+func TestFromLifelineRejectsEmpty(t *testing.T) {
+	if _, _, err := FromLifeline(strings.NewReader("\n")); err == nil {
+		t.Fatal("空的第一行该报错")
+	}
+}
+
+// 监护人一走，管子断掉，采集器就该收到收摊信号 —— 不然它会变成一个还占着统计
+// 端口的孤儿。
+func TestFromLifelineClosesWhenPipeCloses(t *testing.T) {
+	r, w := io.Pipe()
+	go func() {
+		_, _ = w.Write([]byte("hunter2\n"))
+	}()
+	src, gone, err := FromLifeline(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src(); got != "hunter2" {
+		t.Fatalf("got %q, want hunter2", got)
+	}
+	select {
+	case <-gone:
+		t.Fatal("管子还开着就报了 EOF")
+	case <-time.After(50 * time.Millisecond):
+	}
+	_ = w.Close()
+	select {
+	case <-gone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("管子断了却没有收摊")
 	}
 }
