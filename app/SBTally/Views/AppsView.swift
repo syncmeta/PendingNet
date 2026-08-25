@@ -28,11 +28,7 @@ struct AppsView: View {
             .padding(.bottom, PendingNetTheme.Metrics.gutter)
             .overlay {
                 if state.apps.isEmpty {
-                    PendingEmptyState(
-                        icon: "square.grid.2x2",
-                        title: state.lastError == nil ? "还没有应用数据" : "统计服务尚未启用",
-                        detail: state.lastError == nil ? "选定时间内的应用流量会显示在这里。" : "代理仍可正常使用；启用统计服务后这里会显示应用统计。"
-                    )
+                    StatsEmptyStateView(subject: "应用流量")
                 }
             }
         }

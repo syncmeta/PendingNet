@@ -29,11 +29,7 @@ struct LiveView: View {
             .padding(.bottom, PendingNetTheme.Metrics.gutter)
             .overlay {
                 if state.live.isEmpty {
-                    PendingEmptyState(
-                        icon: state.lastError == nil ? "waveform.path.ecg" : "chart.bar.xaxis",
-                        title: state.lastError == nil ? "暂时没有流量" : "统计服务尚未启用",
-                        detail: state.lastError == nil ? "出现新连接后会自动显示在这里。" : "代理仍可正常使用；启用统计服务后这里会显示实时数据。"
-                    )
+                    StatsEmptyStateView(subject: "实时流量")
                 }
             }
         }

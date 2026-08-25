@@ -28,11 +28,7 @@ struct DomainsView: View {
             .padding(.bottom, PendingNetTheme.Metrics.gutter)
             .overlay {
                 if state.domains.isEmpty {
-                    PendingEmptyState(
-                        icon: "globe.asia.australia",
-                        title: state.lastError == nil ? "还没有域名数据" : "统计服务尚未启用",
-                        detail: state.lastError == nil ? "选定时间内的域名流量会显示在这里。" : "代理仍可正常使用；启用统计服务后这里会显示域名统计。"
-                    )
+                    StatsEmptyStateView(subject: "域名流量")
                 }
             }
         }

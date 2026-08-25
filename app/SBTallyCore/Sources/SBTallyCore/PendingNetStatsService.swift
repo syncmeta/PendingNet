@@ -132,15 +132,24 @@ public enum PendingNetStatsService {
         case unavailable(reason: String)
     }
 
+    /// - Parameter readFailed: 上一次读统计接口失败了。统计服务明明在跑却读不到，
+    ///   跟「在跑但这段时间没流量」是两件完全不同的事，不能都显示成没有数据。
     public static func availability(
         engineRunning: Bool,
         daemon: DaemonState,
-        hasData: Bool
+        hasData: Bool,
+        readFailed: Bool = false
     ) -> Availability {
         if hasData { return .ready }
         if case .failed(let reason) = daemon { return .unavailable(reason: reason) }
         guard engineRunning else { return .engineStopped }
-        if case .running = daemon { return .noTraffic }
+        if case .running(let port) = daemon {
+            if readFailed {
+                return .unavailable(
+                    reason: "统计服务在跑（端口 \(port)），但这一次没读到数据。稍等一下，或者重新连接一次。")
+            }
+            return .noTraffic
+        }
         // 引擎在跑但统计服务停着 —— 正常路径上不该出现（两者同生命周期），
         // 真出现了也别装作没有数据。
         return .unavailable(reason: "统计服务没有随代理一起启动。")
