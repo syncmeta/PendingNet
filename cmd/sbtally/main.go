@@ -18,6 +18,7 @@ import (
 	"sbtally/internal/cli"
 	"sbtally/internal/core"
 	"sbtally/internal/daemon"
+	"sbtally/internal/dropprivs"
 	"sbtally/internal/sbconfig"
 	"sbtally/internal/secret"
 	"sbtally/internal/source"
@@ -59,7 +60,30 @@ func runDaemon(args []string) {
 	rulesetDir := fs.String("ruleset-dir", "/usr/local/etc/sbtally", "dir containing the sing-box rule-set files to auto-update; empty disables rule-set management")
 	secretFile := fs.String("secret-file", "", "file holding the Clash API secret; re-read on every use (overrides SBTALLY_SECRET)")
 	secretStdin := fs.Bool("secret-stdin", false, "take the Clash API secret from the first line of stdin, and shut down when stdin closes (for a supervisor that must keep the secret off disk, argv and env)")
+	dropUID := fs.Int("drop-to-uid", 0, "re-run as this uid before doing anything (root only; for a privileged supervisor that must not leave root-owned files in a user's home)")
+	dropGID := fs.Int("drop-to-gid", 0, "group to pair with -drop-to-uid")
 	_ = fs.Parse(args)
+
+	// 降身份：特权助手用 root 起这个采集器，但统计库在登录用户的目录里 ——
+	// root 建出来的库和它的 -wal/-shm 会让「仅端口」模式下那份采集器再也写不进去，
+	// 而且是静默写不进去。自己 fork 一次、exec 之前 setuid，标准流原样继承：
+	// 密钥和命脉都在 stdin 上，中间不能隔任何东西（这也是不用 sudo 的原因，
+	// 见 internal/dropprivs 的包注释）。
+	//
+	// 目标就是自己那一份不算「降」，也放行 —— 这样整条通路（去掉开关、再 exec
+	// 一次、stdin 原样继承）不需要 root 也能跑起来验。
+	if *dropUID > 0 {
+		if os.Getuid() != 0 && *dropUID != os.Getuid() {
+			fatal(fmt.Errorf("-drop-to-uid 只有 root 用得了"))
+		}
+		stripped := dropprivs.StripFlag(
+			dropprivs.StripFlag(os.Args[1:], "drop-to-uid"), "drop-to-gid")
+		code, err := dropprivs.Rerun(stripped, uint32(*dropUID), uint32(*dropGID))
+		if err != nil {
+			fatal(fmt.Errorf("以 uid %d 重新启动失败：%w", *dropUID, err))
+		}
+		os.Exit(code)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
 		fatal(err)

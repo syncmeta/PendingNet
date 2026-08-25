@@ -97,19 +97,21 @@ final class StatsCollector {
             return
         }
 
+        // 采集器自己降身份（`-drop-to-uid`）。**不要**改成 sudo：sudo 从 1.9.14 起
+        // 默认 use_pty，会给命令套一个伪终端并自己当中间人——密钥走 stdin 进来会被
+        // 伪终端回显抄进日志，而管子断掉的 EOF 传不到孙子进程，命脉就断了。
+        // 详见 internal/dropprivs 的包注释。
         let arguments = PendingNetStatsService.daemonArguments(
             clashAPI: endpoint.controller,
             port: PendingNetStatsService.defaultPort,
             databasePath: PendingNetStatsService.databasePath(home: user.home),
             secret: .standardInput
-        )
+        ) + ["-drop-to-uid", String(user.uid), "-drop-to-gid", String(user.gid)]
         prepareLogFile(owner: user.uid)
 
         let task = Process()
-        // 降身份靠 sudo：root 用它不需要密码，而 Foundation 的 Process 没有设置
-        // uid 的口子。-n 是「绝不交互」，真被 sudoers 挡下来也只是失败，不会挂住。
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        task.arguments = ["-n", "-u", user.name, "--", binary] + arguments
+        task.executableURL = URL(fileURLWithPath: binary)
+        task.arguments = arguments
         let pipe = Pipe()
         task.standardInput = pipe
         if let log = FileHandle(forWritingAtPath: Self.logPath) {
@@ -180,7 +182,7 @@ final class StatsCollector {
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    private func targetUser() -> (name: String, uid: uid_t, home: String)? {
+    private func targetUser() -> (name: String, uid: uid_t, gid: gid_t, home: String)? {
         if let uid = requestedByUID, let user = userInfo(uid: uid) { return user }
         var uid: uid_t = 0
         var gid: gid_t = 0
@@ -190,12 +192,12 @@ final class StatsCollector {
         return user
     }
 
-    private func userInfo(uid: uid_t) -> (name: String, uid: uid_t, home: String)? {
+    private func userInfo(uid: uid_t) -> (name: String, uid: uid_t, gid: gid_t, home: String)? {
         guard let entry = getpwuid(uid) else { return nil }
         let name = String(cString: entry.pointee.pw_name)
         let home = String(cString: entry.pointee.pw_dir)
-        guard !name.isEmpty, home.hasPrefix("/"), name != "root" else { return nil }
-        return (name, uid, home)
+        guard !name.isEmpty, home.hasPrefix("/"), name != "root", uid != 0 else { return nil }
+        return (name, uid, entry.pointee.pw_gid, home)
     }
 
     /// 老的手工安装留下的用户级 LaunchAgent。它指着旧端口旧密钥、还开机自启，
