@@ -1,5 +1,10 @@
 # Cutover: SFM → PendingNet (standalone sing-box + sbtally)
 
+> **Legacy manual path.** GitHub Releases 里的 PendingNet.app 已内置 sing-box，并由
+> 特权助手按需创建 LaunchDaemon 和 root 配置目录；正常安装客户端不需要以下
+> `brew install` 或 `deploy/install.sh`。本页只保留给要手工接管既有 sing-box 配置的
+> 老部署，不是 macOS 客户端的安装前置条件。
+
 This is the real-machine step. It swaps SFM for PendingNet — a standalone sing-box
 CLI (so per-app process attribution works) plus the sbtally stats daemon, both under
 launchd. The PendingNet.app GUI controls both via the Clash API. **It is verified
@@ -29,7 +34,7 @@ with the selected variant. The mode file defaults to "tun" when absent (fresh st
 1. **Quit and disable SFM** (System Settings → General → Login Items, and quit the
    app). Two TUN providers conflict.
 
-2. **Install sing-box**: `brew install sing-box`
+2. **Install sing-box for this legacy manual deployment**: `brew install sing-box`
 
 3. **Generate your master config** from your existing sing-box config(s):
 

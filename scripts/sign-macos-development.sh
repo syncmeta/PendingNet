@@ -19,6 +19,8 @@ helper="$app/Contents/MacOS/PendingNetHelper"
 # 统计程序。和 helper 一样是包内的第二个可执行文件，必须先于外层 app 单独签名 ——
 # 漏签的话外层 `codesign --verify --deep --strict` 直接失败，公证也过不去。
 tally="$app/Contents/MacOS/sbtally"
+# 代理引擎。同理，包里的第三个可执行文件，也必须先于外层单独签。
+engine="$app/Contents/MacOS/sing-box"
 identity="${PENDINGNET_SIGN_IDENTITY:--}"
 sparkle="$app/Contents/Frameworks/Sparkle.framework"
 profile="${PENDINGNET_PROVISION_PROFILE:-}"
@@ -27,6 +29,7 @@ entitlements_src="$root/app/SBTally/PendingNet.entitlements"
 
 test -x "$helper"
 test -x "$tally" || { echo "包里没有 sbtally —— 统计页装上去会永远空白。构建阶段 Embed sbtally 没跑成？" >&2; exit 2; }
+test -x "$engine" || { echo "包里没有 sing-box —— 装上去一连接就说找不到引擎。构建阶段 Embed sing-box 没跑成？" >&2; exit 2; }
 
 # 描述文件在手：把它放进包里，并把 entitlements 里的 $(AppIdentifierPrefix) /
 # $(TeamIdentifierPrefix) 展开成描述文件里那个 team —— 手工 codesign 不认构建
@@ -48,6 +51,21 @@ if test "$identity" = "-"; then
   # A plain `codesign -s -` uses a CDHash-only designated requirement, which
   # changes on every build. Stable explicit requirements let Service
   # Management recognize a locally built PendingNet update as the same pair.
+  # Xcode 会从预签名的 Sparkle XCFramework 里裁掉 Headers / Modules；裁完原封印
+  # 必然失效，所以 ad-hoc 也要按 Developer ID 分支同样的由内到外顺序重签。
+  if test -d "$sparkle"; then
+    sparkle_version="$sparkle/Versions/B"
+    if test -d "$sparkle_version/XPCServices/Installer.xpc"; then
+      /usr/bin/codesign --force --sign - "$sparkle_version/XPCServices/Installer.xpc"
+    fi
+    if test -d "$sparkle_version/XPCServices/Downloader.xpc"; then
+      /usr/bin/codesign --force --sign - --preserve-metadata=entitlements \
+        "$sparkle_version/XPCServices/Downloader.xpc"
+    fi
+    /usr/bin/codesign --force --sign - "$sparkle_version/Autoupdate"
+    /usr/bin/codesign --force --sign - "$sparkle_version/Updater.app"
+    /usr/bin/codesign --force --sign - "$sparkle"
+  fi
   /usr/bin/codesign --force --sign - \
     --identifier com.pendingname.pendingnet.helper \
     --requirements '=designated => identifier "com.pendingname.pendingnet.helper"' \
@@ -56,6 +74,10 @@ if test "$identity" = "-"; then
     --identifier com.pendingname.pendingnet.sbtally \
     --requirements '=designated => identifier "com.pendingname.pendingnet.sbtally"' \
     "$tally"
+  /usr/bin/codesign --force --sign - \
+    --identifier com.pendingname.pendingnet.singbox \
+    --requirements '=designated => identifier "com.pendingname.pendingnet.singbox"' \
+    "$engine"
   /usr/bin/codesign --force --sign - \
     --identifier com.pendingname.pendingnet \
     --requirements '=designated => identifier "com.pendingname.pendingnet"' \
@@ -81,6 +103,8 @@ else
     --identifier com.pendingname.pendingnet.helper "$helper"
   /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
     --identifier com.pendingname.pendingnet.sbtally "$tally"
+  /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
+    --identifier com.pendingname.pendingnet.singbox "$engine"
   if test -n "$profile"; then
     prepare_entitlements
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \

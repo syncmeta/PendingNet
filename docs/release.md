@@ -95,7 +95,7 @@ Release 已经发出去了才想起来补 Linux 那三个：`gh release upload p
 现在没有 CHANGELOG，Sparkle 的 appcast 里也没写发布说明。第一个 Release 建议手写，至少包含：
 
 - 这是什么、给谁用（一句话，链回 README）
-- **系统要求和硬性前提**：macOS 版本下限、需要 Developer ID 公证过的包（已经是了）、装完要去「系统设置 → 通用 → 登录项与扩展」里给后台项目打开开关——不打开，TUN 和系统代理两种模式都用不了
+- **系统要求和硬性前提**：macOS 版本下限、需要 Developer ID 公证过的包（已经是了）。安装包自带 sing-box，不要再让用户先 `brew install`；只有第一次使用 TUN / 系统代理时，需要去「系统设置 → 通用 → 登录项与扩展」允许 PendingNet 后台项目，「仅端口」不需要这项授权
 - **要连上还需要一台自己的 VPS**，装了 `pendingnet-server` 并生成一份 `.pdn`。这个前提要写在最前面，不然下载的人打开 app 会一脸茫然。VPS 那头现在有一键脚本了（`deploy/vps-install.sh`），这里可以直接把那条 `curl ... | sudo bash` 贴上去
 - 这一版改了什么。没有 CHANGELOG 的话，`git log --oneline pendingnet/v0.3.27..pendingnet/v0.3.28` 能凑出一份
 
