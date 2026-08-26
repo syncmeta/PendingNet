@@ -6,7 +6,7 @@ import SystemConfiguration
 /// helper binary currently sitting in the app bundle.
 let helperStartTime = Date().timeIntervalSince1970
 let ETC = "/usr/local/etc/sbtally"
-let LABEL = "system/io.sbtally.singbox"
+let LABEL = "system/" + PendingNetEngineDaemon.label
 let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
 let ACTIVE_SELECTOR = "\(ETC)/pendingnet-active-selector"
 let ROUTE_MODE = "\(ETC)/route-mode"
@@ -111,15 +111,64 @@ func engineRunning() -> Bool {
     return code == 0 && out.contains("state = running")
 }
 
+/// 代理引擎在哪。这个 daemon 自己就住在 `PendingNet.app/Contents/MacOS`，
+/// 引擎是它的邻居 —— 判断和 app 侧共用 SBTallyCore 里那一份。
+///
+/// 从前这里只有 homebrew / usr-local 两条，连「包内」都没写：新机器上就算 app
+/// 侧能跑起来，一切到 TUN 或系统代理还是找不着引擎。
 func singBoxBinary() -> String? {
-    ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
-        .first { FileManager.default.isExecutableFile(atPath: $0) }
+    PendingNetEngineBinary.locate()?.path
+}
+
+/// 把 root 引擎那份 launchd 作业对齐到**这个 App 包里**的引擎。
+///
+/// 从前这份 plist 只由老的手工安装脚本写一次，`Program` 是安装那一刻 homebrew
+/// 里那份 sing-box。没跑过那个脚本的机器上它压根不存在；跑过的机器上它指着一个
+/// 与 App 无关、版本随 brew 漂的二进制。每次启动引擎前重写一遍，App 挪了位置、
+/// 升了版本，下一次连接就跟上。
+///
+/// 内容没变就不动 —— 免得每次连接都白写一次 `/Library` 下的文件。
+func prepareEngineConfigDirectory() -> String? {
+    do {
+        try PendingNetEngineDaemon.prepareConfigDirectory(
+            at: ETC,
+            preferredMode: currentMode()
+        )
+        return nil
+    } catch {
+        return "代理引擎的配置目录没能准备好：\(error.localizedDescription)"
+    }
+}
+
+func refreshEngineDaemonPlist() -> (changed: Bool, error: String?) {
+    guard let engine = singBoxBinary() else {
+        return (false, PendingNetEngineBinary.missingEngineMessage)
+    }
+    do {
+        let wanted = try PendingNetEngineDaemon.plistData(
+            enginePath: engine,
+            configPath: "\(ETC)/master.json",
+            workingDirectory: ETC
+        )
+        let path = PendingNetEngineDaemon.plistPath
+        let changed = (try? readData(path: path)) != wanted
+        if changed {
+            try wanted.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        return (changed, nil)
+    } catch {
+        return (false,
+                "代理引擎的后台作业没能写进 /Library/LaunchDaemons：\(error.localizedDescription)")
+    }
 }
 
 func validateConfig(_ data: Data, name: String) throws {
     guard let binary = singBoxBinary() else {
         throw NSError(domain: "PendingNetHelper", code: 1,
-                      userInfo: [NSLocalizedDescriptionKey: "找不到 sing-box 可执行文件"])
+                      userInfo: [
+                          NSLocalizedDescriptionKey: PendingNetEngineBinary.missingEngineMessage,
+                      ])
     }
     let temporary = URL(fileURLWithPath: ETC)
         .appendingPathComponent(".pendingnet-check-\(UUID().uuidString)-\(name).json")
@@ -193,6 +242,8 @@ func waitForProcessToExit(_ pid: Int32, timeout: TimeInterval) -> Bool {
 /// 所以改成 SIGTERM + 等它退（超时再 SIGKILL 兜底），退干净了再 kickstart。
 /// 返回 nil 表示重启成功。
 func restartEngineProcess() -> String? {
+    let daemon = refreshEngineDaemonPlist()
+    if let error = daemon.error { return error }
     if let running = enginePID() {
         if let error = launchctl(["kill", "SIGTERM", LABEL]) {
             helperLog("请引擎优雅退出失败（\(error)），直接 SIGKILL 兜底")
@@ -206,6 +257,10 @@ func restartEngineProcess() -> String? {
                 return "sing-box 进程 \(running) 杀不掉"
             }
         }
+    }
+    if daemon.changed {
+        _ = launchctl(["bootout", LABEL])
+        return launchctl(["bootstrap", "system", PendingNetEngineDaemon.plistPath])
     }
     if let error = launchctl(["kickstart", LABEL]) {
         // KeepAlive 可能已经替我们把新实例拉起来了；那种情况下 kickstart 报什么都无所谓。
@@ -460,10 +515,15 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             reply(message)
         }
         _ = launchctl(["bootout", LABEL])   // idempotent
+        if let error = prepareEngineConfigDirectory() { return fail(error) }
+        // 先把作业对齐到包内那份引擎，再 bootstrap —— 顺序反过来的话这一次拉起来的
+        // 还是上一份 plist 里那个引擎。
+        let daemon = refreshEngineDaemonPlist()
+        if let error = daemon.error { return fail(error) }
         // 引擎起来之后冲一次系统 DNS 缓存——开机那几秒进去的投毒记录只有这一步清得掉。
         let failure = PendingNetDNSCacheFlush.afterEngineUp(.engineStarted, bringUp: {
             let err = launchctl(
-                ["bootstrap", "system", "/Library/LaunchDaemons/io.sbtally.singbox.plist"])
+                ["bootstrap", "system", PendingNetEngineDaemon.plistPath])
             guard err == nil else { return err }
             guard waitForEngine() else { return "sing-box 启动后未进入运行状态" }
             let configData = try? readData(path: "\(ETC)/master.json")
@@ -499,6 +559,9 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     }
     func setTakeover(_ mode: String, reply: @escaping (String?) -> Void) {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
+        if mode != "local", let error = prepareEngineConfigDirectory() {
+            return reply(error)
+        }
         let variant = mode == "tun" ? "master-tun.json" : "master-notun.json"
         let wasRunning = engineRunning()
         // 换接管方式一定要先把这一侧的采集器停掉：切到「仅端口」之后 owner 是
@@ -568,6 +631,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         guard !serverID.isEmpty, !name.isEmpty else {
             return reply("VPS 身份无效")
         }
+        if let error = prepareEngineConfigDirectory() { return reply(error) }
         let tunPath = "\(ETC)/master-tun.json"
         let noTunPath = "\(ETC)/master-notun.json"
         let masterPath = "\(ETC)/master.json"

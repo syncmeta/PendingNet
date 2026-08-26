@@ -9,7 +9,7 @@ system/io.sbtally.singbox = {
 \ttype = LaunchDaemon
 \tstate = running
 
-\tprogram = /opt/homebrew/bin/sing-box
+\tprogram = /Applications/PendingNet.app/Contents/MacOS/sing-box
 \tworking directory = /usr/local/etc/sbtally
 
 \tpid = 588

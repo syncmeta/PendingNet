@@ -11,7 +11,7 @@ enum PendingNetUserEngineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingSingBox:
-            "找不到 sing-box。请先安装 sing-box，或使用包含内置引擎的 PendingNet 版本。"
+            PendingNetEngineBinary.missingEngineMessage
         case .noConfiguration:
             "还没有可运行的 VPS 配置，请先导入 .pdn 并应用。"
         case .validationFailed(let detail):
@@ -274,14 +274,18 @@ final class PendingNetUserEngine {
         return value
     }
 
+    /// 代理引擎在哪。优先包内那份 —— 它跟着 App 一起签名、一起更新；
+    /// homebrew / `/usr/local` 那两条只是开发机上的退路。
+    ///
+    /// 从前这里问的是 `Bundle.main.url(forResource:)`，那个 API 找的是
+    /// `Contents/Resources`，而可执行文件只能放 `Contents/MacOS` —— 所以哪怕
+    /// 当时就把引擎编进包里，这条候选也永远不会命中。判断挪去 SBTallyCore，
+    /// 和特权助手用的是同一份。
     private func singBoxBinary() throws -> URL {
-        let bundled = Bundle.main.url(forResource: "sing-box", withExtension: nil)
-        let candidates = [bundled?.path, "/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
-            .compactMap { $0 }
-        guard let path = candidates.first(where: { fileManager.isExecutableFile(atPath: $0) }) else {
+        guard let binary = PendingNetEngineBinary.locate(fileManager: fileManager) else {
             throw PendingNetUserEngineError.missingSingBox
         }
-        return URL(fileURLWithPath: path)
+        return binary
     }
 
     private func validate(_ config: Data) throws {
