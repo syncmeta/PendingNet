@@ -24,10 +24,9 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
     }
 
     func testProxyOnlyBasePassesInstalledSingBoxCheck() throws {
-        let candidates = ["/opt/homebrew/bin/sing-box", "/usr/local/bin/sing-box"]
-        guard let binary = candidates.first(where: {
-            FileManager.default.isExecutableFile(atPath: $0)
-        }) else { throw XCTSkip("sing-box is not installed") }
+        guard let binary = pendingNetSingBoxForTests() else {
+            throw XCTSkip("neither the embedded candidate nor a fallback sing-box is available")
+        }
 
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pendingnet-config-check-\(UUID().uuidString)", isDirectory: true)

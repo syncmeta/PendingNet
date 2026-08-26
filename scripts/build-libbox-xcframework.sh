@@ -10,9 +10,12 @@ set -euo pipefail
 #   2. 构建入口是 sing-box 仓库自带的 cmd/internal/build_libbox，不是 gomobile bind。
 #   3. 产物可能落在 sing-box 仓库根目录，也可能落在 /private/tmp/sing-box-for-apple/。
 
-SING_BOX_REF="${SING_BOX_REF:-v1.13.13}"
-CORE_DIR="${SING_BOX_DIR:-/private/tmp/pendingnet-sing-box}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# ref 与 checkout 位置在这一份里，和 macOS 内置引擎（scripts/embed-singbox.sh）
+# 共用 —— 两个版本源意味着 Mac 与 iPhone 跑着不同版本的内核而没人发现。
+# shellcheck source=scripts/sing-box-source.sh
+source "$REPO_ROOT/scripts/sing-box-source.sh"
+CORE_DIR="$SING_BOX_DIR"
 DEST="$REPO_ROOT/app/Vendor/Libbox.xcframework"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -39,13 +42,7 @@ if [[ "$needs_install" -eq 1 ]]; then
   gomobile init
 fi
 
-if [[ ! -d "$CORE_DIR/.git" ]]; then
-  # 浅克隆到指定 tag，节省磁盘（本机磁盘紧张）；产物与全量克隆等价。
-  git clone --branch "$SING_BOX_REF" --depth 1 https://github.com/SagerNet/sing-box.git "$CORE_DIR"
-else
-  git -C "$CORE_DIR" fetch --tags origin
-  git -C "$CORE_DIR" checkout "$SING_BOX_REF"
-fi
+sing_box_checkout
 
 ( cd "$CORE_DIR" && go run ./cmd/internal/build_libbox -target apple -platform ios )
 

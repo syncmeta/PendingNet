@@ -302,3 +302,10 @@ targets:
       - name: Embed sbtally
         script: |
           exec "$SRCROOT/../scripts/embed-sbtally.sh"
+      # 代理引擎（sing-box）跟着 App 走。从前它只可能来自机器上自己 brew 装的那份
+      # ——于是任何一台新电脑装完 App 一连接就报「找不到 sing-box」，而 PendingNet
+      # 是配合 VPS 用的独立客户端，不是 sing-box 的图形外壳。这里从源码现编现放，
+      # 签名由 scripts/sign-macos-development.sh 接手（和 helper、sbtally 同一条路子）。
+      - name: Embed sing-box
+        script: |
+          exec "$SRCROOT/../scripts/embed-singbox.sh"
