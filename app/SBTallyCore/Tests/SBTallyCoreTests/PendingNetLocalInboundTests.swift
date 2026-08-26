@@ -25,7 +25,11 @@ final class PendingNetLocalInboundTests: XCTestCase {
     }
 
     func testPortIsTrimmedBeforeParsing() throws {
-        XCTAssertEqual(try PendingNetLocalInbound.resolvePort(from: "  2081 ", current: 2080), 2081)
+        // 这里只测字符串修剪，不把本机此刻谁占了 2081 混进来（开发机上可能正有
+        // 用户自己的代理在用它）。端口占用另有专门用例。
+        XCTAssertEqual(try PendingNetLocalInbound.resolvePort(
+            from: "  2081 ", current: 2080, isFree: { _, _ in true }
+        ), 2081)
     }
 
     func testPortOutOfRangeIsCalledOutSeparatelyFromGarbage() {
