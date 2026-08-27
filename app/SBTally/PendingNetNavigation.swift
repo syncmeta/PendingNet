@@ -7,6 +7,7 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
     case live
     case apps
     case domains
+    case logs
     case settings
 
     var id: String { rawValue }
@@ -17,6 +18,7 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
         case .live: "实时流量"
         case .apps: "应用"
         case .domains: "域名"
+        case .logs: "日志"
         case .settings: "设置"
         }
     }
@@ -27,11 +29,17 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
         case .live: "waveform.path.ecg"
         case .apps: "square.grid.2x2"
         case .domains: "globe.asia.australia"
+        case .logs: "doc.text.magnifyingglass"
         case .settings: "gear"
         }
     }
 
-    var showsTimeRange: Bool { self != .connection && self != .settings }
+    var showsTimeRange: Bool {
+        switch self {
+        case .live, .apps, .domains: true
+        case .connection, .logs, .settings: false
+        }
+    }
 }
 
 @MainActor

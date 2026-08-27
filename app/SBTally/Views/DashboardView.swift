@@ -62,6 +62,8 @@ struct DashboardView: View {
             AppsView()
         case .domains:
             DomainsView()
+        case .logs:
+            LogsView()
         case .settings:
             SettingsView()
         }
