@@ -2,11 +2,9 @@
 """生成 macOS 菜单栏图标资源 PendingNetMenuBarIcon。
 
 复用 make-app-icon.py 产出的两层 Icon-Composer SVG（前景主箭头 + 次要箭头），
-拼成一张图，按明暗两种外观各渲染一份 PNG，非 template（保留品牌色）。
-
-两套颜色与 app 图标保持一致：
-  - light：主箭头 #044735 / 次箭头 #b7b7b7（设计稿原色，浅色下用）
-  - dark ：主箭头 #ffffff  / 次箭头 #bfccc4（icon.json 的 dark 特化）
+拼成一张图，按明暗两种外观各渲染一份 PNG。菜单栏资源固定为纯白色，
+不再沿用 app 图标的绿/灰品牌色；两个外观槽保持相同，避免系统切换外观后
+图标颜色发生变化。
 
 菜单栏图标**不**画底色圆角方块：浅色菜单栏上白底看不出边界（见
 make-app-icon.py 同类注释），系统又不会替菜单栏里的普通图片画 squircle /
@@ -43,10 +41,9 @@ POINT_W = 22
 POINT_H = 18
 SCALES = (1, 2, 3)
 
-LIGHT_PRIMARY = "#044735"
-LIGHT_SECONDARY = "#b7b7b7"
-DARK_PRIMARY = "#ffffff"
-DARK_SECONDARY = "#bfccc4"  # icon.json: extended-srgb:0.750,0.800,0.780
+SOURCE_PRIMARY = "#044735"
+SOURCE_SECONDARY = "#b7b7b7"
+MENUBAR_WHITE = "#ffffff"
 
 
 def inner_g(svg_text: str) -> str:
@@ -113,10 +110,9 @@ def main() -> None:
     primary_g = inner_g((SRC / "primary.svg").read_text())
     secondary_g = inner_g((SRC / "secondary.svg").read_text())
 
-    light = combined_svg(primary_g, secondary_g)
-    dark = combined_svg(
-        primary_g.replace(LIGHT_PRIMARY, DARK_PRIMARY),
-        secondary_g.replace(LIGHT_SECONDARY, DARK_SECONDARY),
+    white = combined_svg(
+        primary_g.replace(SOURCE_PRIMARY, MENUBAR_WHITE),
+        secondary_g.replace(SOURCE_SECONDARY, MENUBAR_WHITE),
     )
 
     CATALOG.mkdir(parents=True, exist_ok=True)
@@ -127,8 +123,8 @@ def main() -> None:
         )
 
     OUT.mkdir(parents=True, exist_ok=True)
-    light_names = render_variants(light, OUT, "menubar-light")
-    dark_names = render_variants(dark, OUT, "menubar-dark")
+    light_names = render_variants(white, OUT, "menubar-light")
+    dark_names = render_variants(white, OUT, "menubar-dark")
 
     images = []
     for value, names in (("light", light_names), ("dark", dark_names)):
