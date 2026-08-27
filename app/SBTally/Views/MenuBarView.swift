@@ -194,7 +194,11 @@ struct MenuBarView: View {
         .background(PendingNetTheme.Palette.canvas)
         .task {
             await engine.refresh()
-            await state.loadControl()
+            if engine.running {
+                await state.loadControl()
+            } else {
+                state.clearControlForStoppedEngine()
+            }
         }
     }
 }

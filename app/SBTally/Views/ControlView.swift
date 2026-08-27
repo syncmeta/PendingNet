@@ -53,7 +53,12 @@ struct ControlView: View {
         }
         .background(PendingNetTheme.Palette.canvas)
         .task {
-            await state.loadControl()
+            await engine.refresh()
+            if engine.running {
+                await state.loadControl()
+            } else {
+                state.clearControlForStoppedEngine()
+            }
         }
         .fileImporter(
             isPresented: $showingPairingImporter,

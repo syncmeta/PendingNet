@@ -96,9 +96,19 @@ final class AppState: ObservableObject {
             } else if s.mode == mode {
                 self.modeNote = nil
             }
+            self.lastError = nil
         } catch {
-            self.lastError = String(describing: error)
+            NSLog("PendingNet control state failed: %@", String(describing: error))
+            self.lastError = PendingNetControlFailureMessage.text(for: error)
         }
+    }
+
+    /// 引擎明确停着时，旧的 selector / 模式能力不再代表当前状态，也不该为了
+    /// 清它们去请求一个必然不存在的 29090 控制口。
+    func clearControlForStoppedEngine() {
+        proxies = [:]
+        modeList = []
+        lastError = nil
     }
 
     /// 记住用户选的模式。任何时候都能调用，不需要引擎在跑。
@@ -131,7 +141,8 @@ final class AppState: ObservableObject {
             await loadControl()
             return proxies[selector]?.now == name
         } catch {
-            self.lastError = String(describing: error)
+            NSLog("PendingNet selector change failed: %@", String(describing: error))
+            self.lastError = PendingNetControlFailureMessage.text(for: error)
             return false
         }
     }

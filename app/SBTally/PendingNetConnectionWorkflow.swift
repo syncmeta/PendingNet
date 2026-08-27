@@ -59,6 +59,7 @@ enum PendingNetConnectionWorkflow {
             await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
         } else {
             await engine.stop()
+            if !engine.running { state.clearControlForStoppedEngine() }
         }
     }
 
@@ -86,6 +87,9 @@ enum PendingNetConnectionWorkflow {
             pairing.reportApplyError(engine.lastError ?? "应用本机配置失败")
             return
         }
+        // 用户可能刚在 Terminal 停掉旧 LaunchDaemon；界面上的 `running` 是上一拍
+        // 的快照，先回读真实状态，不能拿它直接决定“无需启动”。
+        await engine.refresh()
         if !engine.running {
             await engine.start()
             guard engine.running else {
