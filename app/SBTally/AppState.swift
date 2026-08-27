@@ -103,9 +103,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 引擎明确停着时，旧的 selector / 模式能力不再代表当前状态，也不该为了
-    /// 清它们去请求一个必然不存在的 29090 控制口。
-    func clearControlForStoppedEngine() {
+    /// 仅端口引擎没在使用时，旧的 selector / 模式能力不再代表当前状态，也不该
+    /// 去请求它专属的 29090 控制口。TUN / 系统代理的控制状态由 root helper 读取。
+    func clearLocalControl() {
         proxies = [:]
         modeList = []
         lastError = nil

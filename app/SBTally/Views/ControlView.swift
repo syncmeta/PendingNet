@@ -17,7 +17,9 @@ struct ControlView: View {
     /// The sing-box selector tag the engine currently routes through, if it is
     /// one of our managed VPS tags (`direct` and friends are engine outbounds,
     /// not VPS choices).
-    private var appliedSelectorTag: String? { state.proxies["proxy"]?.now }
+    private var appliedSelectorTag: String? {
+        engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag
+    }
 
     /// The paired VPS that tag belongs to — nil when nothing has been applied yet.
     private var appliedServer: PairedVPSServer? {
@@ -54,10 +56,10 @@ struct ControlView: View {
         .background(PendingNetTheme.Palette.canvas)
         .task {
             await engine.refresh()
-            if engine.running {
+            if engine.running && engine.takeover == "local" {
                 await state.loadControl()
             } else {
-                state.clearControlForStoppedEngine()
+                state.clearLocalControl()
             }
         }
         .fileImporter(

@@ -32,6 +32,9 @@ final class EngineController: ObservableObject {
     /// Set after a `start()` attempt whose post-refresh status shows the
     /// engine still isn't running — signals the GUI should surface `logTail`.
     @Published var startFailed = false
+    /// TUN / 系统代理下由 root helper 实际应用的 VPS selector。仅端口模式仍从
+    /// `AppState.proxies["proxy"]` 读取；两份引擎的控制口和密钥不能混用。
+    @Published private(set) var activeSelectorTag: String?
     /// 统计服务这一侧的状态。统计页面要靠它把「引擎没跑」「统计起不来」
     /// 「真的没流量」分开说，不能再一律「尚未启用」。
     @Published private(set) var statsDaemon: PendingNetStatsService.DaemonState = .stopped
@@ -58,6 +61,7 @@ final class EngineController: ObservableObject {
         running = userEngine.isRunning
         logTail = userEngine.logTail()
         statsDaemon = userEngine.statsDaemon.currentState()
+        activeSelectorTag = nil
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -509,13 +513,18 @@ final class EngineController: ObservableObject {
         guard helperReady else {
             running = false
             statsDaemon = .stopped
+            activeSelectorTag = nil
             return
         }
-        guard let result = await helperStatus() else { return }
+        guard let result = await helperStatus() else {
+            activeSelectorTag = nil
+            return
+        }
         running = result.0
         takeover = result.1
         logTail = result.2
         statsDaemon = await helperStatsState()
+        activeSelectorTag = running ? await helperActiveSelectorTag() : nil
     }
 
     /// 助手那侧采集器的状态。够不着助手（旧版、没响应）不当成「没有统计」——
@@ -536,6 +545,12 @@ final class EngineController: ObservableObject {
     private func helperStatus() async -> (Bool, String, String)? {
         await withCompatibleHelper(nil, timeout: Self.quickTimeout) { p, reply in
             p.status { run, mode, tail in reply((run, mode, tail)) }
+        }
+    }
+
+    private func helperActiveSelectorTag() async -> String? {
+        await withCompatibleHelper(nil, timeout: Self.quickTimeout) { p, reply in
+            p.activeSelectorTag(reply: reply)
         }
     }
 

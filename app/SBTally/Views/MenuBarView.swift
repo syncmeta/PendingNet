@@ -13,7 +13,9 @@ struct MenuBarView: View {
     private var totalUp: Int64 { state.live.reduce(0) { $0 + $1.upRate } }
     private var totalDown: Int64 { state.live.reduce(0) { $0 + $1.downRate } }
 
-    private var appliedSelectorTag: String? { state.proxies["proxy"]?.now }
+    private var appliedSelectorTag: String? {
+        engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag
+    }
 
     private var appliedServer: PairedVPSServer? {
         guard let tag = appliedSelectorTag else { return nil }
@@ -194,10 +196,10 @@ struct MenuBarView: View {
         .background(PendingNetTheme.Palette.canvas)
         .task {
             await engine.refresh()
-            if engine.running {
+            if engine.running && engine.takeover == "local" {
                 await state.loadControl()
             } else {
-                state.clearControlForStoppedEngine()
+                state.clearLocalControl()
             }
         }
     }

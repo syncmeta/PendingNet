@@ -719,6 +719,16 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         reply(snapshot.running, snapshot.port, snapshot.failure)
     }
 
+    func activeSelectorTag(reply: @escaping (String?) -> Void) {
+        guard engineRunning(),
+              let selector = try? String(contentsOfFile: ACTIVE_SELECTOR, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !selector.isEmpty else {
+            return reply(nil)
+        }
+        reply(selector)
+    }
+
     func interfaceVersion(reply: @escaping (Int) -> Void) {
         reply(pendingNetHelperInterfaceVersion)
     }

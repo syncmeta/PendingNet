@@ -15,7 +15,7 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 5
+public let pendingNetHelperInterfaceVersion = 6
 
 @objc public protocol HelperProtocol {
     // MARK: - Interface version 1
@@ -90,6 +90,13 @@ public let pendingNetHelperInterfaceVersion = 5
     /// app 那边照旧只从统计端口读数据 —— 它不需要知道自己处在哪种接管方式，只需要
     /// 知道现在有没有人在采、没有的话该跟用户说什么。
     func statsStatus(reply: @escaping (Bool, Int, String?) -> Void)
+
+    // MARK: - Interface version 6
+
+    /// TUN / 系统代理那份 root 引擎当前选中的 VPS selector。控制口密钥不能交给
+    /// App，所以 App 不能像「仅端口」那样直接读 `/proxies`；由 helper 返回它
+    /// 已成功应用并在每次启动时重放的 selector tag，供服务器列表画勾。
+    func activeSelectorTag(reply: @escaping (String?) -> Void)
 }
 
 /// 这一对身份从前是散在 app、助手、launchd plist、签名脚本里的字面量。

@@ -55,11 +55,15 @@ enum PendingNetConnectionWorkflow {
         if on {
             await engine.start()
             guard engine.running else { return }
-            await state.loadControl()
+            if engine.takeover == "local" {
+                await state.loadControl()
+            } else {
+                state.clearLocalControl()
+            }
             await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
         } else {
             await engine.stop()
-            if !engine.running { state.clearControlForStoppedEngine() }
+            if !engine.running { state.clearLocalControl() }
         }
     }
 
@@ -96,6 +100,21 @@ enum PendingNetConnectionWorkflow {
                 pairing.reportApplyError(engine.lastError ?? "sing-box 启动失败")
                 return
             }
+        }
+
+        // TUN / 系统代理由 helper 写配置、重启并选择 selector；它的 9090 控制口
+        // 密钥不会交给 App。旧代码仍去请求仅端口专属的 29090，选择其实已经成功，
+        // 界面却永远读不到状态，也不会画勾。
+        if engine.takeover != "local" {
+            await engine.refresh()
+            guard engine.activeSelectorTag == runtime.selectorTag else {
+                pairing.reportApplyError("配置已写入，但无法确认正在使用的 VPS")
+                return
+            }
+            pairing.markApplied(runtime)
+            state.clearLocalControl()
+            await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+            return
         }
 
         for attempt in 0..<20 {
