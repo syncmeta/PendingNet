@@ -24,12 +24,14 @@ final class AppState: ObservableObject {
 
     let provider: StatsProvider & ControlProvider
     private let defaults: UserDefaults
+    private let selectorPreferences: PendingNetSelectorPreferences
     private static let modeKey = "pendingnet.route-mode"
     private var liveTask: Task<Void, Never>?
 
     init(provider: StatsProvider & ControlProvider, defaults: UserDefaults = .standard) {
         self.provider = provider
         self.defaults = defaults
+        self.selectorPreferences = PendingNetSelectorPreferences(defaults: defaults)
         self.mode = defaults.string(forKey: Self.modeKey) ?? "Global"
     }
 
@@ -69,7 +71,22 @@ final class AppState: ObservableObject {
 
     func loadControl() async {
         do {
-            let s = try await provider.controlState()
+            var s = try await provider.controlState()
+            var restoredASelection = false
+            for (selector, selection) in selectorPreferences.restorableSelections(
+                in: s.proxies
+            ) {
+                do {
+                    try await provider.select(selector: selector, name: selection)
+                    restoredASelection = true
+                } catch {
+                    // 一台 VPS 或一种协议已经失效，不该拦住其它仍有效的选择和
+                    // 路由模式恢复。下一次配置刷新后还会重新判断它是否有效。
+                }
+            }
+            if restoredASelection {
+                s = try await provider.controlState()
+            }
             self.proxies = s.proxies
             self.modeList = s.modeList
             // 引擎跑起来了但模式不是记住的那个 —— 把记住的推过去，而不是让引擎
@@ -110,8 +127,9 @@ final class AppState: ObservableObject {
     func select(selector: String, name: String) async -> Bool {
         do {
             try await provider.select(selector: selector, name: name)
+            selectorPreferences.remember(selector: selector, selection: name)
             await loadControl()
-            return true
+            return proxies[selector]?.now == name
         } catch {
             self.lastError = String(describing: error)
             return false

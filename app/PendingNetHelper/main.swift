@@ -219,10 +219,8 @@ func enginePID() -> Int32? {
 
 /// 等 `pid` 这个进程真的消失。
 ///
-/// 看的是进程本身而不是 launchd 的 job 状态：这个 job 是 KeepAlive 的，旧实例一退
-/// launchd 可能马上拉一个新的起来，job 状态几乎不落地到「停了」。我们要确认的是
-/// 「那个握着 TUN 的进程没了」，`kill(pid, 0)` 正好回答这一句（helper 是 root，
-/// 权限不会成为噪音）。
+/// 看的是进程本身而不是 launchd 的 job 状态：我们要确认「那个握着 TUN 的进程
+/// 没了」，`kill(pid, 0)` 正好回答这一句（helper 是 root，权限不会成为噪音）。
 func waitForProcessToExit(_ pid: Int32, timeout: TimeInterval) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while kill(pid, 0) == 0 {
@@ -260,10 +258,13 @@ func restartEngineProcess() -> String? {
     }
     if daemon.changed {
         _ = launchctl(["bootout", LABEL])
-        return launchctl(["bootstrap", "system", PendingNetEngineDaemon.plistPath])
+        if let error = launchctl(
+            ["bootstrap", "system", PendingNetEngineDaemon.plistPath]
+        ) { return error }
+        return launchctl(["kickstart", LABEL])
     }
     if let error = launchctl(["kickstart", LABEL]) {
-        // KeepAlive 可能已经替我们把新实例拉起来了；那种情况下 kickstart 报什么都无所谓。
+        // 极短的竞态里旧实例可能尚未完全退出；只要新实例已经在跑就按成功处理。
         guard !engineRunning() else {
             helperLog("kickstart 报了「\(error)」，但引擎已经在跑，按成功处理")
             return nil
@@ -522,9 +523,10 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         if let error = daemon.error { return fail(error) }
         // 引擎起来之后冲一次系统 DNS 缓存——开机那几秒进去的投毒记录只有这一步清得掉。
         let failure = PendingNetDNSCacheFlush.afterEngineUp(.engineStarted, bringUp: {
-            let err = launchctl(
-                ["bootstrap", "system", PendingNetEngineDaemon.plistPath])
-            guard err == nil else { return err }
+            if let error = launchctl(
+                ["bootstrap", "system", PendingNetEngineDaemon.plistPath]
+            ) { return error }
+            if let error = launchctl(["kickstart", LABEL]) { return error }
             guard waitForEngine() else { return "sing-box 启动后未进入运行状态" }
             let configData = try? readData(path: "\(ETC)/master.json")
             if let configData,
@@ -698,6 +700,9 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         }
     }
     func status(reply: @escaping (Bool, String, String) -> Void) {
+        // 只改盘上的定义，不重启当前引擎：老版本留下的 RunAtLoad + KeepAlive
+        // 必须在下一次重启前被清掉，但用户当前这条连接不能因此中断。
+        _ = refreshEngineDaemonPlist()
         let (_, tail) = sh(["/usr/bin/tail", "-n", "5", "/var/log/sbtally-singbox.log"])
         reply(engineRunning(), currentMode(), tail)
     }

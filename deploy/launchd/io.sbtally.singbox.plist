@@ -16,9 +16,9 @@
     <key>WorkingDirectory</key>
     <string>/usr/local/etc/sbtally</string>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>/var/log/sbtally-singbox.log</string>
     <key>StandardErrorPath</key>

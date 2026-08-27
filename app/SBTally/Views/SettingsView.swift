@@ -1,17 +1,18 @@
 import SBTallyCore
 import SwiftUI
 
-/// 设置页。三张卡——端口 / 规则集 / 更新——与 iOS 侧同一套组件、同一个顺序
-/// （见 `app/PendingUI/PendingSettingsViews.swift`）。这一端多出来的只有
-/// Sparkle 那几个控件：iOS 不走 Sparkle。
+/// 设置页。端口 / 规则集 / 更新与 iOS 侧共用组件；“开机自启”和 Sparkle
+/// 更新控件只属于 macOS。
 struct SettingsView: View {
     @EnvironmentObject private var updater: PendingNetUpdateController
     @EnvironmentObject private var engine: EngineController
+    @EnvironmentObject private var startup: PendingNetStartupController
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 PendingPageHeader(title: "设置")
+                startupCard
                 PendingLocalInboundCard(
                     listenAddress: engine.localListenAddress,
                     port: engine.localProxyPort,
@@ -34,7 +35,42 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(PendingNetTheme.Palette.canvas)
-        .task { engine.refreshRuleSetPresence() }
+        .task {
+            startup.refresh()
+            engine.refreshRuleSetPresence()
+        }
+    }
+
+    private var startupCard: some View {
+        PendingSectionCard("启动") {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("开机自启", isOn: Binding(
+                    get: { startup.startsAtLogin },
+                    set: { enabled in
+                        if enabled { engine.rememberCurrentConnectionForNextLaunch() }
+                        startup.setStartsAtLogin(enabled)
+                    }
+                ))
+                .toggleStyle(.switch)
+                .tint(PendingNetTheme.Palette.accent)
+                .font(PendingNetTheme.Fonts.body)
+                .foregroundStyle(PendingNetTheme.Palette.ink)
+
+                Text("打开后，登录时恢复上次留下的连接开关、接管方式、路由、VPS 和协议。上次关着就保持关闭。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let error = startup.lastError {
+                    Text(error)
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(startup.requiresApproval
+                            ? PendingNetTheme.Palette.inkMuted
+                            : PendingNetTheme.Palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
     }
 
     private var updateCard: some View {

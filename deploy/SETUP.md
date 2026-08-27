@@ -15,7 +15,8 @@ here, at cutover — not in CI.** Do it when you're ready to switch your proxy o
 - Real per-app traffic stats (process names) in the dashboard + CLI.
 - Runtime switching of **VPS / protocol / routing mode** from the dashboard
   (Clash API — instant, no restart, no privilege).
-- TUN is always-on in the generated config, so all traffic is captured.
+- While connected in TUN mode, all traffic is captured. The App's “开机自启”
+  setting decides whether the last connection state is restored after login.
 
 Deferred to the optional privileged helper (not required for the above):
 runtime **TUN on/off** and **system-proxy** toggles, and live per-app-rule edits.

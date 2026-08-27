@@ -8,6 +8,7 @@ struct SBTallyApp: App {
     @StateObject private var engine: EngineController
     @StateObject private var vpsPairing: VPSPairingController
     @StateObject private var updater = PendingNetUpdateController()
+    @StateObject private var startup = PendingNetStartupController()
     @StateObject private var navigation = PendingNetNavigation()
     /// 短暂浮层提示。错误 / 成功消息不再常驻在卡片里，改成弹一下自动消失--
     /// 否则一条一次性的报错会一直挂在界面上，问题修好了也还在。
@@ -33,6 +34,7 @@ struct SBTallyApp: App {
                 .environmentObject(engine)
                 .environmentObject(vpsPairing)
                 .environmentObject(updater)
+                .environmentObject(startup)
                 .environmentObject(navigation)
                 .environmentObject(toast)
                 // 内容并成一张卡之后不需要那么宽；最小值仍留足侧栏 + 一排药丸
@@ -49,11 +51,13 @@ struct SBTallyApp: App {
                     // 走白名单」，比切不动更糟。`refresh()` 刚认过接管方式，所以
                     // 顺序不能反。
                     await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+                    await startup.restoreIfNeeded(engine: engine, state: state)
                     vpsPairing.refreshFromCloud()
                 }
                 // 回到前台顺手拉一次 iCloud —— 在 iPhone 上配好的 VPS 不用重开
                 // App 就能出现在列表里。iCloud 用不了时这是空操作。
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    startup.refresh()
                     vpsPairing.refreshFromCloud()
                 }
                 // 双击一份 .pdn，或者点一条 pendingnet:// 配对链接 —— 两条
@@ -97,6 +101,7 @@ struct SBTallyApp: App {
                 .environmentObject(engine)
                 .environmentObject(vpsPairing)
                 .environmentObject(updater)
+                .environmentObject(startup)
                 .environmentObject(navigation)
                 .environmentObject(toast)
                 // 主窗口关掉时，菜单栏是唯一在场的入口；引擎失败也得在这里

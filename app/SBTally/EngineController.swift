@@ -42,7 +42,8 @@ final class EngineController: ObservableObject {
     /// The helper's mode is adopted once, at first refresh with a ready helper;
     /// afterwards the user's own choice wins.
     private var didAdoptHelperMode = false
-    private let userEngine = PendingNetUserEngine()
+    private let userEngine: PendingNetUserEngine
+    private let startupPreferences: PendingNetStartupPreferences
 
     /// 本机代理端口与监听范围。设置页可改；连接页不再显示。
     @Published private(set) var localProxyPort: Int
@@ -59,9 +60,19 @@ final class EngineController: ObservableObject {
         statsDaemon = userEngine.statsDaemon.currentState()
     }
 
-    init() {
+    init(defaults: UserDefaults = .standard) {
+        userEngine = PendingNetUserEngine(defaults: defaults)
+        startupPreferences = PendingNetStartupPreferences(defaults: defaults)
         localProxyPort = userEngine.proxyPort
         allowsLAN = userEngine.allowsLAN
+    }
+
+    /// “开机自启”恢复的是用户最后一次明确留下的连接开关，不是某次崩溃后
+    /// `running` 的偶然快照。退出 App 时本地引擎会停，但这份意愿仍保持为开。
+    var shouldReconnectOnLaunch: Bool { startupPreferences.wasConnected }
+
+    func rememberCurrentConnectionForNextLaunch() {
+        startupPreferences.rememberConnected(running)
     }
 
     /// 把原始 `lastError` 翻成用户能照着做的一句话。连接页和菜单栏都靠它--
@@ -542,6 +553,7 @@ final class EngineController: ObservableObject {
                 try await userEngine.start()
                 adoptLocalEngineState()
                 running = true
+                startupPreferences.rememberConnected(true)
                 lastError = nil
                 startFailed = false
             } catch {
@@ -553,6 +565,7 @@ final class EngineController: ObservableObject {
             return
         }
         await call { p, r in p.startEngine(reply: r) }
+        if running { startupPreferences.rememberConnected(true) }
         startFailed = !running
     }
     func stop() async {
@@ -562,9 +575,11 @@ final class EngineController: ObservableObject {
             adoptLocalEngineState()
             running = false
             lastError = nil
+            startupPreferences.rememberConnected(false)
             return
         }
         await call { p, r in p.stopEngine(reply: r) }
+        if !running { startupPreferences.rememberConnected(false) }
     }
     func setTakeover(_ mode: String) async {
         guard ["local", "sysproxy", "tun"].contains(mode), mode != takeover else { return }

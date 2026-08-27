@@ -22,16 +22,15 @@ final class PendingNetEngineDaemonTests: XCTestCase {
         XCTAssertEqual(root["StandardErrorPath"] as? String, "/var/log/sbtally-singbox.log")
     }
 
-    /// 存活语义是从老脚本那份模板逐字搬过来的。这次只换引擎路径，不趁机改
-    /// 引擎「掉了要不要自己起来」——那是另一件事，改了没人会立刻发现。
-    func testKeepsTheLegacyJobSemantics() throws {
+    /// 留在 /Library/LaunchDaemons 的作业不能绕过设置页擅自开机接管。
+    func testJobOnlyStartsWhenTheAppExplicitlyStartsIt() throws {
         let job = PendingNetEngineDaemon.jobDefinition(
             enginePath: bundled,
             configPath: "/usr/local/etc/sbtally/master.json",
             workingDirectory: "/usr/local/etc/sbtally"
         )
-        XCTAssertEqual(job["RunAtLoad"] as? Bool, true)
-        XCTAssertEqual(job["KeepAlive"] as? Bool, true)
+        XCTAssertEqual(job["RunAtLoad"] as? Bool, false)
+        XCTAssertEqual(job["KeepAlive"] as? Bool, false)
     }
 
     /// 盘上那份指着哪儿要读得出来，才判断得了「现在这份已经是对的、不用重写」。

@@ -77,8 +77,10 @@ public enum PendingNetEngineDaemon {
         }
     }
 
-    /// 作业定义。`RunAtLoad` + `KeepAlive` 与老脚本那份模板逐字一致 —— 这次只换
-    /// `Program`，不趁机改引擎的存活语义。
+    /// 作业只负责提供 root 权限，不再自行决定“开机就连接”。真正的开机自启由
+    /// App 的登录项控制：App 启动后读取上次连接开关，再显式 kickstart 这份作业。
+    /// 否则一个留在 `/Library/LaunchDaemons` 的 plist 会绕过设置页，永久把机器
+    /// 拉进上次的 TUN——这正是旧版的行为。
     public static func jobDefinition(
         enginePath: String,
         configPath: String,
@@ -88,8 +90,8 @@ public enum PendingNetEngineDaemon {
             "Label": label,
             "ProgramArguments": [enginePath, "run", "-c", configPath],
             "WorkingDirectory": workingDirectory,
-            "RunAtLoad": true,
-            "KeepAlive": true,
+            "RunAtLoad": false,
+            "KeepAlive": false,
             "StandardOutPath": logPath,
             "StandardErrorPath": logPath,
         ]

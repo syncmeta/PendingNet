@@ -83,7 +83,8 @@ if [[ "${SBTALLY_NO_START:-0}" == "1" ]]; then
     Now: quit SFM, then run the switch:
 
       sudo launchctl bootout system/io.sbtally.singbox 2>/dev/null; \\
-      sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist
+      sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist; \\
+      sudo launchctl kickstart system/io.sbtally.singbox
 
     Rollback if connectivity doesn't return in ~30s: re-open SFM.
 EOF
@@ -93,6 +94,7 @@ fi
 echo "==> Starting sing-box (TUN, root). Quit SFM first if you haven't."
 sudo launchctl bootout system/io.sbtally.singbox 2>/dev/null || true
 sudo launchctl bootstrap system /Library/LaunchDaemons/io.sbtally.singbox.plist
+sudo launchctl kickstart system/io.sbtally.singbox
 
 cat <<EOF
 
