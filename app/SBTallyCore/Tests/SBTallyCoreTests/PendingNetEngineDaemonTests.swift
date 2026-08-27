@@ -120,6 +120,51 @@ final class PendingNetEngineDaemonTests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
+    func testPreparingExistingConfigsMigratesOnlyLegacyLocalDNS() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-root-dns-migration-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let legacy = Data(#"""
+        {
+          "dns": {
+            "servers": [{"type":"local","tag":"dns-local"}],
+            "rules": [{"rule_set":["geosite-cn"],"server":"dns-local"}]
+          },
+          "route": {"rules":[{"action":"resolve","server":"dns-local"}]},
+          "inbounds": [{"type":"mixed","listen_port":2080}],
+          "outbounds": [{"type":"selector","tag":"kept-vps"}],
+          "custom": {"kept":true}
+        }
+        """#.utf8)
+        try Data("existing-secret\n".utf8).write(
+            to: directory.appendingPathComponent("control-secret"))
+        for name in ["master-tun.json", "master-notun.json", "master.json"] {
+            try legacy.write(to: directory.appendingPathComponent(name))
+        }
+
+        try PendingNetEngineDaemon.prepareConfigDirectory(
+            at: directory.path,
+            preferredMode: "tun",
+            makeControlSecret: { "must-not-be-used" }
+        )
+
+        for name in ["master-tun.json", "master-notun.json", "master.json"] {
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: Data(contentsOf: directory.appendingPathComponent(name))) as? [String: Any])
+            XCTAssertEqual((root["custom"] as? [String: Bool])?["kept"], true)
+            XCTAssertEqual((root["outbounds"] as? [[String: Any]])?.first?["tag"] as? String,
+                           "kept-vps")
+            let dns = try XCTUnwrap(root["dns"] as? [String: Any])
+            let servers = try XCTUnwrap(dns["servers"] as? [[String: Any]])
+            XCTAssertNotNil(servers.first { $0["tag"] as? String == "dns-direct" })
+            XCTAssertNil(servers.first { $0["tag"] as? String == "dns-local" })
+        }
+        XCTAssertEqual(try String(
+            contentsOf: directory.appendingPathComponent("control-secret"), encoding: .utf8),
+            "existing-secret\n")
+    }
+
     func testLegacyMasterSeedsMissingVariantsWithoutLosingOutbounds() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pendingnet-root-legacy-\(UUID().uuidString)", isDirectory: true)

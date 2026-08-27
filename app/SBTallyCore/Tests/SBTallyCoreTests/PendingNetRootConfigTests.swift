@@ -58,6 +58,57 @@ final class PendingNetRootConfigTests: XCTestCase {
         }
     }
 
+    func testDomesticDNSUsesExplicitDirectResolver() throws {
+        let root = try Self.root(PendingNetRootConfig.make(
+            enableTUN: true,
+            controlSecret: "root-secret",
+            cachePath: "/usr/local/etc/sbtally/cache.db"
+        ))
+        let dns = try XCTUnwrap(root["dns"] as? [String: Any])
+        let servers = try XCTUnwrap(dns["servers"] as? [[String: Any]])
+        let direct = try XCTUnwrap(servers.first { $0["tag"] as? String == "dns-direct" })
+        XCTAssertEqual(direct["type"] as? String, "udp")
+        XCTAssertEqual(direct["server"] as? String, "223.5.5.5")
+        XCTAssertEqual(direct["server_port"] as? Int, 53)
+        XCTAssertEqual(direct["detour"] as? String, "direct")
+        XCTAssertFalse(servers.contains { $0["type"] as? String == "local" })
+
+        let dnsRules = try XCTUnwrap(dns["rules"] as? [[String: Any]])
+        XCTAssertEqual(dnsRules.first?["server"] as? String, "dns-direct")
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        let routeRules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+        XCTAssertFalse(routeRules.contains { $0["server"] as? String == "dns-local" })
+        XCTAssertTrue(routeRules.contains { $0["server"] as? String == "dns-direct" })
+    }
+
+    func testMigratesOnlyExactLegacyLocalDNSAndKeepsOtherPolicy() throws {
+        let legacy = Data(#"""
+        {
+          "dns": {
+            "servers": [
+              {"type":"https","tag":"dns-proxy","server":"1.1.1.1"},
+              {"type":"local","tag":"dns-local"}
+            ],
+            "rules": [{"rule_set":["geosite-cn"],"server":"dns-local"}]
+          },
+          "route": {"rules":[{"action":"resolve","server":"dns-local"}]},
+          "outbounds": [{"type":"selector","tag":"kept-vps"}],
+          "custom": {"kept":true}
+        }
+        """#.utf8)
+        let migrated = try Self.root(PendingNetRootConfig.migratingLegacyLocalDNS(in: legacy))
+        XCTAssertEqual((migrated["custom"] as? [String: Bool])?["kept"], true)
+        XCTAssertEqual((migrated["outbounds"] as? [[String: Any]])?.first?["tag"] as? String,
+                       "kept-vps")
+        let dns = try XCTUnwrap(migrated["dns"] as? [String: Any])
+        let servers = try XCTUnwrap(dns["servers"] as? [[String: Any]])
+        XCTAssertNotNil(servers.first { $0["tag"] as? String == "dns-direct" })
+        XCTAssertNil(servers.first { $0["tag"] as? String == "dns-local" })
+
+        let customized = Data(#"{"dns":{"servers":[{"type":"local","tag":"dns-local","prefer_go":true}]}}"#.utf8)
+        XCTAssertEqual(try PendingNetRootConfig.migratingLegacyLocalDNS(in: customized), customized)
+    }
+
     func testVariantPreservesExistingPolicy() throws {
         let source = Data(#"{"inbounds":[{"type":"tun","tag":"old"},{"type":"mixed","listen_port":3128}],"outbounds":[{"type":"direct","tag":"custom"}],"custom":{"kept":true}}"#.utf8)
         let noTun = try Self.root(PendingNetRootConfig.variant(from: source, enableTUN: false))

@@ -51,9 +51,15 @@ public enum PendingNetRootConfig {
                         "path": "/dns-query",
                         "detour": "proxy",
                     ],
-                    ["type": "local", "tag": "dns-local"],
+                    [
+                        "type": "udp",
+                        "tag": "dns-direct",
+                        "server": "223.5.5.5",
+                        "server_port": 53,
+                        "detour": "direct",
+                    ],
                 ],
-                "rules": [["rule_set": ["geosite-cn"], "server": "dns-local"]],
+                "rules": [["rule_set": ["geosite-cn"], "server": "dns-direct"]],
                 "final": "dns-proxy",
                 "strategy": "prefer_ipv4",
             ],
@@ -90,13 +96,63 @@ public enum PendingNetRootConfig {
     /// 老安装如果只有 `master.json`，这样补齐两份变体不会丢掉它已有的 VPS、规则、
     /// 控制密钥或其它本机策略。
     public static func variant(from data: Data, enableTUN: Bool) throws -> Data {
-        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let migrated = try migratingLegacyLocalDNS(in: data)
+        guard var root = try JSONSerialization.jsonObject(with: migrated) as? [String: Any],
               var inbounds = root["inbounds"] as? [[String: Any]] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
         inbounds.removeAll { $0["type"] as? String == "tun" }
         if enableTUN { inbounds.insert(tunInbound, at: 0) }
         root["inbounds"] = inbounds
+        return try encode(root)
+    }
+
+    /// 升级旧 root 配置时，只替换 PendingNet 曾经生成的那一个裸 `dns-local`。
+    /// 它在 macOS TUN 下依赖 DHCP / 系统 resolver；系统 DNS 被 TUN 接管后可能根本
+    /// 取不到上游，国内域名便在白名单直连规则生效前卡死。改为固定 IP 的国内 UDP
+    /// 上游，并明确从 `direct` 出口拨号，既不需要先解析 DNS 服务器本身，也不会
+    /// 递归回到 TUN 的 DNS 劫持。
+    ///
+    /// 只有 server 恰好仍是旧生成器的 `{type, tag}` 两个字段时才迁移；用户给
+    /// `dns-local` 加过其它设置即视为自定义，原样保留。VPS、规则集和其它策略均不动。
+    public static func migratingLegacyLocalDNS(in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        guard var dns = root["dns"] as? [String: Any],
+              var servers = dns["servers"] as? [[String: Any]],
+              let legacyIndex = servers.firstIndex(where: {
+                  $0["type"] as? String == "local"
+                      && $0["tag"] as? String == "dns-local"
+                      && Set($0.keys) == Set(["type", "tag"])
+              }) else {
+            return data
+        }
+
+        servers[legacyIndex] = [
+            "type": "udp",
+            "tag": "dns-direct",
+            "server": "223.5.5.5",
+            "server_port": 53,
+            "detour": "direct",
+        ]
+        dns["servers"] = servers
+        if var rules = dns["rules"] as? [[String: Any]] {
+            for index in rules.indices where rules[index]["server"] as? String == "dns-local" {
+                rules[index]["server"] = "dns-direct"
+            }
+            dns["rules"] = rules
+        }
+        root["dns"] = dns
+
+        if var route = root["route"] as? [String: Any],
+           var rules = route["rules"] as? [[String: Any]] {
+            for index in rules.indices where rules[index]["server"] as? String == "dns-local" {
+                rules[index]["server"] = "dns-direct"
+            }
+            route["rules"] = rules
+            root["route"] = route
+        }
         return try encode(root)
     }
 
@@ -114,7 +170,7 @@ public enum PendingNetRootConfig {
         [
             "rule_set": ["geosite-cn"],
             "action": "resolve",
-            "server": "dns-local",
+            "server": "dns-direct",
             "strategy": "prefer_ipv4",
         ],
         ["action": "resolve", "strategy": "prefer_ipv4"],

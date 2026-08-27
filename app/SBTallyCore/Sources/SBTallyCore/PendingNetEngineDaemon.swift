@@ -54,6 +54,18 @@ public enum PendingNetEngineDaemon {
         let tunURL = directory.appendingPathComponent(PendingNetRootConfig.tunFilename)
         let noTunURL = directory.appendingPathComponent(PendingNetRootConfig.noTunFilename)
         let masterURL = directory.appendingPathComponent(PendingNetRootConfig.activeFilename)
+
+        // 旧版生成的 `dns-local` 在 macOS TUN 下可能拿不到 DHCP / 系统 DNS，
+        // 导致白名单中的国内域名全部解析超时。这里只迁移那一个精确的旧形状，
+        // 不用新基线覆盖用户已有的 VPS、路由和规则集。
+        for url in [masterURL, tunURL, noTunURL] where fileManager.fileExists(atPath: url.path) {
+            let existing = try Data(contentsOf: url)
+            let migrated = try PendingNetRootConfig.migratingLegacyLocalDNS(in: existing)
+            if migrated != existing {
+                try migrated.write(to: url, options: .atomic)
+            }
+        }
+
         let existingBase = [masterURL, tunURL, noTunURL].compactMap {
             try? Data(contentsOf: $0)
         }.first
