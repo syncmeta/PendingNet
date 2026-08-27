@@ -29,6 +29,7 @@ app_name=PendingNet
 key_account=net.pending.PendingNet
 : "${PENDING_NOTARY_PROFILE:?set the notarytool Keychain profile}"
 
+# shellcheck disable=SC1007  # CDPATH= 是清空它，不是笔误
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 feed_url="https://updates.pendingname.com/$product/appcast.xml"
 download_prefix="https://updates.pendingname.com/$product/"
@@ -87,9 +88,15 @@ mkdir -p "$release_dir"
 cd "$snap/src/app"
 xcodegen generate
 xcodebuild -project "$app_name.xcodeproj" -scheme "$app_name" -configuration Release \
-  -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
+  ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
 
 /usr/bin/ditto "$derived/Build/Products/Release/$app_name.app" "$app"
+
+# “主程序是 universal”不等于“这个 App 支持 Intel”。helper、统计器、sing-box，
+# 以及 Sparkle 内嵌的可执行件有任意一个缺 x86_64，都会在安装后某一步才炸。
+# 在签名、公证之前把整个 bundle 的 Mach-O 全扫一遍，半通用包不许进入发布链。
+"$snap/src/scripts/verify-macos-universal.sh" "$app"
 
 # 无公钥的包 = 永远收不到更新的死包。generate_appcast 对缺钥静默跳过签名，
 # 客户端对缺钥静默不启动 —— 两端都安静，只能在这里拦。

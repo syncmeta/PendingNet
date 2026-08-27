@@ -195,6 +195,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pendingname.pendingnet.helper
         PRODUCT_NAME: PendingNetHelper
+      # Release 包同时服务 Apple Silicon 和 Intel。只给主 App 设 ARCHS 不够：
+      # helper 是独立 Mach-O，漏掉它会得到一个“App 能启动、切到 TUN 才失败”的
+      # 半通用包。
+      configs:
+        Release:
+          ARCHS: "arm64 x86_64"
+          ONLY_ACTIVE_ARCH: "NO"
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
@@ -277,6 +284,12 @@ targets:
         # 就直接失败——而发布路径因为一直显式传 CODE_SIGNING_ALLOWED=NO，
         # 反而看不出问题。
         CODE_SIGNING_ALLOWED: "NO"
+      # 发布产物必须是 universal2；包内 helper / Go 工具也分别有同样的约束或
+      # 跟随这个 ARCHS 构建（见 PendingNetHelper target 与 embed-*.sh）。
+      configs:
+        Release:
+          ARCHS: "arm64 x86_64"
+          ONLY_ACTIVE_ARCH: "NO"
     dependencies:
       - package: SBTallyCore
         product: SBTallyCore
