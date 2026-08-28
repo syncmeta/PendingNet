@@ -232,7 +232,7 @@ final class PendingNetLatencyTests: XCTestCase {
         })
         await tester.measure(record(endpoint: "这不是地址"))
         XCTAssertFalse(probed)
-        XCTAssertEqual(tester.outcome(for: "s1")?.failureText?.contains(".pdn"), true)
+        XCTAssertEqual(tester.outcome(for: "s1")?.failureText?.contains("重新导入"), true)
     }
 
     @MainActor

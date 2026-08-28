@@ -123,7 +123,7 @@ public enum PendingNetLatencyFailure {
         if let latencyError = error as? PendingNetLatencyError {
             switch latencyError {
             case .unresolvableAddress:
-                return "这台 VPS 的地址读不出来，重新导入它的 .pdn 就好"
+                return "这台 VPS 的地址读不出来，请重新导入它的链接"
             case .timedOut:
                 return "连接超时：\(target.port) 端口一直没有回应，可能被防火墙拦住了"
             }
@@ -214,17 +214,17 @@ public final class PendingNetLatencyTester: ObservableObject {
 public enum PendingNetTCPProbe {
     /// 一次 TCP 连接建立所花的时间，毫秒。
     ///
-    /// `prohibitedInterfaceTypes = [.other]` 是要紧的一笔：隧道 / VPN 接口正是
-    /// `.other`，不挡住的话隧道一开，这个探测自己就会被路进隧道，测出来的是
-    /// 「经代理再绕回 VPS」的往返，和隧道没开时的数字根本不可比。NWConnection
-    /// 本身不认系统 HTTP 代理，所以那一头不用另外挡。
+    /// 这里必须服从系统当前路由。不能用 `prohibitedInterfaceTypes = [.other]`
+    /// 排除 TUN：VPN 已接管默认路由时 Network.framework 不会因此自动改走物理
+    /// 网卡，只会直接报 `ENETDOWN`，于是连接状态下所有 VPS 都显示「不通」。
+    /// sing-box 已把自己的服务器端点排除在代理回环之外；系统代理模式下
+    /// NWConnection 也不会套用 HTTP 代理，因此直接按当前路由握手即可。
     public static let handshake: PendingNetLatencyTester.Probe = { host, port, timeout in
         guard let rawPort = UInt16(exactly: port),
               let endpointPort = NWEndpoint.Port(rawValue: rawPort) else {
             throw PendingNetLatencyError.unresolvableAddress
         }
         let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
-        parameters.prohibitedInterfaceTypes = [.other]
 
         let connection = NWConnection(
             host: NWEndpoint.Host(host),
