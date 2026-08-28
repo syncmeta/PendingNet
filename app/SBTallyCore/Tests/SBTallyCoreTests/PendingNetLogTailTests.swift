@@ -32,4 +32,36 @@ final class PendingNetLogTailTests: XCTestCase {
             ""
         )
     }
+
+    func testSnapshotCapsShortLinesAndReportsOriginalFileSize() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-log-tail-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let contents = "one\ntwo\nthree\nfour"
+        try Data(contents.utf8).write(to: url)
+
+        let snapshot = try PendingNetLogTail.snapshot(
+            path: url.path,
+            maximumBytes: 1_024,
+            maximumLines: 2
+        )
+        XCTAssertEqual(snapshot.lines, ["three", "four"])
+        XCTAssertEqual(snapshot.fileSize, UInt64(contents.utf8.count))
+        XCTAssertTrue(snapshot.isTruncated)
+    }
+
+    func testSnapshotByteLimitStillDropsPartialFirstLine() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pendingnet-log-tail-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("discard-this-line\nkeep-one\nkeep-two\n".utf8).write(to: url)
+
+        let snapshot = try PendingNetLogTail.snapshot(
+            path: url.path,
+            maximumBytes: 23,
+            maximumLines: 100
+        )
+        XCTAssertEqual(snapshot.lines, ["keep-one", "keep-two", ""])
+        XCTAssertTrue(snapshot.isTruncated)
+    }
 }

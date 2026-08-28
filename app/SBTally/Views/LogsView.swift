@@ -40,9 +40,11 @@ private enum PendingNetLogSource: String, CaseIterable, Identifiable {
 struct LogsView: View {
     @EnvironmentObject private var engine: EngineController
     @State private var source: PendingNetLogSource = .engine
-    @State private var text = ""
+    @State private var lines: [String] = []
+    @State private var summary = ""
     @State private var error: String?
     @State private var loadedPath = ""
+    @State private var loading = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -57,25 +59,37 @@ struct LogsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 292)
                 Button {
-                    load()
+                    Task { await load() }
                 } label: {
                     Label("刷新", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(PendingQuietButtonStyle())
+                .disabled(loading)
             }
 
-            Text(verbatim: loadedPath)
-                .font(PendingNetTheme.Fonts.caption.monospaced())
-                .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                .textSelection(.enabled)
-                .lineLimit(2)
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(verbatim: loadedPath)
+                    .font(PendingNetTheme.Fonts.caption.monospaced())
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                if loading {
+                    ProgressView().controlSize(.small)
+                } else if !summary.isEmpty {
+                    Text(summary)
+                        .font(PendingNetTheme.Fonts.caption)
+                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                        .lineLimit(1)
+                }
+            }
 
             logContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(PendingNetTheme.Metrics.gutter)
         .background(PendingNetTheme.Palette.canvas)
-        .task(id: "\(source.rawValue)-\(engine.takeover)") { load() }
+        .task(id: "\(source.rawValue)-\(engine.takeover)") { await load() }
     }
 
     @ViewBuilder
@@ -86,7 +100,7 @@ struct LogsView: View {
                 systemImage: "doc.text.magnifyingglass",
                 description: Text(error)
             )
-        } else if text.isEmpty {
+        } else if lines.isEmpty {
             ContentUnavailableView(
                 "日志为空",
                 systemImage: "doc.text",
@@ -94,12 +108,17 @@ struct LogsView: View {
             )
         } else {
             ScrollView([.horizontal, .vertical]) {
-                Text(text)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(PendingNetTheme.Palette.ink)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(12)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        Text(verbatim: lines[index].isEmpty ? " " : lines[index])
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(PendingNetTheme.Palette.ink)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(12)
             }
             .background(PendingNetTheme.Palette.surface)
             .clipShape(RoundedRectangle(
@@ -116,17 +135,31 @@ struct LogsView: View {
         }
     }
 
-    private func load() {
+    @MainActor
+    private func load() async {
         let path = source.path(takeover: engine.takeover)
         loadedPath = path
+        loading = true
+        defer { if loadedPath == path { loading = false } }
         do {
-            text = try PendingNetLogTail.read(path: path)
+            let snapshot = try await Task.detached(priority: .userInitiated) {
+                try PendingNetLogTail.snapshot(path: path)
+            }.value
+            guard loadedPath == path else { return }
+            lines = snapshot.lines
+            summary = snapshot.isTruncated
+                ? "最近 \(snapshot.lines.count) 行 · 文件 \(humanBytes(Int64(clamping: snapshot.fileSize)))"
+                : "\(snapshot.lines.count) 行 · \(humanBytes(Int64(clamping: snapshot.fileSize)))"
             error = nil
         } catch CocoaError.fileReadNoSuchFile {
-            text = ""
+            guard loadedPath == path else { return }
+            lines = []
+            summary = ""
             error = "还没有生成这份日志。"
         } catch let readError {
-            text = ""
+            guard loadedPath == path else { return }
+            lines = []
+            summary = ""
             error = readError.localizedDescription
         }
     }

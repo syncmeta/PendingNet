@@ -2,7 +2,20 @@ import Foundation
 
 /// 有界读取诊断日志的末尾。root 引擎日志历史上曾长到 160 MB，日志页不能整份加载。
 public enum PendingNetLogTail {
-    public static let defaultMaximumBytes = 512 * 1024
+    public static let defaultMaximumBytes = 128 * 1024
+    public static let defaultMaximumLines = 1_000
+
+    public struct Snapshot: Equatable, Sendable {
+        public let lines: [String]
+        public let fileSize: UInt64
+        public let isTruncated: Bool
+
+        public init(lines: [String], fileSize: UInt64, isTruncated: Bool) {
+            self.lines = lines
+            self.fileSize = fileSize
+            self.isTruncated = isTruncated
+        }
+    }
 
     public static func read(
         path: String,
@@ -31,6 +44,29 @@ public enum PendingNetLogTail {
             of: "\u{001B}\\[[0-9;]*m",
             with: "",
             options: .regularExpression
+        )
+    }
+
+    /// 日志页专用的有界快照。字节上限避免读入巨型文件，行数上限避免 SwiftUI
+    /// 即使面对很多极短行也一次创建成千上万个文本节点。
+    public static func snapshot(
+        path: String,
+        maximumBytes: Int = defaultMaximumBytes,
+        maximumLines: Int = defaultMaximumLines,
+        fileManager: FileManager = .default
+    ) throws -> Snapshot {
+        guard maximumBytes > 0, maximumLines > 0 else {
+            return Snapshot(lines: [], fileSize: 0, isTruncated: false)
+        }
+        let attributes = try fileManager.attributesOfItem(atPath: path)
+        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
+        let text = try read(path: path, maximumBytes: maximumBytes, fileManager: fileManager)
+        let allLines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let lines = Array(allLines.suffix(maximumLines))
+        return Snapshot(
+            lines: lines,
+            fileSize: size,
+            isTruncated: size > UInt64(maximumBytes) || allLines.count > maximumLines
         )
     }
 }
