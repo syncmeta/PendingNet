@@ -56,7 +56,6 @@ public enum PendingNetRootConfig {
                         "tag": "dns-direct",
                         "server": "223.5.5.5",
                         "server_port": 53,
-                        "detour": "direct",
                     ],
                 ],
                 "rules": [["rule_set": ["geosite-cn"], "server": "dns-direct"]],
@@ -110,8 +109,9 @@ public enum PendingNetRootConfig {
     /// 升级旧 root 配置时，只替换 PendingNet 曾经生成的那一个裸 `dns-local`。
     /// 它在 macOS TUN 下依赖 DHCP / 系统 resolver；系统 DNS 被 TUN 接管后可能根本
     /// 取不到上游，国内域名便在白名单直连规则生效前卡死。改为固定 IP 的国内 UDP
-    /// 上游，并明确从 `direct` 出口拨号，既不需要先解析 DNS 服务器本身，也不会
-    /// 递归回到 TUN 的 DNS 劫持。
+    /// 上游，既不需要先解析 DNS 服务器本身，也不会依赖系统 resolver。这里不能写
+    /// `detour: direct`：空的 direct outbound 不是有效 detour，sing-box 的 `check`
+    /// 虽会放过，但真实 `run` 会拒绝启动；省略 detour 才是默认直连拨号器。
     ///
     /// 只有 server 恰好仍是旧生成器的 `{type, tag}` 两个字段时才迁移；用户给
     /// `dns-local` 加过其它设置即视为自定义，原样保留。VPS、规则集和其它策略均不动。
@@ -134,7 +134,6 @@ public enum PendingNetRootConfig {
             "tag": "dns-direct",
             "server": "223.5.5.5",
             "server_port": 53,
-            "detour": "direct",
         ]
         dns["servers"] = servers
         if var rules = dns["rules"] as? [[String: Any]] {

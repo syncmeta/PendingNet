@@ -70,7 +70,7 @@ final class PendingNetRootConfigTests: XCTestCase {
         XCTAssertEqual(direct["type"] as? String, "udp")
         XCTAssertEqual(direct["server"] as? String, "223.5.5.5")
         XCTAssertEqual(direct["server_port"] as? Int, 53)
-        XCTAssertEqual(direct["detour"] as? String, "direct")
+        XCTAssertNil(direct["detour"])
         XCTAssertFalse(servers.contains { $0["type"] as? String == "local" })
 
         let dnsRules = try XCTUnwrap(dns["rules"] as? [[String: Any]])
