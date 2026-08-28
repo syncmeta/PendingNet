@@ -2,13 +2,12 @@
 """生成 macOS 菜单栏图标资源 PendingNetMenuBarIcon。
 
 复用 make-app-icon.py 产出的两层 Icon-Composer SVG（前景主箭头 + 次要箭头），
-拼成一张图，按明暗两种外观各渲染一份 PNG。菜单栏资源固定为纯白色，
-不再沿用 app 图标的绿/灰品牌色；两个外观槽保持相同，避免系统切换外观后
-图标颜色发生变化。
+拼成一张图，按明暗两种外观各渲染一份 PNG。资源使用单色 alpha 蒙版，并在
+asset catalog 中标成 template；macOS 会按菜单栏背景自动选择可见的前景色。
 
 菜单栏图标**不**画底色圆角方块：浅色菜单栏上白底看不出边界（见
 make-app-icon.py 同类注释），系统又不会替菜单栏里的普通图片画 squircle /
-投影，所以这里只给两层箭头本身，靠明暗变体保证两种菜单栏背景下都可见。
+投影，所以这里只给两层箭头本身，靠系统的 template tint 保证各种背景下可见。
 
 **尺寸必须在这里定死，不能指望 SwiftUI 侧收拾。** `MenuBarExtra` 的 label 只
 取原样的 Text / Image，加在上面的 `.resizable()` `.frame()` 一律被丢掉 ——
@@ -135,7 +134,11 @@ def main() -> None:
                 "scale": f"{scale}x",
                 "appearances": [{"appearance": "luminosity", "value": value}],
             })
-    contents = {"images": images, "info": {"author": "xcode", "version": 1}}
+    contents = {
+        "images": images,
+        "info": {"author": "xcode", "version": 1},
+        "properties": {"template-rendering-intent": "template"},
+    }
     (OUT / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
     print(f"生成 {OUT}")
 

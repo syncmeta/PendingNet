@@ -60,8 +60,7 @@ struct SBTallyApp: App {
                     startup.refresh()
                     vpsPairing.refreshFromCloud()
                 }
-                // 双击一份 .pdn，或者点一条 pendingnet:// 配对链接 —— 两条
-                // 路进来的都走同一条配对流程，认不出来的 URL 一律不理。
+                // 点一条 pendingnet:// 配对链接就直接导入。
                 .onOpenURL { url in
                     Task {
                         await PendingNetConnectionWorkflow.importAndConnect(
@@ -113,8 +112,9 @@ struct SBTallyApp: App {
                     PendingToastOverlay(center: toast)
                 }
         } label: {
-            // 用 PendingNet 的应用图标（PendingNetMenuBarIcon，明暗两套变体），
-            // 不再用 SF Symbol 的 network 图标。停止时半透明，保留一眼可辨的连接状态。
+            // 用 PendingNet 的模板图标，不再用 SF Symbol 的 network 图标。模板由
+            // 系统按菜单栏背景自动着色；资源本身不能固定成白色，否则浅色菜单栏
+            // 上会看起来像「没有图标」。停止时半透明，保留一眼可辨的连接状态。
             //
             // 这里**不要**加 `.resizable()` / `.frame()`：`MenuBarExtra` 的 label
             // 只取原样的 Image 去做状态栏项，布局修饰符会被丢掉。0.3.29 就是这么
@@ -125,6 +125,7 @@ struct SBTallyApp: App {
             //
             // `.opacity` 同理可能被丢掉，留着是因为它生效时更好、失效也不比现状差。
             Image("PendingNetMenuBarIcon")
+                .renderingMode(.template)
                 .opacity(engine.running ? 1.0 : 0.5)
         }
         .menuBarExtraStyle(.window)
