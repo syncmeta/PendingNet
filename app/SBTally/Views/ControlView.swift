@@ -1,6 +1,5 @@
 import SBTallyCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ControlView: View {
     @EnvironmentObject private var state: AppState
@@ -10,7 +9,6 @@ struct ControlView: View {
     /// `PendingNetLatencyTarget`）：到这台 VPS 代理入口的 TCP 握手往返时间。
     @StateObject private var latency = PendingNetLatencyTester()
 
-    @State private var showingPairingImporter = false
     @State private var showingPasteImport = false
     @State private var detailServerID: String?
 
@@ -60,26 +58,6 @@ struct ControlView: View {
                 await state.loadControl()
             } else {
                 state.clearLocalControl()
-            }
-        }
-        .fileImporter(
-            isPresented: $showingPairingImporter,
-            allowedContentTypes: [UTType(filenameExtension: "pdn") ?? .json],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                Task {
-                    await PendingNetConnectionWorkflow.importAndConnect(
-                        url: url,
-                        pairing: vpsPairing,
-                        engine: engine,
-                        state: state
-                    )
-                }
-            case .failure(let error):
-                vpsPairing.lastError = error.localizedDescription
             }
         }
         .sheet(isPresented: $showingPasteImport) {
@@ -202,27 +180,11 @@ struct ControlView: View {
                         ))
                         .disabled(latency.busy || vpsPairing.pairing)
                 }
-                Button("粘贴链接") { showingPasteImport = true }
+                Button("导入") { showingPasteImport = true }
                     .buttonStyle(PendingQuietButtonStyle(
                         fill: PendingNetTheme.Palette.surface
                     ))
                     .disabled(vpsPairing.pairing)
-                Button {
-                    showingPairingImporter = true
-                } label: {
-                    if vpsPairing.pairing {
-                        HStack(spacing: 7) {
-                            ProgressView().controlSize(.small)
-                            Text("正在配对…")
-                        }
-                    } else {
-                        Label("导入 .pdn", systemImage: "square.and.arrow.down")
-                    }
-                }
-                .buttonStyle(PendingQuietButtonStyle(
-                    fill: PendingNetTheme.Palette.surface
-                ))
-                .disabled(vpsPairing.pairing)
             }
 
             PendingVPSList(

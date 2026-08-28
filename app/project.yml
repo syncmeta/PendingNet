@@ -69,10 +69,6 @@ targets:
       - path: PendingUI
       # 与 macOS 共用同一份分层图标（见 scripts/make-app-icon.py）
       - path: PendingNet.icon
-    # 与 macOS 那份**逐字相同**的 .pdn 类型声明（见下面 PendingNet target）。
-    # 少了它，系统根本不知道 PendingNet 认识这个后缀：「文件」里点开没反应，
-    # AirDrop 过来也不给选这个 App，只能进 App 里手动点导入。
-    #
     # CFBundleDisplayName 不写在这里 —— iOS 侧走的是 INFOPLIST_KEY_ 那条路
     # （见下面 settings），两处都写等于同一个键有两个来源。
     info:
@@ -103,35 +99,12 @@ targets:
         # 隐私范畴：没有这句话系统连授权弹窗都不弹，功能就是打开了也不通，
         # 而且不报错。审核那边也会问这个功能凭什么要本地网络权限。
         NSLocalNetworkUsageDescription: 打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。
-        # 点一条 pendingnet:// 配对链接就唤起导入。链接是 .pdn 之外的第二种
-        # 形态（同一份凭据、整体 base64url 塞在 d 参数里），聊天软件里传得动、
-        # 从手机传到电脑也不用挪文件。只有声明了这个 scheme，系统才会把链接
-        # 交给我们；不声明的话点了就是「无法打开」。
+        # 点一条 pendingnet:// 配对链接就唤起导入。
         CFBundleURLTypes:
           - CFBundleURLName: com.pendingname.pendingnet.pairing
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - pendingnet
-        CFBundleDocumentTypes:
-          - CFBundleTypeName: PendingNet Pairing
-            CFBundleTypeRole: Editor
-            LSHandlerRank: Owner
-            LSItemContentTypes:
-              - com.pendingname.pdn
-        UTImportedTypeDeclarations:
-          - UTTypeIdentifier: com.pendingname.pdn
-            UTTypeDescription: PendingNet Pairing
-            UTTypeConformsTo:
-              - public.json
-            UTTypeTagSpecification:
-              public.filename-extension:
-                - pdn
-              public.mime-type: application/vnd.pendingnet.pairing+json
-        # 故意**不**支持就地打开：这样系统会把文件拷一份进 App 的 Inbox，
-        # 我们读完就把那份拷贝删掉（见 PendingNetIOSApp 的 onOpenURL）。
-        # 就地打开意味着去碰用户 iCloud 云盘里的原件，而我们对这个文件只有
-        # 「读一次」这一个诉求，拿不到删除它的正当理由。
-        LSSupportsOpeningDocumentsInPlace: false
     entitlements:
       path: PendingNetIOS/PendingNetIOS.entitlements
       properties:
@@ -229,30 +202,12 @@ targets:
         CFBundleDisplayName: PendingNet
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        # 点一条 pendingnet:// 配对链接就唤起导入。链接是 .pdn 之外的第二种
-        # 形态（同一份凭据、整体 base64url 塞在 d 参数里），聊天软件里传得动、
-        # 从手机传到电脑也不用挪文件。只有声明了这个 scheme，系统才会把链接
-        # 交给我们；不声明的话点了就是「无法打开」。
+        # 点一条 pendingnet:// 配对链接就唤起导入。
         CFBundleURLTypes:
           - CFBundleURLName: com.pendingname.pendingnet.pairing
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - pendingnet
-        CFBundleDocumentTypes:
-          - CFBundleTypeName: PendingNet Pairing
-            CFBundleTypeRole: Editor
-            LSHandlerRank: Owner
-            LSItemContentTypes:
-              - com.pendingname.pdn
-        UTImportedTypeDeclarations:
-          - UTTypeIdentifier: com.pendingname.pdn
-            UTTypeDescription: PendingNet Pairing
-            UTTypeConformsTo:
-              - public.json
-            UTTypeTagSpecification:
-              public.filename-extension:
-                - pdn
-              public.mime-type: application/vnd.pendingnet.pairing+json
         SUFeedURL: $(PENDINGNET_UPDATE_FEED_URL)
         SUPublicEDKey: iVYT89UTxhljv5zkk6Si7C1TFOZJPUFmb/ysQufwHGY=
         SUEnableAutomaticChecks: true

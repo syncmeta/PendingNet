@@ -101,20 +101,26 @@ public extension PendingNetNodeProfile {
                 guard let node = item.hysteria2 else {
                     throw PendingNetRuntimeConfigError.malformedProtocol(item.id)
                 }
-                return [
+                var tls: [String: Any] = [
+                    "enabled": true,
+                    "server_name": node.serverName,
+                    "insecure": true,
+                ]
+                if !node.certificatePublicKeySHA256.isEmpty {
+                    tls["certificate_public_key_sha256"] = [node.certificatePublicKeySHA256]
+                }
+                var outbound: [String: Any] = [
                     "type": "hysteria2",
                     "tag": tag,
                     "server": node.server,
                     "server_port": node.serverPort,
                     "password": node.password,
-                    "obfs": ["type": node.obfsType, "password": node.obfsPassword],
-                    "tls": [
-                        "enabled": true,
-                        "server_name": node.serverName,
-                        "insecure": true,
-                        "certificate_public_key_sha256": [node.certificatePublicKeySHA256],
-                    ],
+                    "tls": tls,
                 ]
+                if !node.obfsType.isEmpty {
+                    outbound["obfs"] = ["type": node.obfsType, "password": node.obfsPassword]
+                }
+                return outbound
             default:
                 throw PendingNetRuntimeConfigError.unsupportedProtocol(item.type)
             }

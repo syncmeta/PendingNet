@@ -3,17 +3,7 @@ import SBTallyCore
 
 @MainActor
 enum PendingNetConnectionWorkflow {
-    static func importAndConnect(
-        url: URL,
-        pairing: VPSPairingController,
-        engine: EngineController,
-        state: AppState
-    ) async {
-        guard let runtime = await pairing.importAndEnroll(url: url) else { return }
-        await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
-    }
-
-    /// 用户粘进来的一段文本：一条 `pendingnet://` 配对链接，或者 `.pdn` 原文。
+    /// 用户粘进来的节点分享链接；支持一行一个批量导入。
     static func importAndConnect(
         pasted text: String,
         pairing: VPSPairingController,
@@ -24,22 +14,13 @@ enum PendingNetConnectionWorkflow {
         await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
     }
 
-    /// 系统从外面递进来的一个 URL：双击的 `.pdn`，或者点开的 `pendingnet://`
-    /// 配对链接。两条路走同一条配对流程，唯一的分别是从哪儿读出那份凭据。
-    ///
-    /// 认不出来的 URL 一律不理：`importAndEnroll` 里是 `Data(contentsOf:)`，
-    /// 把一个 http URL 放进来就成了一次同步网络请求。
+    /// 系统从外面递进来的 pendingnet:// 配对链接，也转成同一个粘贴导入入口。
     static func importAndConnect(
         opened url: URL,
         pairing: VPSPairingController,
         engine: EngineController,
         state: AppState
     ) async {
-        if url.isFileURL {
-            guard url.pathExtension.lowercased() == "pdn" else { return }
-            await importAndConnect(url: url, pairing: pairing, engine: engine, state: state)
-            return
-        }
         guard url.scheme?.lowercased() == PendingNetPairingFile.urlScheme else { return }
         await importAndConnect(
             pasted: url.absoluteString, pairing: pairing, engine: engine, state: state

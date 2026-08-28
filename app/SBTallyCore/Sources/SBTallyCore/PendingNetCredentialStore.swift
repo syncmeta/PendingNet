@@ -341,7 +341,7 @@ public enum PendingNetCredentialStore {
             case .synchronizable:
                 break
             case .notStored:
-                log.notice("\(serverID, privacy: .public)：本机没有这一台的访问凭据，需要导入 .pdn 配对")
+                log.notice("\(serverID, privacy: .public)：本机没有这一台的访问凭据，需要重新导入链接")
             case .localOnly(let status):
                 log.error("""
                     \(serverID, privacy: .public)：访问凭据只能留在本机，搬不上 iCloud 钥匙串\

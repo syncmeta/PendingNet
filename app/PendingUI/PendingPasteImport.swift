@@ -6,14 +6,7 @@ import UIKit
 import AppKit
 #endif
 
-/// 粘贴配对凭据的那个框。
-///
-/// 链接在聊天软件里常被吞、从手机传到电脑也麻烦，所以「复制一段文本粘进来」
-/// 这条路必须在，而且要和「导入 .pdn」并排放 —— 同一件事的两种办法，不该分散
-/// 在两个地方等用户去找。
-///
-/// 认链接也认 `.pdn` 原文（见 `PendingNetPairingFile.decode(pasted:)`）：这个框
-/// 存在的理由就是「一定管用」，多认一种形态是免费的。
+/// 唯一的导入入口：粘贴分享链接，一行一个节点。
 struct PendingPasteImportSheet: View {
     let busy: Bool
     let onImport: (String) -> Void
@@ -24,10 +17,10 @@ struct PendingPasteImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("粘贴配对链接")
-                    .font(PendingNetTheme.Fonts.sectionTitle("粘贴配对链接"))
+                Text("导入节点")
+                    .font(PendingNetTheme.Fonts.sectionTitle("导入节点"))
                     .foregroundStyle(PendingNetTheme.Palette.ink)
-                Text("把 VPS 上生成的 pendingnet:// 链接整条粘进来。.pdn 文件里的内容也认。")
+                Text("粘贴 pendingnet://、vless:// 或 hysteria2:// 分享链接；批量导入时一行一个节点。")
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -69,7 +62,7 @@ struct PendingPasteImportSheet: View {
                     if busy {
                         HStack(spacing: 7) {
                             ProgressView().controlSize(.small)
-                            Text("正在配对…")
+                            Text("正在导入…")
                         }
                     } else {
                         Text("导入")

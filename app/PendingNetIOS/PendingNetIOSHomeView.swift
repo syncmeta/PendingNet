@@ -1,7 +1,6 @@
 import NetworkExtension
 import SBTallyCore
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// 连接页。版式对齐 macOS 定稿：**一张卡**，卡里从上到下是
 /// 开关 → 路由 → VPS 列表 → 协议，药丸左边不再有小标题。
@@ -12,7 +11,6 @@ import UniformTypeIdentifiers
 struct PendingNetIOSHomeView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showingImporter = false
     @State private var showingPasteImport = false
     @State private var showingLog = false
     @State private var switchingOutbound: String?
@@ -42,19 +40,6 @@ struct PendingNetIOSHomeView: View {
                     }
                     .accessibilityLabel("隧道日志")
                 }
-            }
-        }
-        .fileImporter(
-            isPresented: $showingImporter,
-            allowedContentTypes: [UTType(filenameExtension: "pdn") ?? .json],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                guard let url = urls.first else { return }
-                Task { await controller.importAndEnroll(url: url) }
-            case .failure(let error):
-                controller.errorMessage = error.localizedDescription
             }
         }
         .sheet(isPresented: $showingPasteImport) {
@@ -266,27 +251,11 @@ struct PendingNetIOSHomeView: View {
                     ))
                     .disabled(latency.busy || controller.working)
                 }
-                Button("粘贴链接") { showingPasteImport = true }
+                Button("导入") { showingPasteImport = true }
                     .buttonStyle(PendingQuietButtonStyle(
                         fill: PendingNetTheme.Palette.surface
                     ))
                     .disabled(controller.working)
-                Button {
-                    showingImporter = true
-                } label: {
-                    if controller.working {
-                        HStack(spacing: 7) {
-                            ProgressView().controlSize(.small)
-                            Text("正在配对…")
-                        }
-                    } else {
-                        Label("导入 .pdn", systemImage: "square.and.arrow.down")
-                    }
-                }
-                .buttonStyle(PendingQuietButtonStyle(
-                    fill: PendingNetTheme.Palette.surface
-                ))
-                .disabled(controller.working)
             }
 
             PendingVPSList(

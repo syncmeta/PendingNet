@@ -155,7 +155,7 @@ struct PendingVPSList: View {
 
     var body: some View {
         if items.isEmpty {
-            Text("还没有配对 VPS，导入 .pdn 后这里会列出你的服务器。")
+            Text("还没有节点，点“导入”粘贴分享链接后会列在这里。")
                 .font(PendingNetTheme.Fonts.caption)
                 .foregroundStyle(PendingNetTheme.Palette.inkMuted)
         } else {
@@ -196,7 +196,7 @@ struct PendingVPSList: View {
                         ? PendingNetTheme.Palette.inkMuted
                         : PendingNetTheme.Palette.ink)
                 if unpaired {
-                    Text("这台设备还没配对，导入这台 VPS 的 .pdn 就能用")
+                    Text("这台设备还没有访问凭据，请重新导入这台 VPS 的链接")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 } else if let reason = latencies[item.id]?.failureText {

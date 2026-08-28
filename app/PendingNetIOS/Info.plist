@@ -4,21 +4,6 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>PendingNet Pairing</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.pendingname.pdn</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -46,31 +31,7 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>打开「允许局域网访问」后，同一个网络里的电脑和电视可以把这台设备当作代理使用。</string>
-	<key>UTImportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.json</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>PendingNet Pairing</string>
-			<key>UTTypeIdentifier</key>
-			<string>com.pendingname.pdn</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>pdn</string>
-				</array>
-				<key>public.mime-type</key>
-				<string>application/vnd.pendingnet.pairing+json</string>
-			</dict>
-		</dict>
-	</array>
 </dict>
 </plist>

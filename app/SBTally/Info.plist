@@ -6,21 +6,6 @@
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>PendingNet</string>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>PendingNet Pairing</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>com.pendingname.pdn</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -62,27 +47,5 @@
 	<true/>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
-	<key>UTImportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.json</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>PendingNet Pairing</string>
-			<key>UTTypeIdentifier</key>
-			<string>com.pendingname.pdn</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>pdn</string>
-				</array>
-				<key>public.mime-type</key>
-				<string>application/vnd.pendingnet.pairing+json</string>
-			</dict>
-		</dict>
-	</array>
 </dict>
 </plist>

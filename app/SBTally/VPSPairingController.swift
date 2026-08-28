@@ -7,7 +7,7 @@ private enum VPSPairingControllerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingCredential: "找不到这台 VPS 的设备凭据，请重新导入 .pdn 文件"
+        case .missingCredential: "找不到这台 VPS 的设备凭据，请重新导入它的链接"
         }
     }
 }
@@ -69,68 +69,69 @@ final class VPSPairingController: ObservableObject {
         refreshCredentialState()
     }
 
-    /// 导入一份 `.pdn` 文件。
-    func importAndEnroll(url: URL) async -> PendingNetRuntimeServer? {
-        await enroll {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            return try PendingNetPairingFile.decode(Data(contentsOf: url))
-        }
-    }
-
-    /// 导入用户粘进来的一段文本：一条 `pendingnet://` 配对链接，或者 `.pdn`
-    /// 原文。走的是同一条配对流程 —— 凭据长什么样、怎么用，和从哪儿来无关。
+    /// 唯一的导入入口：一行一个 PendingNet 配对链接或通用节点分享链接。
     func importAndEnroll(pasted text: String) async -> PendingNetRuntimeServer? {
-        await enroll { try PendingNetPairingFile.decode(pasted: text) }
-    }
-
-    private func enroll(
-        _ readPairing: () throws -> PendingNetPairingFile
-    ) async -> PendingNetRuntimeServer? {
         pairing = true
         lastError = nil
         lastMessage = nil
         defer { pairing = false }
 
         do {
-            let file = try readPairing()
-            let result = try await PendingNetEnrollmentClient().enroll(
-                pairing: file,
-                deviceName: ProcessInfo.processInfo.hostName
-            )
-            try PendingNetCredentialStore.save(
-                accessToken: result.accessToken,
-                serverID: result.server.serverID
-            )
-            var record = PairedVPSServer(
-                serverID: result.server.serverID,
-                name: result.server.name,
-                endpoint: file.control.endpoint,
-                certificateSHA256: file.control.certificateSHA256,
-                deviceID: result.deviceID,
-                capabilities: result.server.capabilities,
-                nodeProtocols: nil,
-                pairedAt: Date()
-            )
-            upsert(record)
-
-            let nodeProfile = try await PendingNetServerClient(
-                endpoint: file.control.endpoint,
-                certificateSHA256: file.control.certificateSHA256,
-                accessToken: result.accessToken
-            ).nodeProfile()
-            record.nodeProtocols = nodeProfile.protocols.map(\.type)
-            // 代理入口的 TCP 端口跟着记录一起存，延迟才知道该测哪里。
-            record.adoptProxyEntry(from: nodeProfile)
-            upsert(record)
-            return try nodeProfile.runtimeServer(name: record.name)
+            let items = try PendingNetTextImport.decode(text)
+            var lastRuntime: PendingNetRuntimeServer?
+            for item in items {
+                switch item {
+                case .pairing(let file):
+                    lastRuntime = try await enroll(file)
+                case .sharedNode(let node):
+                    try PendingNetCredentialStore.save(
+                        accessToken: node.originalLink,
+                        serverID: node.record.serverID
+                    )
+                    upsert(node.record)
+                    unpairedServerIDs.remove(node.record.serverID)
+                    lastRuntime = try node.runtimeServer()
+                }
+            }
+            lastMessage = "已导入 \(items.count) 个节点"
+            return lastRuntime
         } catch {
-            // Clear the success line too — otherwise the GUI shows a green
-            // 「已应用并连接」 next to the red failure.
             lastMessage = nil
             lastError = detailedMessage(for: error)
             return nil
         }
+    }
+
+    private func enroll(_ file: PendingNetPairingFile) async throws -> PendingNetRuntimeServer {
+        let result = try await PendingNetEnrollmentClient().enroll(
+            pairing: file,
+            deviceName: ProcessInfo.processInfo.hostName
+        )
+        try PendingNetCredentialStore.save(
+            accessToken: result.accessToken,
+            serverID: result.server.serverID
+        )
+        var record = PairedVPSServer(
+            serverID: result.server.serverID,
+            name: result.server.name,
+            endpoint: file.control.endpoint,
+            certificateSHA256: file.control.certificateSHA256,
+            deviceID: result.deviceID,
+            capabilities: result.server.capabilities,
+            nodeProtocols: nil,
+            pairedAt: Date()
+        )
+        upsert(record)
+
+        let nodeProfile = try await PendingNetServerClient(
+            endpoint: file.control.endpoint,
+            certificateSHA256: file.control.certificateSHA256,
+            accessToken: result.accessToken
+        ).nodeProfile()
+        record.nodeProtocols = nodeProfile.protocols.map(\.type)
+        record.adoptProxyEntry(from: nodeProfile)
+        upsert(record)
+        return try nodeProfile.runtimeServer(name: record.name)
     }
 
     func runtimeServer(for record: PairedVPSServer) async -> PendingNetRuntimeServer? {
@@ -140,6 +141,9 @@ final class VPSPairingController: ObservableObject {
         do {
             guard let accessToken = try PendingNetCredentialStore.load(serverID: record.serverID) else {
                 throw VPSPairingControllerError.missingCredential
+            }
+            if record.isSharedNode {
+                return try PendingNetSharedNode.decode(link: accessToken).runtimeServer()
             }
             let nodeProfile = try await PendingNetServerClient(
                 endpoint: record.endpoint,

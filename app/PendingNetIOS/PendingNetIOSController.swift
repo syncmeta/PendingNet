@@ -125,61 +125,60 @@ final class PendingNetIOSController: ObservableObject {
         defaults.set(selectedServerID, forKey: selectedKey)
     }
 
-    /// 导入一份 `.pdn` 文件。
-    func importAndEnroll(url: URL) async {
-        await enroll {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            return try PendingNetPairingFile.decode(Data(contentsOf: url))
-        }
-    }
-
-    /// 导入用户粘进来的一段文本：一条 `pendingnet://` 配对链接，或者 `.pdn`
-    /// 原文。走的是同一条配对流程 —— 凭据长什么样、怎么用，和从哪儿来无关。
+    /// 唯一的导入入口：一行一个 PendingNet 配对链接或通用节点分享链接。
     func importAndEnroll(pasted text: String) async {
-        await enroll { try PendingNetPairingFile.decode(pasted: text) }
-    }
-
-    private func enroll(_ readPairing: () throws -> PendingNetPairingFile) async {
         working = true
         message = nil
         errorMessage = nil
         defer { working = false }
 
         do {
-            let pairing = try readPairing()
-            let result = try await PendingNetEnrollmentClient().enroll(
-                pairing: pairing,
-                deviceName: UIDevice.current.name
-            )
-            try PendingNetCredentialStore.save(
-                accessToken: result.accessToken,
-                serverID: result.server.serverID
-            )
-            let paired = IOSPairedServer(
-                serverID: result.server.serverID,
-                name: result.server.name,
-                endpoint: pairing.control.endpoint,
-                certificateSHA256: pairing.control.certificateSHA256,
-                deviceID: result.deviceID,
-                capabilities: result.server.capabilities,
-                // 重新配对同一台时保留上一次拉到的协议名单，免得「详情」在
-                // 下一次 refreshNodeProfile 回来之前空一格。
-                nodeProtocols: servers.first { $0.serverID == result.server.serverID }?.nodeProtocols
-            )
-            // 同一台重新配对就地替换，不追加出一行重复的。
-            store.upsert(paired)
-            // upsert 会经 applyStoreServers 重算未配对名单，但那一趟发生在
-            // 存储回调里、顺序不由这里保证；刚存完凭据的这一台必须当场转正，
-            // 否则下面把它设成选中项时它可能还挂着「未配对」。
-            unpairedServerIDs.remove(paired.serverID)
-            selectedServerID = paired.serverID
-            persistServers()
-            message = "已配对：\(paired.name)"
-            await refreshNodeProfile()
+            let items = try PendingNetTextImport.decode(text)
+            for item in items {
+                switch item {
+                case .pairing(let pairing):
+                    try await enroll(pairing)
+                case .sharedNode(let node):
+                    try PendingNetCredentialStore.save(
+                        accessToken: node.originalLink,
+                        serverID: node.record.serverID
+                    )
+                    store.upsert(node.record)
+                    unpairedServerIDs.remove(node.record.serverID)
+                    selectedServerID = node.record.serverID
+                    nodeProfile = node.profile
+                    persistServers()
+                }
+            }
+            message = "已导入 \(items.count) 个节点"
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private func enroll(_ pairing: PendingNetPairingFile) async throws {
+        let result = try await PendingNetEnrollmentClient().enroll(
+            pairing: pairing,
+            deviceName: UIDevice.current.name
+        )
+        try PendingNetCredentialStore.save(
+            accessToken: result.accessToken,
+            serverID: result.server.serverID
+        )
+        let paired = IOSPairedServer(
+            serverID: result.server.serverID,
+            name: result.server.name,
+            endpoint: pairing.control.endpoint,
+            certificateSHA256: pairing.control.certificateSHA256,
+            deviceID: result.deviceID,
+            capabilities: result.server.capabilities,
+            nodeProtocols: servers.first { $0.serverID == result.server.serverID }?.nodeProtocols
+        )
+        store.upsert(paired)
+        unpairedServerIDs.remove(paired.serverID)
+        selectedServerID = paired.serverID
+        persistServers()
+        await refreshNodeProfile()
     }
 
     /// 切换到另一台 VPS。
@@ -249,7 +248,11 @@ final class PendingNetIOSController: ObservableObject {
         guard let server else { return }
         do {
             guard let token = try PendingNetCredentialStore.load(serverID: server.serverID) else {
-                throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，导入它的 .pdn 就能用")
+                throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，请重新导入它的链接")
+            }
+            if server.isSharedNode {
+                nodeProfile = try PendingNetSharedNode.decode(link: token).profile
+                return
             }
             let profile = try await PendingNetServerClient(
                 endpoint: server.endpoint,
