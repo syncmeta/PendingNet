@@ -2,8 +2,8 @@
 """生成 macOS 菜单栏图标资源 PendingNetMenuBarIcon。
 
 复用 make-app-icon.py 产出的两层 Icon-Composer SVG（前景主箭头 + 次要箭头），
-拼成一张图，按明暗两种外观各渲染一份 PNG。资源使用单色 alpha 蒙版，并在
-asset catalog 中标成 template；macOS 会按菜单栏背景自动选择可见的前景色。
+拼成一张黑色单色 alpha 蒙版。资源只保留一套并在 asset catalog 中标成
+template；macOS 会像其他菜单栏图标一样，按当前背景自动显示深色或浅色。
 
 菜单栏图标**不**画底色圆角方块：浅色菜单栏上白底看不出边界（见
 make-app-icon.py 同类注释），系统又不会替菜单栏里的普通图片画 squircle /
@@ -42,7 +42,7 @@ SCALES = (1, 2, 3)
 
 SOURCE_PRIMARY = "#044735"
 SOURCE_SECONDARY = "#b7b7b7"
-MENUBAR_WHITE = "#ffffff"
+MENUBAR_MASK = "#000000"
 
 
 def inner_g(svg_text: str) -> str:
@@ -109,9 +109,9 @@ def main() -> None:
     primary_g = inner_g((SRC / "primary.svg").read_text())
     secondary_g = inner_g((SRC / "secondary.svg").read_text())
 
-    white = combined_svg(
-        primary_g.replace(SOURCE_PRIMARY, MENUBAR_WHITE),
-        secondary_g.replace(SOURCE_SECONDARY, MENUBAR_WHITE),
+    mask = combined_svg(
+        primary_g.replace(SOURCE_PRIMARY, MENUBAR_MASK),
+        secondary_g.replace(SOURCE_SECONDARY, MENUBAR_MASK),
     )
 
     CATALOG.mkdir(parents=True, exist_ok=True)
@@ -122,18 +122,19 @@ def main() -> None:
         )
 
     OUT.mkdir(parents=True, exist_ok=True)
-    light_names = render_variants(white, OUT, "menubar-light")
-    dark_names = render_variants(white, OUT, "menubar-dark")
+    # 0.3.35 以前按明暗各放一套白图；template 不需要外观槽，旧文件也不该
+    # 继续躺在资源目录里制造「仍然是白色双资源」的错觉。
+    for obsolete in (
+        "menubar-light.png", "menubar-light@2x.png", "menubar-light@3x.png",
+        "menubar-dark.png", "menubar-dark@2x.png", "menubar-dark@3x.png",
+    ):
+        (OUT / obsolete).unlink(missing_ok=True)
+    names = render_variants(mask, OUT, "menubar")
 
-    images = []
-    for value, names in (("light", light_names), ("dark", dark_names)):
-        for scale, name in zip(SCALES, names):
-            images.append({
-                "filename": name,
-                "idiom": "universal",
-                "scale": f"{scale}x",
-                "appearances": [{"appearance": "luminosity", "value": value}],
-            })
+    images = [
+        {"filename": name, "idiom": "universal", "scale": f"{scale}x"}
+        for scale, name in zip(SCALES, names)
+    ]
     contents = {
         "images": images,
         "info": {"author": "xcode", "version": 1},
