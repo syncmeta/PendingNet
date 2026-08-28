@@ -28,10 +28,11 @@
 
 ## 快速开始
 
-- **macOS** —— [Releases](../../releases)。安装包已经内置从源码构建并签名的 sing-box，
+- **macOS** ： [Releases](../../releases)。安装包已经内置从源码构建并签名的 sing-box，
   不需要 Homebrew，也不用先运行 `deploy/install.sh`。只用「仅端口」可直接连接；
   第一次选择 TUN / 系统代理时，按系统提示允许 PendingNet 后台项目即可。
-- **iPhone / iPad** —— [TestFlight](https://testflight.apple.com/join/g9jrafTR)
+- **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
+- **VPS 部署**：`curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash `
 
 ## 仓库结构
 
