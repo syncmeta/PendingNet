@@ -170,6 +170,12 @@ final class PendingNetUserEngine {
         }
         let binary = try singBoxBinary()
         try prepareDirectory()
+        // 更新 / 崩溃前由旧 App 拉起的本地引擎已经被 launchd 收养（PPID 1），
+        // 新 controller 的 `process` 是 nil，过去既认不出它也停不掉它。它继续占着
+        // 2081 / 29090，后续应用 VPS 只改了磁盘配置，流量仍走旧进程。
+        // 三重确认（本机控制密钥、固定控制端口、精确命令行）之后才收它，不能按
+        // 进程名粗暴清理用户自己运行的 sing-box。
+        await retireAuthenticatedOrphan()
         fileManager.createFile(atPath: logURL.path, contents: nil)
         let handle = try FileHandle(forWritingTo: logURL)
         try handle.seekToEnd()
@@ -212,12 +218,17 @@ final class PendingNetUserEngine {
 
     func stop() async {
         await statsDaemon.stop()
-        guard let process else { return }
-        if process.isRunning { process.terminate() }
-        for _ in 0..<20 where process.isRunning {
-            try? await Task.sleep(for: .milliseconds(50))
+        if let process {
+            if process.isRunning { process.terminate() }
+            for _ in 0..<20 where process.isRunning {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+        } else {
+            // `EngineController` 从 helper 模式接管时也会无条件走 stop；正好在这里
+            // 收掉跨 App 生命周期留下、但不在本实例 `process` 属性里的那一份。
+            await retireAuthenticatedOrphan()
         }
-        if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
         self.process = nil
         try? logHandle?.close()
         logHandle = nil
@@ -323,5 +334,57 @@ final class PendingNetUserEngine {
         guard let (_, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse else { return false }
         return (200..<300).contains(http.statusCode)
+    }
+
+    /// 收掉一份由旧 App 启动、现在已经脱离 `Process` 对象的本地引擎。
+    ///
+    /// 不靠宽泛的 `pkill sing-box`：先用当前控制密钥确认 29090 上确实是我们的
+    /// Clash API，再从监听端口拿 PID，最后逐字核对它是否由包内引擎读取当前用户的
+    /// config.json。任一条件对不上都不碰。
+    private func retireAuthenticatedOrphan() async {
+        guard process == nil, await controlIsReady(),
+              let binary = try? singBoxBinary() else { return }
+        let listener = commandOutput(
+            executable: "/usr/sbin/lsof",
+            arguments: ["-nP", "-t", "-a", "-iTCP:\(Self.controlPort)", "-sTCP:LISTEN"]
+        )
+        guard listener.status == 0 else { return }
+
+        for pid in PendingNetLocalEngineResidue.parseListenerPIDs(listener.output) {
+            let observed = commandOutput(
+                executable: "/bin/ps", arguments: ["-p", String(pid), "-o", "command="])
+            guard observed.status == 0,
+                  PendingNetLocalEngineResidue.isOwnedCommand(
+                    observed.output,
+                    binaryPath: binary.path,
+                    configPath: configURL.path
+                  ) else { continue }
+
+            guard Darwin.kill(pid, SIGTERM) == 0 else { continue }
+            for _ in 0..<20 where Darwin.kill(pid, 0) == 0 {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            if Darwin.kill(pid, 0) == 0 { _ = Darwin.kill(pid, SIGKILL) }
+        }
+    }
+
+    private func commandOutput(
+        executable: String,
+        arguments: [String]
+    ) -> (status: Int32, output: String) {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = arguments
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        do {
+            try task.run()
+        } catch {
+            return (-1, "")
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        return (task.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 }

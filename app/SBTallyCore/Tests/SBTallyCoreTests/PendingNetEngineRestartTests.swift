@@ -57,3 +57,39 @@ final class PendingNetEngineRestartTests: XCTestCase {
         XCTAssertEqual(PendingNetEngineRestart.parsePID(launchctlPrintOutput: withNested), 588)
     }
 }
+
+final class PendingNetLocalEngineResidueTests: XCTestCase {
+    /// `lsof -t` 一行一个 PID；同一个进程可能因为多条匹配记录重复出现。
+    func testParsesUniqueListenerPIDs() {
+        XCTAssertEqual(
+            PendingNetLocalEngineResidue.parseListenerPIDs("54131\n54131\n60002\n"),
+            [54131, 60002]
+        )
+    }
+
+    /// 空行、诊断文字和不合法的 PID 都不能变成待终止进程。
+    func testIgnoresMalformedListenerOutput() {
+        XCTAssertEqual(
+            PendingNetLocalEngineResidue.parseListenerPIDs(
+                "lsof: unacceptable port specification\n0\n-1\nabc\n42\n"
+            ),
+            [42]
+        )
+    }
+
+    func testOnlyAcceptsTheExactAppOwnedCommand() {
+        let binary = "/Applications/PendingNet.app/Contents/MacOS/sing-box"
+        let config = "/Users/test/Library/Application Support/PendingNet/engine/config.json"
+        let expected = "\(binary) run -c \(config)"
+
+        XCTAssertTrue(PendingNetLocalEngineResidue.isOwnedCommand(
+            expected + "\n", binaryPath: binary, configPath: config))
+        XCTAssertFalse(PendingNetLocalEngineResidue.isOwnedCommand(
+            "\(binary) run -c /tmp/other.json", binaryPath: binary, configPath: config))
+        XCTAssertFalse(PendingNetLocalEngineResidue.isOwnedCommand(
+            "/usr/local/bin/sing-box run -c \(config)",
+            binaryPath: binary,
+            configPath: config
+        ))
+    }
+}

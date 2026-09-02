@@ -29,6 +29,7 @@ final class VPSPairingController: ObservableObject {
 
     private let store: PairedVPSStore
     private var cancellables = Set<AnyCancellable>()
+    private var operationGate = PendingNetConnectionOperationGate()
 
     /// `legacyServers` 是从旧 bundle id 那个 `UserDefaults` 域里搬出来的存档
     /// （见 `PendingNetLegacyDefaultsMigration`）。走 `adoptLegacy` 而不是直接写
@@ -71,10 +72,8 @@ final class VPSPairingController: ObservableObject {
 
     /// 唯一的导入入口：一行一个 PendingNet 配对链接或通用节点分享链接。
     func importAndEnroll(pasted text: String) async -> PendingNetRuntimeServer? {
-        pairing = true
         lastError = nil
         lastMessage = nil
-        defer { pairing = false }
 
         do {
             let items = try PendingNetTextImport.decode(text)
@@ -135,9 +134,7 @@ final class VPSPairingController: ObservableObject {
     }
 
     func runtimeServer(for record: PairedVPSServer) async -> PendingNetRuntimeServer? {
-        pairing = true
         lastError = nil
-        defer { pairing = false }
         do {
             guard let accessToken = try PendingNetCredentialStore.load(serverID: record.serverID) else {
                 throw VPSPairingControllerError.missingCredential
@@ -174,6 +171,19 @@ final class VPSPairingController: ObservableObject {
     func reportApplyError(_ message: String) {
         lastMessage = nil
         lastError = message
+    }
+
+    /// 把“取节点资料 + 写配置 + 重启 + 回读 selector”整段锁成一笔。
+    /// 视图层的 disabled 只能拦下一次点击，拦不住已经排进 Task 队列的第二次点击。
+    func beginConnectionChange() -> Bool {
+        guard operationGate.begin() else { return false }
+        pairing = true
+        return true
+    }
+
+    func endConnectionChange() {
+        operationGate.end()
+        pairing = false
     }
 
     private func upsert(_ record: PairedVPSServer) {

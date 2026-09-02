@@ -10,6 +10,8 @@ enum PendingNetConnectionWorkflow {
         engine: EngineController,
         state: AppState
     ) async {
+        guard pairing.beginConnectionChange() else { return }
+        defer { pairing.endConnectionChange() }
         guard let runtime = await pairing.importAndEnroll(pasted: text) else { return }
         await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
     }
@@ -54,6 +56,8 @@ enum PendingNetConnectionWorkflow {
         engine: EngineController,
         state: AppState
     ) async {
+        guard pairing.beginConnectionChange() else { return }
+        defer { pairing.endConnectionChange() }
         guard let runtime = await pairing.runtimeServer(for: server) else { return }
         await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
     }

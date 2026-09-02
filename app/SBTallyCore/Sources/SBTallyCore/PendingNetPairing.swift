@@ -2,6 +2,24 @@ import CryptoKit
 import Foundation
 import Security
 
+/// 导入 / 切换 VPS 是一笔跨网络请求、写配置、重启引擎的完整事务。
+/// 第二笔不能在第一笔中途插进来，否则两边会互相覆盖配置和 selector。
+public struct PendingNetConnectionOperationGate: Sendable {
+    public private(set) var isBusy = false
+
+    public init() {}
+
+    public mutating func begin() -> Bool {
+        guard !isBusy else { return false }
+        isBusy = true
+        return true
+    }
+
+    public mutating func end() {
+        isBusy = false
+    }
+}
+
 public struct PendingNetPairingFile: Codable, Equatable, Sendable {
     public static let currentFormat = "pendingnet-pairing"
     public static let currentVersion = 1

@@ -341,6 +341,20 @@ private func smokeProxyOutbound(
     XCTAssertTrue(String(decoding: responseData, as: UTF8.self).contains("ip="), "\(tag) returned an unexpected response")
 }
 
+final class PendingNetConnectionOperationGateTests: XCTestCase {
+    func testRejectsAnOverlappingSwitchUntilTheFirstOneEnds() {
+        var gate = PendingNetConnectionOperationGate()
+
+        XCTAssertTrue(gate.begin())
+        XCTAssertTrue(gate.isBusy)
+        XCTAssertFalse(gate.begin())
+
+        gate.end()
+        XCTAssertFalse(gate.isBusy)
+        XCTAssertTrue(gate.begin())
+    }
+}
+
 private func requestBody(_ request: URLRequest) throws -> Data {
     if let body = request.httpBody { return body }
     let stream = try XCTUnwrap(request.httpBodyStream)

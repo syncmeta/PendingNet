@@ -31,3 +31,31 @@ public enum PendingNetEngineRestart {
         return nil
     }
 }
+
+/// 识别旧 App 留下的「仅端口」引擎时，能在无副作用层完成的部分。
+///
+/// 真正查监听者、核对控制密钥和发信号都在 macOS App 里；这里仅解析系统自带
+/// `lsof -t` 的结果，避免一段诊断文字被误认成 PID 后伤到别的进程。
+public enum PendingNetLocalEngineResidue {
+    public static func parseListenerPIDs(_ output: String) -> [Int32] {
+        var seen = Set<Int32>()
+        var result: [Int32] = []
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard !line.isEmpty, line.allSatisfy(\.isNumber),
+                  let pid = Int32(line), pid > 0, seen.insert(pid).inserted else { continue }
+            result.append(pid)
+        }
+        return result
+    }
+
+    /// `lsof` 只回答谁占端口；还要把这条精确命令对上，才允许 App 收掉它。
+    /// 不能只看进程名叫 sing-box，否则会伤到用户自己运行的另一份代理。
+    public static func isOwnedCommand(
+        _ command: String,
+        binaryPath: String,
+        configPath: String
+    ) -> Bool {
+        command.trimmingCharacters(in: .whitespacesAndNewlines)
+            == "\(binaryPath) run -c \(configPath)"
+    }
+}
