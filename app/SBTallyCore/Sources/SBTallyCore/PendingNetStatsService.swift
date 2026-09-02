@@ -132,6 +132,30 @@ public enum PendingNetStatsService {
         return takeover == "local" ? .app : .helper
     }
 
+    public enum HelperModeAdoption: Equatable, Sendable {
+        /// 助手暂时没答或答了无效模式；不能把“一次没问到”锁死成永不再问。
+        case retry
+        /// 助手也说是仅端口，默认状态就是对的。
+        case keepLocal
+        /// 助手拥有系统接管；先停 App 的引擎/采集器，再换 owner。
+        case stopLocalThenAdopt(String)
+    }
+
+    /// App 先按默认值拉起本地引擎、随后才从助手发现系统仍在 TUN / 系统代理时，
+    /// owner 不能只在界面里换名字。必须先停掉 App 那份引擎及采集器，腾出 7777，
+    /// 再让助手接手；助手第一次没答时则保留重试机会。
+    public static func helperModeAdoption(
+        currentTakeover: String,
+        helperTakeover: String?
+    ) -> HelperModeAdoption {
+        guard currentTakeover == "local", let helperTakeover else { return .retry }
+        switch helperTakeover {
+        case "local": return .keepLocal
+        case "tun", "sysproxy": return .stopLocalThenAdopt(helperTakeover)
+        default: return .retry
+        }
+    }
+
     /// 采集器的命令行。
     ///
     /// 密钥**不在里面** —— `ps` 是全机可见的。App 那侧用 `-secret-file` 指向引擎

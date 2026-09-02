@@ -239,6 +239,34 @@ final class PendingNetStatsServiceCollectorOwnerTests: XCTestCase {
             }
         }
     }
+
+    /// App 启动时可能先拉起「仅端口」，随后才从助手发现机器其实仍在 TUN。
+    /// 接管所有权交给助手之前必须先停掉 App 那份引擎/采集器，否则它会继续占着
+    /// 7777，真正承载流量的 TUN 采集器只能饿死在端口冲突上。
+    func testAdoptingHelperModeStopsLocalEngineFirst() {
+        for helperTakeover in ["tun", "sysproxy"] {
+            XCTAssertEqual(PendingNetStatsService.helperModeAdoption(
+                currentTakeover: "local",
+                helperTakeover: helperTakeover
+            ), .stopLocalThenAdopt(helperTakeover))
+        }
+    }
+
+    func testAdoptionDoesNotStopAnEngineOutsideTheConflictingTransition() {
+        XCTAssertEqual(PendingNetStatsService.helperModeAdoption(
+            currentTakeover: "local", helperTakeover: "local"), .keepLocal)
+        XCTAssertEqual(PendingNetStatsService.helperModeAdoption(
+            currentTakeover: "tun", helperTakeover: "tun"), .retry)
+        XCTAssertEqual(PendingNetStatsService.helperModeAdoption(
+            currentTakeover: "local", helperTakeover: "什么鬼"), .retry)
+    }
+
+    /// 助手刚获批时 XPC 可能还没来得及回答；这次失败不能把一次性认领标记提前锁死，
+    /// 下一次 refresh 必须还能重试，否则本地引擎和已有 TUN 会永久并存。
+    func testMissingHelperStatusKeepsAdoptionRetryable() {
+        XCTAssertEqual(PendingNetStatsService.helperModeAdoption(
+            currentTakeover: "local", helperTakeover: nil), .retry)
+    }
 }
 
 final class PendingNetStatsServiceDaemonArgumentsTests: XCTestCase {

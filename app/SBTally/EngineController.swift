@@ -498,9 +498,21 @@ final class EngineController: ObservableObject {
             // `takeover` starts at "local", but the helper may well have the
             // machine in sysproxy/tun already. Trust the helper's mode over the
             // app's default, or the GUI claims 「仅端口」 while the system is not.
-            didAdoptHelperMode = true
-            if let mode = await helperStatus()?.1, mode != "local" {
+            // If the local engine was started before helper readiness settled,
+            // stop it before changing owner: its collector otherwise keeps 7777
+            // while real traffic is flowing through the helper-owned engine.
+            let helperTakeover = await helperStatus()?.1
+            switch PendingNetStatsService.helperModeAdoption(
+                currentTakeover: takeover, helperTakeover: helperTakeover
+            ) {
+            case .retry:
+                break
+            case .keepLocal:
+                didAdoptHelperMode = true
+            case .stopLocalThenAdopt(let mode):
+                await userEngine.stop()
                 takeover = mode
+                didAdoptHelperMode = true
             }
         }
         if takeover == "local" {
