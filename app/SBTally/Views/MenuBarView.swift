@@ -36,8 +36,8 @@ struct MenuBarView: View {
                 // 这里不再放 PendingNet 字样与图标 -- 菜单栏图标本身就是品牌标识，
                 // 框里只留连接状态药丸，避免重复。
                 PendingStatusPill(
-                    text: engine.running ? "已连接" : (engine.takeover == "local" || engine.helperReady ? "已停止" : "等待授权"),
-                    kind: engine.running ? .success : .neutral
+                    text: engine.connectionBusy ? "正在切换" : (engine.running ? "已连接" : (engine.takeover == "local" || engine.helperReady ? "已停止" : "等待授权")),
+                    kind: engine.connectionBusy ? .neutral : (engine.running ? .success : .neutral)
                 )
                 Spacer()
             }
@@ -45,6 +45,7 @@ struct MenuBarView: View {
             if engine.takeover != "local" && !engine.helperReady {
                 Button("授权后台服务…") { engine.registerHelper() }
                     .buttonStyle(PendingPrimaryButtonStyle())
+                    .disabled(engine.connectionBusy || vpsPairing.pairing)
             } else {
                 Toggle(engine.running ? "已连接" : "已停止", isOn: Binding(
                     get: { engine.running },
@@ -57,6 +58,7 @@ struct MenuBarView: View {
                     }
                 ))
                 .toggleStyle(.switch)
+                .disabled(engine.connectionBusy || vpsPairing.pairing)
             }
 
             PendingPillPicker(
@@ -68,10 +70,12 @@ struct MenuBarView: View {
                 selection: engine.takeover
             ) { mode in
                 Task {
-                    await engine.setTakeover(mode)
-                    await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
+                    await PendingNetConnectionWorkflow.setTakeover(
+                        mode, engine: engine, state: state
+                    )
                 }
             }
+            .disabled(engine.connectionBusy || vpsPairing.pairing)
 
             // 档位名不在这里另写一遍：三个中文名跟主窗口共用同一个选择器，
             // Clash 那边的写法只由 `clashName` / `clashNamed` 翻译。
@@ -79,13 +83,12 @@ struct MenuBarView: View {
                 selection: PendingNetRouteMode.clashNamed(state.mode)
             ) { mode in
                 Task {
-                    await PendingNetRoutingWorkflow.select(
-                        mode: mode.clashName,
-                        engine: engine,
-                        state: state
+                    await PendingNetConnectionWorkflow.setRouteMode(
+                        mode, engine: engine, state: state
                     )
                 }
             }
+            .disabled(engine.connectionBusy || vpsPairing.pairing)
             if let note = state.modeNote {
                 Text(note)
                     .font(PendingNetTheme.Fonts.caption)
@@ -111,7 +114,7 @@ struct MenuBarView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard !selected, !vpsPairing.pairing else { return }
+                    guard !selected, !vpsPairing.pairing, !engine.connectionBusy else { return }
                     Task {
                         await PendingNetConnectionWorkflow.refreshAndConnect(
                             server: server,
@@ -136,6 +139,7 @@ struct MenuBarView: View {
                 ) { name in
                     Task { await state.select(selector: selector, name: name) }
                 }
+                .disabled(engine.connectionBusy || vpsPairing.pairing)
             }
             // 引擎错误不再写在这里常驻：菜单栏根上挂了 toast（见 SBTallyApp），
             // 失败时弹一下自动消失。下面只留失败时的运行日志（折叠态），它是

@@ -2,8 +2,9 @@ import CryptoKit
 import Foundation
 import Security
 
-/// 导入 / 切换 VPS 是一笔跨网络请求、写配置、重启引擎的完整事务。
-/// 第二笔不能在第一笔中途插进来，否则两边会互相覆盖配置和 selector。
+/// Any connect/disconnect/takeover/VPS change is one complete transaction.
+/// A second one cannot enter midway, or the two operations overwrite engine
+/// state and leave a long tail of launchd work after the user's last click.
 public struct PendingNetConnectionOperationGate: Sendable {
     public private(set) var isBusy = false
 

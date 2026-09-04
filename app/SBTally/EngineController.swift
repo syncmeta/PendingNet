@@ -32,6 +32,10 @@ final class EngineController: ObservableObject {
     /// Set after a `start()` attempt whose post-refresh status shows the
     /// engine still isn't running — signals the GUI should surface `logTail`.
     @Published var startFailed = false
+    /// True for the complete user-visible connection transaction, not just an
+    /// individual XPC call. Views disable all competing controls while this is
+    /// true so repeated clicks cannot enqueue minutes of stale start/stop work.
+    @Published private(set) var connectionBusy = false
     /// TUN / 系统代理下由 root helper 实际应用的 VPS selector。仅端口模式仍从
     /// `AppState.proxies["proxy"]` 读取；两份引擎的控制口和密钥不能混用。
     @Published private(set) var activeSelectorTag: String?
@@ -47,6 +51,7 @@ final class EngineController: ObservableObject {
     private var didAdoptHelperMode = false
     private let userEngine: PendingNetUserEngine
     private let startupPreferences: PendingNetStartupPreferences
+    private var connectionOperationGate = PendingNetConnectionOperationGate()
 
     /// 本机代理端口与监听范围。设置页可改；连接页不再显示。
     @Published private(set) var localProxyPort: Int
@@ -69,6 +74,21 @@ final class EngineController: ObservableObject {
         startupPreferences = PendingNetStartupPreferences(defaults: defaults)
         localProxyPort = userEngine.proxyPort
         allowsLAN = userEngine.allowsLAN
+    }
+
+    /// Runs one complete connection mutation at a time. The gate flips before
+    /// the first await, so tasks already queued by rapid UI clicks are rejected
+    /// synchronously when they reach the main actor.
+    @discardableResult
+    func performConnectionChange(_ operation: () async -> Void) async -> Bool {
+        guard connectionOperationGate.begin() else { return false }
+        connectionBusy = true
+        defer {
+            connectionOperationGate.end()
+            connectionBusy = false
+        }
+        await operation()
+        return true
     }
 
     /// “开机自启”恢复的是用户最后一次明确留下的连接开关，不是某次崩溃后

@@ -56,6 +56,34 @@ final class PendingNetEngineRestartTests: XCTestCase {
             of: "\t\t\tstate = active", with: "\t\t\tpid = 999")
         XCTAssertEqual(PendingNetEngineRestart.parsePID(launchctlPrintOutput: withNested), 588)
     }
+
+    /// Repeated clicks can enqueue another start after the first one already
+    /// succeeded. That second request must reuse the live engine instead of
+    /// booting it out and rebuilding the TUN again.
+    func testStartIsIdempotentOnceTheEngineIsRunning() {
+        XCTAssertEqual(
+            PendingNetEngineLifecycle.startAction(engineRunning: true),
+            .reuseRunningEngine
+        )
+        XCTAssertEqual(
+            PendingNetEngineLifecycle.startAction(engineRunning: false),
+            .launchEngine
+        )
+    }
+
+    /// A second stop arriving after the first one finished is success, not a
+    /// launchctl error and another DNS flush.
+    func testStopIsIdempotentOnceTheEngineHasExited() {
+        XCTAssertEqual(PendingNetEngineLifecycle.stopAction(enginePID: nil), .alreadyStopped)
+        XCTAssertEqual(PendingNetEngineLifecycle.stopAction(enginePID: 588), .stopEngine(588))
+    }
+
+    /// A delayed link-change recovery must not resurrect an engine after a
+    /// user stop won the serialized-operation race.
+    func testSelfHealRechecksThatTheEngineStillShouldRun() {
+        XCTAssertTrue(PendingNetEngineLifecycle.shouldRunSelfHeal(engineRunning: true))
+        XCTAssertFalse(PendingNetEngineLifecycle.shouldRunSelfHeal(engineRunning: false))
+    }
 }
 
 final class PendingNetLocalEngineResidueTests: XCTestCase {

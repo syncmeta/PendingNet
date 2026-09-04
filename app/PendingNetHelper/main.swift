@@ -11,6 +11,19 @@ let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
 let ACTIVE_SELECTOR = "\(ETC)/pendingnet-active-selector"
 let ROUTE_MODE = "\(ETC)/route-mode"
 
+/// User actions and the link self-healer can all reach the engine at once.
+/// Keep every destructive launchd/config transition in one critical section;
+/// recursive is intentional because a serialized public operation can call
+/// `restartEngine`, which uses the same guard.
+let ENGINE_OPERATION_LOCK = NSRecursiveLock()
+
+@discardableResult
+func withSerializedEngineOperation<T>(_ body: () throws -> T) rethrows -> T {
+    ENGINE_OPERATION_LOCK.lock()
+    defer { ENGINE_OPERATION_LOCK.unlock() }
+    return try body()
+}
+
 func sh(_ args: [String]) -> (Int32, String) {
     let p = Process(); p.executableURL = URL(fileURLWithPath: args[0])
     p.arguments = Array(args.dropFirst())
@@ -302,6 +315,12 @@ func engineLogWritten(since offset: Int) -> String {
 /// 补救到头还是绑不上时也返回 nil —— 引擎确实起来了，而这时候把 VPS 配置回滚掉
 /// 只会让事情更糟，留一行日志给人看更实在。
 func restartEngine(context: String) -> String? {
+    withSerializedEngineOperation {
+        restartEngineLocked(context: context)
+    }
+}
+
+private func restartEngineLocked(context: String) -> String? {
     var retries = 0
     while true {
         let before = fileSize(ENGINE_LOG)
@@ -507,6 +526,12 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     }
 
     func startEngine(reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            startEngineLocked(reply: reply)
+        }
+    }
+
+    private func startEngineLocked(reply: @escaping (String?) -> Void) {
         // Invariant: the system proxy is only ever left enabled when the engine
         // is actually running. Every failure path below must therefore tear it
         // down — otherwise the machine is left pointing at a dead port and all
@@ -514,6 +539,22 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         func fail(_ message: String?) {
             disableOwnedSystemProxy()
             reply(message)
+        }
+
+        switch PendingNetEngineLifecycle.startAction(engineRunning: engineRunning()) {
+        case .reuseRunningEngine:
+            if currentMode() == "sysproxy" {
+                if !FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER) {
+                    enableOwnedSystemProxy()
+                }
+            } else {
+                disableOwnedSystemProxy()
+            }
+            syncStatsCollector()
+            helperLog("启动引擎：已经在运行，忽略重复请求")
+            return reply(nil)
+        case .launchEngine:
+            break
         }
         _ = launchctl(["bootout", LABEL])   // idempotent
         if let error = prepareEngineConfigDirectory() { return fail(error) }
@@ -542,24 +583,41 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         reply(nil)
     }
     func stopEngine(reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            stopEngineLocked(reply: reply)
+        }
+    }
+
+    private func stopEngineLocked(reply: @escaping (String?) -> Void) {
         // 采集器先停：它是引擎的附庸，引擎都要没了就没有东西可采。也保证不会有
         // 一个还占着统计端口的进程挡住下一个 owner（切到「仅端口」时是 app）。
         stats.stop()
         disableOwnedSystemProxy()
+        let action = PendingNetEngineLifecycle.stopAction(enginePID: enginePID())
+        guard case .stopEngine(let running) = action else {
+            // A loaded-but-not-running launchd job is still worth forgetting,
+            // but "not found" is the expected idempotent result, not an error.
+            _ = launchctl(["bootout", LABEL])
+            helperLog("停止引擎：已经停止，忽略重复请求")
+            return reply(nil)
+        }
         // 停这一侧也得冲：TUN 在的时候解析出来的是 fake-ip（198.18.x.x），引擎一走
         // 那些地址就没人接了，缓存里留着它们连直连都打不开。等那个进程真的没了再冲，
         // 不然 TUN 还在，冲完立刻又被塞回一批 fake-ip。
-        let running = enginePID()
         reply(PendingNetDNSCacheFlush.afterEngineDown(.engineStopped, stop: {
             let error = launchctl(["bootout", LABEL])
-            if let running {
-                _ = waitForProcessToExit(
-                    running, timeout: PendingNetEngineRestart.gracefulStopTimeout)
-            }
+            _ = waitForProcessToExit(
+                running, timeout: PendingNetEngineRestart.gracefulStopTimeout)
             return error
         }, flush: flushSystemDNSCache))
     }
     func setTakeover(_ mode: String, reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            setTakeoverLocked(mode, reply: reply)
+        }
+    }
+
+    private func setTakeoverLocked(_ mode: String, reply: @escaping (String?) -> Void) {
         guard ["tun", "sysproxy", "local"].contains(mode) else { return reply("bad mode") }
         if mode != "local", let error = prepareEngineConfigDirectory() {
             return reply(error)
@@ -599,6 +657,12 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     /// cause. Recording happens even with no engine up: the choice is a
     /// preference, and `reapplyStoredRouteMode` lands it at the next start.
     func setRouteMode(_ mode: String, reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            setRouteModeLocked(mode, reply: reply)
+        }
+    }
+
+    private func setRouteModeLocked(_ mode: String, reply: @escaping (String?) -> Void) {
         guard let known = PendingNetRouteMode.clashNamed(mode) else {
             return reply("不认识的路由模式：\(mode)")
         }
@@ -618,12 +682,32 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     /// engine behind it — the state a crashed or half-failed start leaves the
     /// machine in, where every proxied connection is refused.
     func repairSystemProxy(reply: @escaping (Bool) -> Void) {
-        guard FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER),
-              !engineRunning() else { return reply(false) }
-        disableOwnedSystemProxy()
-        reply(true)
+        withSerializedEngineOperation {
+            guard FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER),
+                  !engineRunning() else { return reply(false) }
+            disableOwnedSystemProxy()
+            reply(true)
+        }
     }
     func applyServerConfiguration(
+        _ serverID: String,
+        name: String,
+        selectorTag: String,
+        proxyOutbounds: Data,
+        reply: @escaping (String?) -> Void
+    ) {
+        withSerializedEngineOperation {
+            applyServerConfigurationLocked(
+                serverID,
+                name: name,
+                selectorTag: selectorTag,
+                proxyOutbounds: proxyOutbounds,
+                reply: reply
+            )
+        }
+    }
+
+    private func applyServerConfigurationLocked(
         _ serverID: String,
         name: String,
         selectorTag: String,
@@ -898,6 +982,19 @@ final class LinkSelfHealer {
     }
 
     private func heal(reason: String) {
+        withSerializedEngineOperation {
+            healLocked(reason: reason)
+        }
+    }
+
+    private func healLocked(reason: String) {
+        // `tick()` decided while the engine was running, but a user stop may
+        // have won the lock before this delayed recovery. Re-check inside the
+        // same critical section or the watchdog can resurrect an engine the
+        // user just turned off.
+        guard PendingNetEngineLifecycle.shouldRunSelfHeal(engineRunning: engineRunning()) else {
+            return helperLog("自愈取消：引擎已经由用户停止")
+        }
         helperLog("自愈：\(reason)")
         if let error = PendingNetDNSCacheFlush.afterEngineUp(
             .linkSelfHealed,

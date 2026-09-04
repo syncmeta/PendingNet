@@ -32,6 +32,36 @@ public enum PendingNetEngineRestart {
     }
 }
 
+/// Makes helper start/stop requests idempotent before they touch launchd.
+///
+/// The UI can produce a second request while the first XPC round-trip is still
+/// finishing. Rebuilding an already-live TUN makes the machine lose networking
+/// again; booting out an already-stopped job turns a successful stop into a
+/// launchctl error. Both repeated requests are successful no-ops instead.
+public enum PendingNetEngineLifecycle {
+    public enum StartAction: Equatable, Sendable {
+        case reuseRunningEngine
+        case launchEngine
+    }
+
+    public enum StopAction: Equatable, Sendable {
+        case alreadyStopped
+        case stopEngine(Int32)
+    }
+
+    public static func startAction(engineRunning: Bool) -> StartAction {
+        engineRunning ? .reuseRunningEngine : .launchEngine
+    }
+
+    public static func stopAction(enginePID: Int32?) -> StopAction {
+        enginePID.map(StopAction.stopEngine) ?? .alreadyStopped
+    }
+
+    public static func shouldRunSelfHeal(engineRunning: Bool) -> Bool {
+        engineRunning
+    }
+}
+
 /// 识别旧 App 留下的「仅端口」引擎时，能在无副作用层完成的部分。
 ///
 /// 真正查监听者、核对控制密钥和发信号都在 macOS App 里；这里仅解析系统自带

@@ -12,8 +12,10 @@ enum PendingNetConnectionWorkflow {
     ) async {
         guard pairing.beginConnectionChange() else { return }
         defer { pairing.endConnectionChange() }
-        guard let runtime = await pairing.importAndEnroll(pasted: text) else { return }
-        await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
+        _ = await engine.performConnectionChange {
+            guard let runtime = await pairing.importAndEnroll(pasted: text) else { return }
+            await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
+        }
     }
 
     /// 系统从外面递进来的 pendingnet:// 配对链接，也转成同一个粘贴导入入口。
@@ -35,18 +37,49 @@ enum PendingNetConnectionWorkflow {
         engine: EngineController,
         state: AppState
     ) async {
-        if on {
-            await engine.start()
-            guard engine.running else { return }
-            if engine.takeover == "local" {
-                await state.loadControl()
+        _ = await engine.performConnectionChange {
+            if on {
+                await engine.start()
+                guard engine.running else { return }
+                if engine.takeover == "local" {
+                    await state.loadControl()
+                } else {
+                    state.clearLocalControl()
+                }
+                await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
             } else {
-                state.clearLocalControl()
+                await engine.stop()
+                if !engine.running { state.clearLocalControl() }
             }
+        }
+    }
+
+    /// Changing ownership can stop one engine, rewrite config, and restart the
+    /// other. Keep the whole sequence under the same gate as the main toggle.
+    static func setTakeover(
+        _ mode: String,
+        engine: EngineController,
+        state: AppState
+    ) async {
+        _ = await engine.performConnectionChange {
+            await engine.setTakeover(mode)
             await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
-        } else {
-            await engine.stop()
-            if !engine.running { state.clearLocalControl() }
+        }
+    }
+
+    /// A route change reaches the same helper/control API as start and switch;
+    /// it must not race an engine replacement already in progress.
+    static func setRouteMode(
+        _ mode: PendingNetRouteMode,
+        engine: EngineController,
+        state: AppState
+    ) async {
+        _ = await engine.performConnectionChange {
+            await PendingNetRoutingWorkflow.select(
+                mode: mode.clashName,
+                engine: engine,
+                state: state
+            )
         }
     }
 
@@ -58,8 +91,10 @@ enum PendingNetConnectionWorkflow {
     ) async {
         guard pairing.beginConnectionChange() else { return }
         defer { pairing.endConnectionChange() }
-        guard let runtime = await pairing.runtimeServer(for: server) else { return }
-        await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
+        _ = await engine.performConnectionChange {
+            guard let runtime = await pairing.runtimeServer(for: server) else { return }
+            await applyAndConnect(runtime, pairing: pairing, engine: engine, state: state)
+        }
     }
 
     private static func applyAndConnect(
