@@ -67,6 +67,10 @@ final class PendingNetIOSController: ObservableObject {
             .store(in: &cancellables)
     }
 
+    func renameServer(_ serverID: String, to name: String) {
+        store.rename(serverID: serverID, to: name)
+    }
+
     /// 把 iOS 自己的老存档搬进共用存储（v2 数组优先，没有就看 v1 的单台），
     /// 再接上共用存储当前的名单。
     private func loadPersistedServers() {
@@ -150,7 +154,7 @@ final class PendingNetIOSController: ObservableObject {
                     persistServers()
                 }
             }
-            message = "已导入 \(items.count) 个节点"
+            message = String(format: NSLocalizedString("已导入 %lld 个节点", comment: "Imported node count"), Int64(items.count))
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -167,7 +171,7 @@ final class PendingNetIOSController: ObservableObject {
         )
         let paired = IOSPairedServer(
             serverID: result.server.serverID,
-            name: result.server.name,
+            name: URL(string: pairing.control.endpoint)?.host ?? result.server.name,
             endpoint: pairing.control.endpoint,
             certificateSHA256: pairing.control.certificateSHA256,
             deviceID: result.deviceID,
@@ -221,7 +225,7 @@ final class PendingNetIOSController: ObservableObject {
         } catch {
             selectedServerID = previousID
             nodeProfile = previousProfile
-            errorMessage = "切换 VPS 失败，已保持原来那台：\(error.localizedDescription)"
+            errorMessage = String(format: NSLocalizedString("切换 VPS 失败，已保持原来那台：%@", comment: "VPS switch error"), error.localizedDescription)
         }
     }
 
@@ -248,7 +252,7 @@ final class PendingNetIOSController: ObservableObject {
         guard let server else { return }
         do {
             guard let token = try PendingNetCredentialStore.load(serverID: server.serverID) else {
-                throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，请重新导入它的链接")
+                throw PendingNetPairingError.serverRejected(String(localized: "这台设备还没有这台 VPS 的访问凭据，请重新导入它的链接"))
             }
             if server.isSharedNode {
                 nodeProfile = try PendingNetSharedNode.decode(link: token).profile

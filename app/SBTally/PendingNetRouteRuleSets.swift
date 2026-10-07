@@ -112,19 +112,19 @@ struct PendingNetRouteRuleSets {
             guard let (data, response) = try? await session.data(from: source.url),
                   let http = response as? HTTPURLResponse,
                   (200..<300).contains(http.statusCode) else {
-                failure = failure ?? "规则集下载失败：\(source.name)"
+                failure = failure ?? String(format: NSLocalizedString("规则集下载失败：%@", comment: "Rule-set download failure"), source.name)
                 continue
             }
             // .srs files start with "SRS" — an HTML error page must not be
             // written to the cache and then fail config validation.
             guard data.count > 64, data.prefix(3) == Data("SRS".utf8) else {
-                failure = failure ?? "规则集内容不是有效的 .srs（可能被网络中间设备替换）：\(source.name)"
+                failure = failure ?? String(format: NSLocalizedString("规则集内容不是有效的 .srs（可能被网络中间设备替换）：%@", comment: "Invalid downloaded rule set"), source.name)
                 continue
             }
             do {
                 try data.write(to: destination, options: .atomic)
             } catch {
-                failure = failure ?? "规则集写入失败：\(source.name)"
+                failure = failure ?? String(format: NSLocalizedString("规则集写入失败：%@", comment: "Rule-set write failure"), source.name)
             }
         }
         return failure

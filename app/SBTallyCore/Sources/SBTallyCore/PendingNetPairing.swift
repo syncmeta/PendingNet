@@ -45,10 +45,12 @@ public struct PendingNetPairingFile: Codable, Equatable, Sendable {
     public struct Enrollment: Codable, Equatable, Sendable {
         public var token: String
         public var expiresAt: Date
+        public var role: String?
 
         enum CodingKeys: String, CodingKey {
             case token
             case expiresAt = "expires_at"
+            case role
         }
     }
 
@@ -72,7 +74,7 @@ public struct PendingNetPairingFile: Codable, Equatable, Sendable {
               let control = root["control"] as? [String: Any],
               Set(control.keys) == ["endpoint", "certificate_sha256"],
               let enrollment = root["enrollment"] as? [String: Any],
-              Set(enrollment.keys) == ["token", "expires_at"] else {
+              Set(enrollment.keys) == ["token", "expires_at"] || Set(enrollment.keys) == ["token", "expires_at", "role"] else {
             throw PendingNetPairingError.unexpectedFields
         }
     }
@@ -106,6 +108,9 @@ public struct PendingNetPairingFile: Codable, Equatable, Sendable {
         guard enrollment.token.count >= 32 else {
             throw PendingNetPairingError.invalidToken
         }
+        guard enrollment.role == nil || enrollment.role == "admin" else {
+            throw PendingNetPairingError.unexpectedFields
+        }
         guard now < enrollment.expiresAt else {
             throw PendingNetPairingError.expired
         }
@@ -129,26 +134,35 @@ public enum PendingNetPairingError: LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedFormat(let format): "不支持的配对文件格式：\(format)"
-        case .unsupportedVersion(let version): "不支持的配对文件版本：\(version)"
-        case .missingIdentity: "配对文件缺少 VPS 身份"
-        case .invalidEndpoint: "PendingNet Server 地址无效"
-        case .invalidFingerprint: "PendingNet Server 证书指纹无效"
-        case .invalidToken: "配对令牌无效"
-        case .expired: "配对文件已过期，请在 VPS 上重新生成"
-        case .unexpectedFields: "配对文件字段不完整或包含当前版本不认识的内容"
-        case .invalidLink: "这不是一条 PendingNet 配对链接，请复制完整的 pendingnet:// 链接再试"
-        case .invalidServerResponse: "PendingNet Server 返回了无效响应"
+        case .unsupportedFormat(let format):
+            String(format: localizedPairingError("不支持的配对文件格式：%@"), format)
+        case .unsupportedVersion(let version):
+            String(format: localizedPairingError("不支持的配对文件版本：%lld"), Int64(version))
+        case .missingIdentity: localizedPairingError("配对文件缺少 VPS 身份")
+        case .invalidEndpoint: localizedPairingError("PendingNet Server 地址无效")
+        case .invalidFingerprint: localizedPairingError("PendingNet Server 证书指纹无效")
+        case .invalidToken: localizedPairingError("配对令牌无效")
+        case .expired: localizedPairingError("配对文件已过期，请在 VPS 上重新生成")
+        case .unexpectedFields: localizedPairingError("配对文件字段不完整或包含当前版本不认识的内容")
+        case .invalidLink: localizedPairingError("这不是一条 PendingNet 配对链接，请复制完整的 pendingnet:// 链接再试")
+        case .invalidServerResponse: localizedPairingError("PendingNet Server 返回了无效响应")
         case .serverRejected(let message): message
-        case .keychain(let status): "保存 VPS 凭据失败（Keychain \(status)）"
-        case .transport(let message): "PendingNet Server 连接失败：\(message)"
+        case .keychain(let status):
+            String(format: localizedPairingError("保存 VPS 凭据失败（Keychain %lld）"), Int64(status))
+        case .transport(let message):
+            String(format: localizedPairingError("PendingNet Server 连接失败：%@"), message)
         }
     }
+}
+
+private func localizedPairingError(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "Pairing error")
 }
 
 public struct PendingNetEnrollmentResult: Codable, Equatable, Sendable {
     public var deviceID: String
     public var accessToken: String
+    public var role: String?
     public var server: Server
 
     public struct Server: Codable, Equatable, Sendable {
@@ -165,7 +179,7 @@ public struct PendingNetEnrollmentResult: Codable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case server
+        case server, role
         case deviceID = "device_id"
         case accessToken = "access_token"
     }
@@ -284,7 +298,7 @@ public struct PendingNetServerClient: Sendable {
     private func decodeNodeProfile(data: Data, statusCode: Int) throws -> PendingNetNodeProfile {
         guard statusCode == 200 else {
             let message = (try? JSONDecoder().decode(ServerError.self, from: data).message)
-                ?? "读取 VPS 节点资料失败（HTTP \(statusCode)）"
+                ?? String(format: localizedPairingError("读取 VPS 节点资料失败（HTTP %lld）"), Int64(statusCode))
             throw PendingNetPairingError.serverRejected(message)
         }
         let profile = try JSONDecoder().decode(PendingNetNodeProfile.self, from: data)
@@ -356,12 +370,13 @@ public struct PendingNetEnrollmentClient: Sendable {
     ) throws -> PendingNetEnrollmentResult {
         guard statusCode == 201 else {
             let message = (try? JSONDecoder().decode(ServerError.self, from: data).message)
-                ?? "PendingNet Server 拒绝配对（HTTP \(statusCode)）"
+                ?? String(format: localizedPairingError("PendingNet Server 拒绝配对（HTTP %lld）"), Int64(statusCode))
             throw PendingNetPairingError.serverRejected(message)
         }
         let result = try JSONDecoder().decode(PendingNetEnrollmentResult.self, from: data)
         guard result.server.serverID == pairing.serverID,
-              !result.deviceID.isEmpty, !result.accessToken.isEmpty else {
+              !result.deviceID.isEmpty, !result.accessToken.isEmpty,
+              result.role == pairing.enrollment.role else {
             throw PendingNetPairingError.invalidServerResponse
         }
         return result

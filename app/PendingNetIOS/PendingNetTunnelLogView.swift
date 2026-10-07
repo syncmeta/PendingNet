@@ -31,8 +31,8 @@ struct PendingNetTunnelLogView: View {
 
         var title: String {
             switch self {
-            case .kernel: "内核日志"
-            case .extensionSelf: "扩展日志"
+            case .kernel: String(localized: "内核日志")
+            case .extensionSelf: String(localized: "扩展日志")
             }
         }
     }
@@ -113,8 +113,7 @@ struct PendingNetTunnelLogView: View {
             PendingEmptyState(
                 icon: "waveform.path.ecg",
                 title: "还没有内核日志",
-                detail: "内核日志只能在隧道运行时读取。连接之后回到这里，"
-                    + "扩展里已经缓存的日志会一次性回放上来。"
+                detail: "内核日志只能在隧道运行时读取。连接之后回到这里，扩展里已经缓存的日志会一次性回放上来。"
             )
             .frame(maxWidth: .infinity)
         } else {
@@ -135,11 +134,11 @@ struct PendingNetTunnelLogView: View {
             // 截断是事实、不是解释，得留着——否则看到的是半截日志却不知道
             // 它是半截的。分享导出在右上角，用户找得到。
             if truncated {
-                Text("只显示末尾 \(Self.maxTailBytes / 1024) KB")
+                Text(String(format: NSLocalizedString("只显示末尾 %lld KB", comment: "Log tail size"), Self.maxTailBytes / 1024))
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
-            monospaced(tail.isEmpty ? "（日志为空）" : tail)
+            monospaced(tail.isEmpty ? String(localized: "（日志为空）") : tail)
         }
     }
 
@@ -173,7 +172,7 @@ struct PendingNetTunnelLogView: View {
         loadError = nil
         lastError = nil
         guard let base = PendingNetTunnelPaths.container() else {
-            loadError = "无法访问 App Group 容器"
+            loadError = String(localized: "无法访问 App Group 容器")
             logURL = nil
             return
         }
@@ -186,13 +185,13 @@ struct PendingNetTunnelLogView: View {
         let url = PendingNetTunnelPaths.stderrLogURL(in: base)
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else {
-            loadError = "隧道还没有产生过扩展日志，先连接一次再来看。"
+            loadError = String(localized: "隧道还没有产生过扩展日志，先连接一次再来看。")
             logURL = nil
             tail = ""
             return
         }
         guard let handle = FileHandle(forReadingAtPath: url.path) else {
-            loadError = "无法打开日志文件"
+            loadError = String(localized: "无法打开日志文件")
             logURL = nil
             return
         }
@@ -208,7 +207,7 @@ struct PendingNetTunnelLogView: View {
                 try handle.seek(toOffset: 0)
             }
         } catch {
-            loadError = "读取日志失败：\(error.localizedDescription)"
+            loadError = String(format: NSLocalizedString("读取日志失败：%@", comment: "Log read failure"), error.localizedDescription)
             logURL = nil
             return
         }

@@ -56,11 +56,6 @@ struct SettingsView: View {
                 .font(PendingNetTheme.Fonts.body)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
 
-                Text("打开后，登录时恢复上次留下的连接开关、接管方式、路由、VPS 和协议。上次关着就保持关闭。")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 if let error = startup.lastError {
                     Text(error)
                         .font(PendingNetTheme.Fonts.caption)

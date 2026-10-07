@@ -49,7 +49,7 @@ final class PendingNetStatsDaemon {
         if case .running = state, process?.isRunning != true {
             let tail = logTail()
             state = .failed(tail.isEmpty
-                ? "统计服务意外退出了。断开再连接一次会重新拉起它。"
+                ? String(localized: "统计服务意外退出了。断开再连接一次会重新拉起它。")
                 : tail)
         }
         return state
@@ -62,11 +62,11 @@ final class PendingNetStatsDaemon {
     func start() async {
         if isRunning { return }
         guard let binary = binaryURL() else {
-            state = .failed("这个 PendingNet 版本里没有统计程序（sbtally）。重新安装一次 App 就会带上它。")
+            state = .failed(String(localized: "这个 PendingNet 版本里没有统计程序（sbtally）。重新安装一次 App 就会带上它。"))
             return
         }
         guard PendingNetStatsService.readSecret(at: secretURL) != nil else {
-            state = .failed("引擎还没有生成控制密钥，统计服务暂时连不上它。等代理连上之后会自动重试。")
+            state = .failed(String(localized: "引擎还没有生成控制密钥，统计服务暂时连不上它。等代理连上之后会自动重试。"))
             return
         }
 
@@ -87,22 +87,22 @@ final class PendingNetStatsDaemon {
             port = value
         case .takeOverLegacy(let value):
             // 收拾过一轮还是它 —— 别再收第二遍，直接说清楚。
-            state = .failed("端口 \(value) 上还有另一个统计服务在跑，PendingNet 没能接管它。")
+            state = .failed(String(format: NSLocalizedString("端口 %lld 上还有另一个统计服务在跑，PendingNet 没能接管它。", comment: "Statistics service port occupied"), Int64(value)))
             return
         case .allOccupied(let candidates):
             let first = candidates.first ?? PendingNetStatsService.defaultPort
             let last = candidates.last ?? first
-            state = .failed(
-                "统计接口要的端口 \(first) 被别的程序占着，备用的 \(first + 1)–\(last) 也都不空。"
-                + "腾出其中一个端口，再断开重连一次。"
-                + "（查是谁占的：终端里跑 lsof -nP -iTCP:\(first) -sTCP:LISTEN）")
+            state = .failed(String(format: NSLocalizedString(
+                "统计接口要的端口 %lld 被别的程序占着，备用的 %lld–%lld 也都不空。腾出其中一个端口，再断开重连一次。（查是谁占的：终端里跑 lsof -nP -iTCP:%lld -sTCP:LISTEN）",
+                comment: "All statistics service ports occupied"
+            ), Int64(first), Int64(first + 1), Int64(last), Int64(first)))
             return
         }
 
         do {
             try launch(binary: binary, port: port)
         } catch {
-            state = .failed("统计服务启动失败：\(error.localizedDescription)")
+            state = .failed(String(format: NSLocalizedString("统计服务启动失败：%@", comment: "Statistics service startup failure"), error.localizedDescription))
             return
         }
 
@@ -113,7 +113,7 @@ final class PendingNetStatsDaemon {
         }
         let tail = logTail()
         await stop()
-        state = .failed(tail.isEmpty ? "统计服务起来了但没有响应，请重新连接一次。" : tail)
+        state = .failed(tail.isEmpty ? String(localized: "统计服务起来了但没有响应，请重新连接一次。") : tail)
     }
 
     func stop() async {

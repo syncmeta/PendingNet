@@ -11,8 +11,8 @@ private enum PendingNetLogSource: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .engine: "sing-box"
-        case .stats: "统计服务"
-        case .helper: "后台服务"
+        case .stats: String(localized: "统计服务")
+        case .helper: String(localized: "后台服务")
         }
     }
 
@@ -84,6 +84,12 @@ struct LogsView: View {
                 }
             }
 
+            if source != .engine {
+                Text("统计和后台服务日志按事件写入；时间较早不一定表示服务已停止。")
+                    .font(PendingNetTheme.Fonts.caption)
+                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+            }
+
             logContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -147,15 +153,16 @@ struct LogsView: View {
             }.value
             guard loadedPath == path else { return }
             lines = snapshot.lines
+            let size = humanBytes(Int64(clamping: snapshot.fileSize))
             summary = snapshot.isTruncated
-                ? "最近 \(snapshot.lines.count) 行 · 文件 \(humanBytes(Int64(clamping: snapshot.fileSize)))"
-                : "\(snapshot.lines.count) 行 · \(humanBytes(Int64(clamping: snapshot.fileSize)))"
+                ? String(format: NSLocalizedString("最近 %lld 行 · 文件 %@", comment: "Truncated log summary"), snapshot.lines.count, size)
+                : String(format: NSLocalizedString("%lld 行 · %@", comment: "Log summary"), snapshot.lines.count, size)
             error = nil
         } catch CocoaError.fileReadNoSuchFile {
             guard loadedPath == path else { return }
             lines = []
             summary = ""
-            error = "还没有生成这份日志。"
+            error = String(localized: "还没有生成这份日志。")
         } catch let readError {
             guard loadedPath == path else { return }
             lines = []

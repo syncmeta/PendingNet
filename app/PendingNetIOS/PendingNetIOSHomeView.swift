@@ -61,10 +61,10 @@ struct PendingNetIOSHomeView: View {
             PendingNetServerDetailSheet(
                 server: server,
                 latency: latency.outcome(for: server.serverID),
-                isMeasuring: latency.isMeasuring(server.serverID)
-            ) {
-                Task { await latency.measure(server) }
-            }
+                isMeasuring: latency.isMeasuring(server.serverID),
+                onMeasure: { Task { await measure(server) } },
+                onRename: { controller.renameServer(server.serverID, to: $0) }
+            )
         }
         .task { await controller.refreshNodeProfile() }
         .task { await controller.tunnel.load() }
@@ -194,13 +194,13 @@ struct PendingNetIOSHomeView: View {
             do {
                 try await controller.ruleSetStore.ensureAvailable(for: mode)
                 if !controller.ruleSetStore.isReady(for: mode) {
-                    reason = "规则集文件不完整或不是有效的 .srs"
+                    reason = String(localized: "规则集文件不完整或不是有效的 .srs")
                 }
             } catch {
                 reason = error.localizedDescription
             }
             if let reason {
-                controller.errorMessage = "规则集不可用，已保持全局：\(reason)"
+                controller.errorMessage = String(format: NSLocalizedString("规则集不可用，已保持全局：%@", comment: "Route rules unavailable"), reason)
                 // 降级：确保隧道（如果在位）确实跑在全局上，而不是停在
                 // 「用户点了白名单，但没人知道最终生效的是哪个模式」这种
                 // 界面选中项和隧道实际配置对不上的状态。
@@ -232,7 +232,7 @@ struct PendingNetIOSHomeView: View {
             try await controller.tunnel.reload(profile: profile, serverName: serverName)
         } catch {
             controller.tunnel.setRouteMode(previous, profile: profile, serverName: serverName)
-            controller.errorMessage = "切换分流模式失败，已回退：\(error.localizedDescription)"
+            controller.errorMessage = String(format: NSLocalizedString("切换分流模式失败，已回退：%@", comment: "Route mode rollback"), error.localizedDescription)
         }
     }
 
@@ -243,9 +243,7 @@ struct PendingNetIOSHomeView: View {
             HStack {
                 Spacer()
                 if !controller.servers.isEmpty {
-                    Button("测延迟") {
-                        Task { await latency.measureAll(controller.servers) }
-                    }
+                    Button("测延迟") { testAll() }
                     .buttonStyle(PendingQuietButtonStyle(
                         fill: PendingNetTheme.Palette.surface
                     ))
@@ -275,6 +273,34 @@ struct PendingNetIOSHomeView: View {
             } onShowDetails: { serverID in
                 detailServerID = serverID
             }
+        }
+    }
+
+    private func measure(_ server: IOSPairedServer) async {
+        if controller.tunnel.isTunnelLive,
+           controller.selectedServerID == server.serverID {
+            await latency.measureProxy(server) {
+                try await controller.tunnel.measureSelectedProxyDelay()
+            }
+        } else {
+            await latency.measure(server)
+        }
+    }
+
+    private func testAll() {
+        let active = controller.tunnel.isTunnelLive ? controller.selectedServerID : nil
+        let tunnel = controller.tunnel
+        let servers = controller.servers
+        let tester = latency
+        if let active {
+            Task<Void, Never> {
+                await tester.measureAll(
+                    servers, activeServerID: active,
+                    proxyProbe: { try await tunnel.measureSelectedProxyDelay() }
+                )
+            }
+        } else {
+            Task<Void, Never> { await tester.measureAll(servers) }
         }
     }
 
@@ -353,7 +379,9 @@ struct PendingNetServerDetailSheet: View {
     let latency: PendingNetLatencyOutcome?
     let isMeasuring: Bool
     let onMeasure: () -> Void
+    let onRename: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var nameDraft = ""
 
     var body: some View {
         NavigationStack {
@@ -365,6 +393,13 @@ struct PendingNetServerDetailSheet: View {
                         spacing: 12,
                         latency: latency
                     )
+
+                    HStack {
+                        TextField("名称（留空则用 IP）", text: $nameDraft)
+                            .textFieldStyle(.roundedBorder)
+                        Button("保存") { onRename(nameDraft) }
+                            .buttonStyle(PendingQuietButtonStyle())
+                    }
 
                     Button {
                         onMeasure()
@@ -397,5 +432,6 @@ struct PendingNetServerDetailSheet: View {
             }
         }
         .presentationDetents([.medium])
+        .onAppear { nameDraft = server.name }
     }
 }

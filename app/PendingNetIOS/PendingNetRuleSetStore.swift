@@ -57,7 +57,7 @@ final class PendingNetRuleSetStore: ObservableObject {
     /// 前面几份可能已经落地了，让那个标签停在旧值只会误导。
     private func download(tags: [String], force: Bool) async throws {
         guard let directory = Self.directory() else {
-            throw PendingNetPairingError.serverRejected("无法访问 App Group 容器")
+            throw PendingNetPairingError.serverRejected(String(localized: "无法访问 App Group 容器"))
         }
         defer {
             isReady = Self.allPresent()
@@ -72,7 +72,7 @@ final class PendingNetRuleSetStore: ObservableObject {
             defer { try? FileManager.default.removeItem(at: temporary) }
 
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw PendingNetPairingError.serverRejected("规则集下载失败：\(source.name)")
+                throw PendingNetPairingError.serverRejected(String(format: NSLocalizedString("规则集下载失败：%@", comment: "Rule-set download failure"), source.name))
             }
             // 只看状态码和大小是不够的：`raw.githubusercontent.com` 在大陆网络
             // 下不可达，中间设备或门户页返回 200 + 一段 HTML 是很现实的结果，
@@ -81,7 +81,7 @@ final class PendingNetRuleSetStore: ObservableObject {
             // 认 `.srs` 的魔数（sing-box common/srs/binary.go 的 MagicBytes）。
             guard PendingNetTunnelConfig.looksLikeRuleSet(at: temporary.path) else {
                 throw PendingNetPairingError.serverRejected(
-                    "规则集内容不是有效的 .srs（可能被网络中间设备替换）：\(source.name)"
+                    String(format: NSLocalizedString("规则集内容不是有效的 .srs（可能被网络中间设备替换）：%@", comment: "Invalid downloaded rule set"), source.name)
                 )
             }
 

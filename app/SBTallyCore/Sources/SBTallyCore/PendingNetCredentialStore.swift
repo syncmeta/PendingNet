@@ -358,3 +358,27 @@ public enum PendingNetCredentialStore {
         return results
     }
 }
+
+/// Management credentials are separate from connection credentials. An admin
+/// link must never replace the ordinary proxy token for the same server, nor
+/// be silently copied to another device through iCloud Keychain.
+public enum PendingNetAdminCredentialStore {
+    public static let service = "net.pending.PendingNet.admin-token"
+    public static let locations: [PendingNetKeychainLocation] = [
+        .init(dataProtection: false, synchronizable: false, accessGroup: nil),
+    ]
+
+    static func makeCore(backend: PendingNetKeychainBackend) -> PendingNetCredentialStoreCore {
+        PendingNetCredentialStoreCore(service: service, locations: locations, backend: backend)
+    }
+
+    private static let core = makeCore(backend: SecItemKeychainBackend())
+
+    public static func save(accessToken: String, serverID: String) throws {
+        try core.save(accessToken: accessToken, serverID: serverID)
+    }
+
+    public static func load(serverID: String) throws -> String? {
+        try core.load(serverID: serverID)
+    }
+}

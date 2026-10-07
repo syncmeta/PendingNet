@@ -10,6 +10,7 @@ struct SBTallyApp: App {
     @StateObject private var updater = PendingNetUpdateController()
     @StateObject private var startup = PendingNetStartupController()
     @StateObject private var navigation = PendingNetNavigation()
+    @StateObject private var managementLinks = PendingNetManagementLinkInbox()
     /// 短暂浮层提示。错误 / 成功消息不再常驻在卡片里，改成弹一下自动消失--
     /// 否则一条一次性的报错会一直挂在界面上，问题修好了也还在。
     @StateObject private var toast = PendingToastCenter()
@@ -36,6 +37,7 @@ struct SBTallyApp: App {
                 .environmentObject(updater)
                 .environmentObject(startup)
                 .environmentObject(navigation)
+                .environmentObject(managementLinks)
                 .environmentObject(toast)
                 // 内容并成一张卡之后不需要那么宽；最小值仍留足侧栏 + 一排药丸
                 // 不被截断的余量。
@@ -62,6 +64,11 @@ struct SBTallyApp: App {
                 }
                 // 点一条 pendingnet:// 配对链接就直接导入。
                 .onOpenURL { url in
+                    if PendingNetPairingLinkDestination.isManagement(url) {
+                        managementLinks.offer(url.absoluteString)
+                        navigation.section = .management
+                        return
+                    }
                     Task {
                         await PendingNetConnectionWorkflow.importAndConnect(
                             opened: url,

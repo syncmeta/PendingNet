@@ -104,11 +104,11 @@ enum PendingNetConnectionWorkflow {
         state: AppState
     ) async {
         guard engine.takeover == "local" || engine.helperReady else {
-            pairing.reportApplyError("VPS 已配对。当前请先切换到“仅端口”，再点“应用并连接”")
+            pairing.reportApplyError(String(localized: "VPS 已配对。当前请先切换到“仅端口”，再点“应用并连接”"))
             return
         }
         guard await engine.applyServerConfiguration(runtime) else {
-            pairing.reportApplyError(engine.lastError ?? "应用本机配置失败")
+            pairing.reportApplyError(engine.friendlyErrorText() ?? String(localized: "应用本机配置失败"))
             return
         }
         // 用户可能刚在 Terminal 停掉旧 LaunchDaemon；界面上的 `running` 是上一拍
@@ -117,7 +117,7 @@ enum PendingNetConnectionWorkflow {
         if !engine.running {
             await engine.start()
             guard engine.running else {
-                pairing.reportApplyError(engine.lastError ?? "sing-box 启动失败")
+                pairing.reportApplyError(engine.friendlyErrorText() ?? String(localized: "sing-box 启动失败"))
                 return
             }
         }
@@ -128,7 +128,7 @@ enum PendingNetConnectionWorkflow {
         if engine.takeover != "local" {
             await engine.refresh()
             guard engine.activeSelectorTag == runtime.selectorTag else {
-                pairing.reportApplyError("配置已写入，但无法确认正在使用的 VPS")
+                pairing.reportApplyError(String(localized: "配置已写入，但无法确认正在使用的 VPS"))
                 return
             }
             pairing.markApplied(runtime)
@@ -147,6 +147,6 @@ enum PendingNetConnectionWorkflow {
                 try? await Task.sleep(for: .milliseconds(150))
             }
         }
-        pairing.reportApplyError(state.lastError ?? "配置已写入，但自动选择 VPS 失败")
+        pairing.reportApplyError(state.lastError ?? String(localized: "配置已写入，但自动选择 VPS 失败"))
     }
 }

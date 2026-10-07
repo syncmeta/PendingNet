@@ -11,6 +11,7 @@ struct ControlView: View {
 
     @State private var showingPasteImport = false
     @State private var detailServerID: String?
+    @State private var serverNameDraft = ""
 
     /// The sing-box selector tag the engine currently routes through, if it is
     /// one of our managed VPS tags (`direct` and friends are engine outbounds,
@@ -30,7 +31,7 @@ struct ControlView: View {
     /// Per-VPS protocol selector (vless-reality / hysteria2 inside one VPS).
     private var protoProxy: Proxy? {
         guard appliedServer != nil, let tag = appliedSelectorTag else { return nil }
-        return state.proxies[tag]
+        return engine.takeover == "local" ? state.proxies[tag] : engine.protocolProxy
     }
 
     private var connectionStatus: (String, PendingStatusPill.Kind) {
@@ -124,7 +125,13 @@ struct ControlView: View {
                     selectorTag: selector,
                     selected: protoProxy?.now
                 ) { name in
-                    Task { await state.select(selector: selector, name: name) }
+                    Task {
+                        if engine.takeover == "local" {
+                            await state.select(selector: selector, name: name)
+                        } else {
+                            await engine.selectProtocol(selector: selector, name: name)
+                        }
+                    }
                 }
             }
 
@@ -152,6 +159,7 @@ struct ControlView: View {
         return PendingConnectionHeader(
             statusText: connectionStatus.0,
             statusKind: connectionStatus.1,
+            showsStatus: false,
             action: needsAuthorization
                 ? .button(title: "授权后台服务…")
                 : .toggle(isOn: engine.running)
@@ -207,6 +215,7 @@ struct ControlView: View {
                     )
                 }
             } onShowDetails: { serverID in
+                serverNameDraft = vpsPairing.servers.first(where: { $0.serverID == serverID })?.name ?? ""
                 detailServerID = serverID
             } detailPopover: { server in
                 AnyView(serverDetail(server))
@@ -224,8 +233,18 @@ struct ControlView: View {
                 latency: latency.outcome(for: server.serverID)
             )
 
+            HStack {
+                TextField("名称（留空则用 IP）", text: $serverNameDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("保存") {
+                    vpsPairing.renameServer(server.serverID, to: serverNameDraft)
+                    detailServerID = nil
+                }
+                .buttonStyle(PendingQuietButtonStyle())
+            }
+
             Button {
-                Task { await latency.measure(server) }
+                Task { await measure(server) }
             } label: {
                 if latency.isMeasuring(server.serverID) {
                     HStack(spacing: 6) {
@@ -245,7 +264,28 @@ struct ControlView: View {
 
     /// 逐台测一遍。每台都是同一个测点、同一种算法，测完可以直接横向比较。
     private func testAll() {
-        Task { await latency.measureAll(vpsPairing.servers) }
+        let active = engine.running ? appliedServer?.serverID : nil
+        let selector = active == nil ? nil : appliedSelectorTag
+        Task {
+            await latency.measureAll(
+                vpsPairing.servers,
+                activeServerID: active,
+                proxyProbe: selector.map { tag in
+                    { try await engine.measureProxyDelay(selector: tag) }
+                }
+            )
+        }
+    }
+
+    private func measure(_ server: PairedVPSServer) async {
+        if engine.running, appliedServer?.serverID == server.serverID,
+           let selector = appliedSelectorTag {
+            await latency.measureProxy(server) {
+                try await engine.measureProxyDelay(selector: selector)
+            }
+        } else {
+            await latency.measure(server)
+        }
     }
 
 }

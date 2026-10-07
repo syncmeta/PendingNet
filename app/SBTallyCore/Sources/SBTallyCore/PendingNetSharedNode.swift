@@ -10,15 +10,22 @@ public enum PendingNetImportItem: Equatable, Sendable {
 public enum PendingNetTextImportError: LocalizedError, Equatable {
     case empty
     case unsupportedLink(line: Int)
+    case managementLink(line: Int)
 
     public var errorDescription: String? {
         switch self {
         case .empty:
-            "请粘贴至少一条节点链接"
+            localizedImportError("请粘贴至少一条节点链接")
         case .unsupportedLink(let line):
-            "第 \(line) 行不是支持的节点链接（支持 pendingnet://、vless://、hysteria2:// 和 hy2://）"
+            String(format: localizedImportError("第 %lld 行不是支持的节点链接（支持 pendingnet://、vless://、hysteria2:// 和 hy2://）"), Int64(line))
+        case .managementLink(let line):
+            String(format: localizedImportError("第 %lld 行是管理链接，请在“管理”页面导入，不能作为普通节点导入"), Int64(line))
         }
     }
+}
+
+private func localizedImportError(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "Node import error")
 }
 
 public enum PendingNetTextImport {
@@ -32,10 +39,16 @@ public enum PendingNetTextImport {
             guard !line.isEmpty else { continue }
             do {
                 if line.lowercased().hasPrefix("pendingnet://") {
-                    items.append(.pairing(try PendingNetPairingFile.decode(link: line, now: now)))
+                    let pairing = try PendingNetPairingFile.decode(link: line, now: now)
+                    guard pairing.enrollment.role != "admin" else {
+                        throw PendingNetTextImportError.managementLink(line: offset + 1)
+                    }
+                    items.append(.pairing(pairing))
                 } else {
                     items.append(.sharedNode(try PendingNetSharedNode.decode(link: line)))
                 }
+            } catch let error as PendingNetTextImportError where error == .managementLink(line: offset + 1) {
+                throw error
             } catch {
                 throw PendingNetTextImportError.unsupportedLink(line: offset + 1)
             }

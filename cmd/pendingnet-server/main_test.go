@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,7 +11,32 @@ import (
 	"time"
 
 	"sbtally/internal/pairing"
+	"sbtally/internal/pnserver"
 )
+
+func TestProductionServeHandlerKeepsConfigWritesDisabled(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if err := run([]string{"init", "--state-dir", dir, "--name", "VPS Test", "--endpoint", "https://203.0.113.20:7443"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	store := pnserver.NewStore(dir)
+	link, err := store.CreateAdminPairing(time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin, err := store.Enroll(link.Enrollment.Token, "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/v1/admin/config", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+admin.Token)
+	rec := httptest.NewRecorder()
+	productionServeHandler(store).ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("production config write was not disabled: %d", rec.Code)
+	}
+}
 
 func TestInitPairAndStatusCommands(t *testing.T) {
 	dir := t.TempDir()
@@ -89,6 +116,45 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 	}
 }
 
+func TestAdminPairingRequiresPrivateOutputFile(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if err := run([]string{
+		"init", "--state-dir", dir, "--name", "VPS Test", "--endpoint", "https://203.0.113.20:7443",
+	}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := run([]string{"pair", "create", "--state-dir", dir, "--admin"}, &out, &errOut); err == nil {
+		t.Fatal("admin credential was written to stdout")
+	}
+	if out.Len() != 0 {
+		t.Fatal("admin credential leaked on rejected command")
+	}
+	path := filepath.Join(dir, "admin-link.txt")
+	if err := run([]string{"pair", "create", "--state-dir", dir, "--admin", "--out", path}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("permissions %o", info.Mode().Perm())
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := pairing.ParseURL(string(b), time.Now())
+	if err != nil || f.Enrollment.Role != "admin" {
+		t.Fatalf("admin link: %#v %v", f, err)
+	}
+	if strings.Contains(out.String(), "pendingnet://") {
+		t.Fatal("admin link leaked on stdout")
+	}
+}
+
 func TestImportSingbCommand(t *testing.T) {
 	dir := t.TempDir()
 	var out, errOut bytes.Buffer
@@ -129,6 +195,52 @@ func TestImportSingbCommand(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"protocols"`) || strings.Contains(out.String(), "must-not-leak") {
 		t.Fatalf("unexpected status output: %s", out.String())
+	}
+}
+
+func TestClientExportCommand(t *testing.T) {
+	dir := t.TempDir()
+	store := pnserver.NewStore(dir)
+	if _, err := store.Initialize("VPS Test", "https://203.0.113.10:7443"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveNodeProfile(pnserver.NodeProfile{Protocols: []pnserver.NodeProtocol{{
+		ID: "reality", Type: "vless-reality",
+		VLESSReality: &pnserver.VLESSReality{
+			Server: "203.0.113.10", ServerPort: 443,
+			UUID: "11111111-1111-1111-1111-111111111111", Flow: "xtls-rprx-vision",
+			ServerName: "www.example.com", PublicKey: "test-public-key", ShortID: "abcdef12",
+		},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, platform := range []string{"android", "windows"} {
+		path := filepath.Join(dir, "exports", platform+".json")
+		var out, errOut bytes.Buffer
+		if err := run([]string{"client", "export", "--state-dir", dir, "--platform", platform, "--out", path}, &out, &errOut); err != nil {
+			t.Fatalf("%s export: %v (%s)", platform, err, errOut.String())
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %o", platform, info.Mode().Perm())
+		}
+		if strings.Contains(out.String(), "11111111-1111") {
+			t.Fatal("credential leaked to stdout")
+		}
+		b, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(b), "11111111-1111") {
+			t.Fatal("export did not contain connection material")
+		}
+		if err := run([]string{"client", "export", "--state-dir", dir, "--platform", platform, "--out", path}, &out, &errOut); err == nil {
+			t.Fatal("export must not overwrite an existing file")
+		}
+	}
+	var out, errOut bytes.Buffer
+	if err := run([]string{"client", "export", "--state-dir", dir, "--platform", "android"}, &out, &errOut); err == nil {
+		t.Fatal("export without --out must not print credentials to stdout")
 	}
 }
 

@@ -2,6 +2,13 @@ import XCTest
 @testable import SBTallyCore
 
 final class PendingNetRuntimeConfigTests: XCTestCase {
+    func testRuntimeConfigErrorsKeepProtocolIdentifiersWhenLocalized() {
+        XCTAssertTrue(PendingNetRuntimeConfigError.unsupportedProtocol("future-protocol")
+            .localizedDescription.contains("future-protocol"))
+        XCTAssertTrue(PendingNetRuntimeConfigError.malformedProtocol("reality-1")
+            .localizedDescription.contains("reality-1"))
+    }
+
     func testProxyOnlyBaseOwnsLocalPolicy() throws {
         let data = try PendingNetProxyOnlyConfig.make(
             controlSecret: "test-secret",

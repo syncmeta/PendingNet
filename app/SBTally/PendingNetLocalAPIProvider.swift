@@ -43,20 +43,43 @@ struct PendingNetLocalAPIProvider: StatsProvider, ControlProvider {
         _ = try await request(path: "configs", method: "PATCH", body: ["mode": mode])
     }
 
+    func measureProxyDelay(selector: String) async throws -> Int {
+        let data = try await request(
+            path: "proxies/\(selector)/delay", method: "GET",
+            queryItems: [URLQueryItem(name: "timeout", value: "5000")],
+            timeout: 7
+        )
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let delay = object["delay"] as? Int, delay > 0 else {
+            throw URLError(.cannotParseResponse)
+        }
+        return delay
+    }
+
     private func request(
         path: String,
         method: String,
-        body: [String: String]? = nil
+        body: [String: String]? = nil,
+        queryItems: [URLQueryItem] = [],
+        timeout: TimeInterval = 2
     ) async throws -> Data {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.connectionProxyDictionary = [:]
-        configuration.timeoutIntervalForRequest = 2
+        configuration.timeoutIntervalForRequest = timeout
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
 
         var url = controlBaseURL
         for component in path.split(separator: "/") {
             url.appendPathComponent(String(component))
+        }
+        if !queryItems.isEmpty {
+            guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                throw URLError(.badURL)
+            }
+            components.queryItems = queryItems
+            guard let queried = components.url else { throw URLError(.badURL) }
+            url = queried
         }
         var request = URLRequest(url: url)
         request.httpMethod = method

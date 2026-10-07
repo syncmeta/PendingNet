@@ -50,17 +50,16 @@ enum PendingNetRoutingWorkflow {
             return
         }
         if listModes.contains(mode), !engine.listModeAvailable(mode) {
-            state.modeNote = "正在准备分流名单…"
+            state.modeNote = String(localized: "正在准备分流名单…")
             guard await engine.enableListMode(mode) else {
-                state.modeNote = "分流名单还没下载到（要能访问 GitHub，通常连上代理后就能拿到）。"
-                    + "已记住你的选择，下次连接会自动再试，在那之前按全局走。"
+                state.modeNote = String(localized: "分流名单还没下载到（要能访问 GitHub，通常连上代理后就能拿到）。已记住你的选择，下次连接会自动再试，在那之前按全局走。")
                 return
             }
         }
         guard await state.pushMode() else {
             state.modeNote = userInitiated
-                ? "引擎没有接受这个模式，已记住你的选择，重新连接后会再试。"
-                : "已记住，重新连接后生效。"
+                ? String(localized: "引擎没有接受这个模式，已记住你的选择，重新连接后会再试。")
+                : String(localized: "已记住，重新连接后生效。")
             return
         }
         state.modeNote = nil
@@ -86,20 +85,19 @@ enum PendingNetRoutingWorkflow {
                 state.modeNote = nil
                 return
             }
-            state.modeNote = "已记住。「\(takeoverName(engine.takeover))」接管下的路由要由后台服务来切，"
-                + "而现在够不着它（\(reason)）。授权后台服务后这个选择就会生效。"
+            state.modeNote = String(format: NSLocalizedString("已记住。「%@」接管下的路由要由后台服务来切，而现在够不着它（%@）。授权后台服务后这个选择就会生效。", comment: "Route helper is unreachable"), takeoverName(engine.takeover), reason)
         case .rejected(let reason):
             state.modeNote = userInitiated
-                ? "后台服务没能切到这个模式：\(reason)。已记住你的选择，重新连接后会再试。"
-                : "已记住，重新连接后生效。"
+                ? String(format: NSLocalizedString("后台服务没能切到这个模式：%@。已记住你的选择，重新连接后会再试。", comment: "Route mode rejected by helper"), reason)
+                : String(localized: "已记住，重新连接后生效。")
         }
     }
 
     private static func takeoverName(_ takeover: String) -> String {
         switch takeover {
-        case "sysproxy": "系统代理"
+        case "sysproxy": String(localized: "系统代理")
         case "tun": "TUN"
-        default: "仅端口"
+        default: String(localized: "仅端口")
         }
     }
 }

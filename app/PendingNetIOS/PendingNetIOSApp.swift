@@ -7,6 +7,8 @@ struct PendingNetIOSApp: App {
     /// 短暂浮层提示。错误 / 成功消息不再常驻在卡片里，改成弹一下自动消失--
     /// 否则一条一次性的报错会一直挂在界面上，问题修好了也还在。
     @StateObject private var toast = PendingToastCenter()
+    @StateObject private var managementLinks = PendingNetManagementLinkInbox()
+    @State private var selectedTab = 0
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -14,18 +16,29 @@ struct PendingNetIOSApp: App {
             // 连接 / 设置两栏，对应 macOS 主窗口侧栏里的那两项。iOS 上底部
             // TabView 是系统惯例，不另开设置界面——和 macOS「设置就在主窗口
             // 里那一栏、不再弹独立小窗」是同一个决定。
-            TabView {
+            TabView(selection: $selectedTab) {
                 PendingNetIOSHomeView()
                     .tabItem { Label("连接", systemImage: "bolt.horizontal.circle") }
+                    .tag(0)
+                PendingNetManagementView()
+                    .tabItem { Label("管理", systemImage: "person.crop.circle.badge.gearshape") }
+                    .tag(1)
                 PendingNetIOSSettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape") }
+                    .tag(2)
             }
             .environmentObject(controller)
             .environmentObject(toast)
+            .environmentObject(managementLinks)
             .tint(PendingNetTheme.Palette.accent)
             // 点一条 pendingnet:// 配对链接就直接导入。
             .onOpenURL { url in
                 guard url.scheme?.lowercased() == PendingNetPairingFile.urlScheme else { return }
+                if PendingNetPairingLinkDestination.isManagement(url) {
+                    managementLinks.offer(url.absoluteString)
+                    selectedTab = 1
+                    return
+                }
                 Task { await controller.importAndEnroll(pasted: url.absoluteString) }
             }
             // Errors / success messages are now toasts, not inline banners that

@@ -251,13 +251,13 @@ public enum PendingNetStatsService {
         if case .running(let port) = daemon {
             if readFailed {
                 return .unavailable(
-                    reason: "统计服务在跑（端口 \(port)），但这一次没读到数据。稍等一下，或者重新连接一次。")
+                    reason: String(format: localizedStats("统计服务在跑（端口 %lld），但这一次没读到数据。稍等一下，或者重新连接一次。"), Int64(port)))
             }
             return .noTraffic
         }
         // 引擎在跑但统计服务停着 —— 正常路径上不该出现（两者同生命周期），
         // 真出现了也别装作没有数据。
-        return .unavailable(reason: "统计服务没有随代理一起启动。")
+        return .unavailable(reason: localizedStats("统计服务没有随代理一起启动。"))
     }
 
     /// 空状态上那两行字。三个统计页共用一份，省得措辞各说各的。
@@ -277,19 +277,25 @@ public enum PendingNetStatsService {
     ) -> EmptyMessage {
         switch availability {
         case .ready:
-            return EmptyMessage(title: "暂时没有\(subject)", detail: "有新数据时会自动显示在这里。")
+            return EmptyMessage(
+                title: String(format: localizedStats("暂时没有%@"), subject),
+                detail: localizedStats("有新数据时会自动显示在这里。"))
         case .engineStopped:
             return EmptyMessage(
-                title: "还没有连接",
-                detail: "统计只记录经过 PendingNet 的流量。先在「连接」里连上 VPS，这里就会有\(subject)。"
+                title: localizedStats("还没有连接"),
+                detail: String(format: localizedStats("统计只记录经过 PendingNet 的流量。先在「连接」里连上 VPS，这里就会有%@。"), subject)
             )
         case .noTraffic:
             return EmptyMessage(
-                title: "这段时间没有流量",
-                detail: "已连接，但选定时间内没有经过 PendingNet 的\(subject)。换一个时间范围看看。"
+                title: localizedStats("这段时间没有流量"),
+                detail: String(format: localizedStats("已连接，但选定时间内没有经过 PendingNet 的%@。换一个时间范围看看。"), subject)
             )
         case .unavailable(let reason):
-            return EmptyMessage(title: "统计服务没能启动", detail: reason)
+            return EmptyMessage(title: localizedStats("统计服务没能启动"), detail: reason)
         }
     }
+}
+
+private func localizedStats(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "Statistics availability message")
 }

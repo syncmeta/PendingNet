@@ -64,6 +64,8 @@ struct DashboardView: View {
             DomainsView()
         case .logs:
             LogsView()
+        case .management:
+            PendingNetManagementView()
         case .settings:
             SettingsView()
         }

@@ -152,6 +152,18 @@ final class PairedVPSStoreTests: XCTestCase {
         XCTAssertEqual(store.servers[0].updatedAt, late)
     }
 
+    func testRenameIsClientOwnedAndEmptyNameRestoresHost() {
+        let store = PairedVPSStore(defaults: makeDefaults("rename"), cloud: nil, now: { self.late })
+        store.upsert(makeRecord(id: "a", name: "服务端名字", updatedAt: early))
+
+        store.rename(serverID: "a", to: "  我的节点  ")
+        XCTAssertEqual(store.servers[0].name, "我的节点")
+        XCTAssertEqual(store.servers[0].endpoint, "https://a.example.com:7443")
+
+        store.rename(serverID: "a", to: " \n ")
+        XCTAssertEqual(store.servers[0].name, "a.example.com")
+    }
+
     /// 「Mac 上配好的 VPS 出现在 iPhone 列表里」的最小复现：两个 store 共用
     /// 同一个云存储，各自的本地镜像互不相干。
     func testSecondDeviceSeesRecordPairedOnTheFirst() {

@@ -211,6 +211,14 @@ public final class PairedVPSStore: ObservableObject {
         persist()
     }
 
+    /// 名称是客户端自己的偏好；空名称恢复为节点 IP/主机名。
+    public func rename(serverID: String, to requestedName: String) {
+        guard var record = servers.first(where: { $0.serverID == serverID }) else { return }
+        let trimmed = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.name = trimmed.isEmpty ? record.address : String(trimmed.prefix(128))
+        upsert(record)
+    }
+
     /// 把两端各自的老存档并进来。老记录不盖新时间戳 —— 它们本来就不知道自己
     /// 是什么时候写的，盖上「现在」会让它压住对面真正更新的那一份。
     public func adoptLegacy(_ records: [PairedVPSRecord]) {

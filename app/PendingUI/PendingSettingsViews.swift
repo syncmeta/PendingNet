@@ -127,9 +127,9 @@ struct PendingRuleSetItem: Identifiable {
     /// 给人看的名字。配置里的 tag 是 geosite-cn 这种，摊在设置页上没人看得懂。
     var title: String {
         switch name {
-        case "geoip-cn": "国内 IP 段"
-        case "geosite-cn": "国内域名"
-        case "geosite-gfw": "被墙域名"
+        case "geoip-cn": String(localized: "国内 IP 段")
+        case "geosite-cn": String(localized: "国内域名")
+        case "geosite-gfw": String(localized: "被墙域名")
         default: name
         }
     }
@@ -167,7 +167,7 @@ struct PendingRuleSetCard: View {
                             .font(PendingNetTheme.Fonts.caption.monospaced())
                             .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                         Spacer()
-                        Text(item.ready ? "已就绪" : "缺失")
+                        Text(item.ready ? LocalizedStringKey("已就绪") : LocalizedStringKey("缺失"))
                             .font(PendingNetTheme.Fonts.caption)
                             .foregroundStyle(item.ready
                                 ? PendingNetTheme.Palette.success
@@ -191,7 +191,7 @@ struct PendingRuleSetCard: View {
                             Text("正在更新…")
                         }
                     } else {
-                        Text(isReady ? "重新下载" : "下载")
+                        Text(isReady ? LocalizedStringKey("重新下载") : LocalizedStringKey("下载"))
                     }
                 }
                 .buttonStyle(PendingQuietButtonStyle())
@@ -226,7 +226,7 @@ struct PendingUpdateCard<Trailing: View, Extra: View>: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 12) {
                     // verbatim: 版本号是标识符，不是数量
-                    Text(verbatim: "当前版本 \(version)")
+                    Text(verbatim: String(format: NSLocalizedString("当前版本 %@", comment: "Current app version"), version))
                         .font(PendingNetTheme.Fonts.bodyEmphasized)
                         .foregroundStyle(PendingNetTheme.Palette.ink)
                     Spacer()

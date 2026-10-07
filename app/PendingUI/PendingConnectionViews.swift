@@ -5,9 +5,9 @@ import SwiftUI
 extension PendingNetRouteMode {
     var pendingTitle: String {
         switch self {
-        case .global: "全局"
-        case .whitelist: "白名单"
-        case .blacklist: "黑名单"
+        case .global: String(localized: "全局")
+        case .whitelist: String(localized: "白名单")
+        case .blacklist: String(localized: "黑名单")
         }
     }
 }
@@ -38,13 +38,16 @@ struct PendingConnectionHeader: View {
 
     let statusText: String
     let statusKind: PendingStatusPill.Kind
+    var showsStatus = true
     var isBusy = false
     let action: Action
     let onAction: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            PendingStatusPill(text: statusText, kind: statusKind)
+            if showsStatus {
+                PendingStatusPill(text: statusText, kind: statusKind)
+            }
             Spacer()
             if isBusy {
                 ProgressView().controlSize(.small)
@@ -60,7 +63,7 @@ struct PendingConnectionHeader: View {
                 .tint(PendingNetTheme.Palette.accent)
                 .disabled(!enabled)
             case .button(let title, let enabled):
-                Button(title) { onAction(true) }
+                Button(LocalizedStringKey(title)) { onAction(true) }
                     .buttonStyle(PendingPrimaryButtonStyle())
                     .disabled(!enabled)
             }
@@ -188,13 +191,18 @@ struct PendingVPSList: View {
                 .frame(width: 14)
             VStack(alignment: .leading, spacing: 3) {
                 // verbatim: 地址是标识符，不能被本地化
-                Text(verbatim: item.address)
+                Text(verbatim: item.name.isEmpty ? item.address : item.name)
                     .font(selected && !unpaired
                         ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
                         : PendingNetTheme.Fonts.body.monospaced())
                     .foregroundStyle(unpaired
                         ? PendingNetTheme.Palette.inkMuted
                         : PendingNetTheme.Palette.ink)
+                if !item.name.isEmpty && item.name != item.address {
+                    Text(verbatim: item.address)
+                        .font(PendingNetTheme.Fonts.caption.monospaced())
+                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                }
                 if unpaired {
                     Text("这台设备还没有访问凭据，请重新导入这台 VPS 的链接")
                         .font(PendingNetTheme.Fonts.caption)
@@ -313,9 +321,6 @@ struct PendingVPSDetails: View {
                 // verbatim: 端口是标识符不是数量（否则 7443 会被显示成 "7,443"）
                 detailRow("端口", port, monospaced: true)
             }
-            if let protocols = server.nodeProtocols, !protocols.isEmpty {
-                detailRow("支持的协议", protocols.joined(separator: " · "))
-            }
             latencyBlock
         }
     }
@@ -354,12 +359,12 @@ struct PendingVPSDetails: View {
         monospaced: Bool = false
     ) -> some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .font(PendingNetTheme.Fonts.caption)
                 .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             Spacer()
             // verbatim: 地址/端口都是标识符，不能被本地化成千分位数字
-            Text(verbatim: value)
+            Text(verbatim: monospaced ? value : NSLocalizedString(value, comment: "VPS detail value"))
                 .font(monospaced
                     ? PendingNetTheme.Fonts.caption.monospaced()
                     : PendingNetTheme.Fonts.caption)

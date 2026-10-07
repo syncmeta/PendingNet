@@ -40,6 +40,24 @@ func TestPairingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAdminRoleRoundTripAndInvalidRoleRejected(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	f := validFile(now)
+	f.Enrollment.Role = "admin"
+	link, err := f.URL(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseURL(link, now)
+	if err != nil || parsed.Enrollment.Role != "admin" {
+		t.Fatalf("admin link round trip: %#v %v", parsed, err)
+	}
+	f.Enrollment.Role = "root"
+	if _, err := f.Marshal(now); err == nil {
+		t.Fatal("unknown role accepted")
+	}
+}
+
 func TestPairingRejectsExpiredFile(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	f := validFile(now)

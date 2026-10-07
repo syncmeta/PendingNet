@@ -34,6 +34,17 @@
 - **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
 - **VPS 部署**：`curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash `
 
+### 导出 Android / Windows sing-box 配置
+
+已配置 Reality 节点的 PendingNet Server 可在 VPS 本地导出独立配置文件（需使用包含 `client export` 的新版服务端）：
+
+```sh
+sudo pendingnet-server client export --platform android --out /root/pendingnet-android.json
+sudo pendingnet-server client export --platform windows --out /root/pendingnet-windows.json
+```
+
+Android 文件供 sing-box for Android 以 VPN 模式导入，TUN 出站启用自动识别底层网络，以规避流量回到自身 VPN 的路由回环；Windows 文件使用本机系统代理。导出文件含节点凭据，权限为 `0600`，已有文件不会被覆盖；请通过可信的本地方式传给目标设备，不要贴进群聊或公开分享。生成与 `sing-box check` 不等于目标设备连通性实测。
+
 ## 仓库结构
 
 ```

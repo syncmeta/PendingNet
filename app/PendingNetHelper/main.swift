@@ -378,7 +378,9 @@ func clashRequest(
     configData: Data,
     method: String,
     path: String,
-    body: Data?
+    body: Data?,
+    requestTimeout: TimeInterval = 0.5,
+    attempts: Int = 30
 ) -> ClashResponse {
     guard let endpoint = PendingNetClashEndpoint(configData: configData),
           let url = endpoint.url(path: path) else {
@@ -387,11 +389,11 @@ func clashRequest(
 
     let configuration = URLSessionConfiguration.ephemeral
     configuration.connectionProxyDictionary = [:]
-    configuration.timeoutIntervalForRequest = 0.5
+    configuration.timeoutIntervalForRequest = requestTimeout
     let session = URLSession(configuration: configuration)
     defer { session.invalidateAndCancel() }
 
-    for _ in 0..<30 {
+    for _ in 0..<attempts {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.httpBody = body
@@ -408,7 +410,7 @@ func clashRequest(
             responseBody = data ?? Data()
             semaphore.signal()
         }.resume()
-        _ = semaphore.wait(timeout: .now() + 1)
+        _ = semaphore.wait(timeout: .now() + requestTimeout + 0.5)
         // No status code at all means nothing answered yet — that is the case
         // worth retrying; anything the engine actually said is the answer.
         if statusCode == 401 { return .unreachable("本机 sing-box 控制接口凭据不匹配") }
@@ -811,6 +813,85 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             return reply(nil)
         }
         reply(selector)
+    }
+
+    func protocolProxy(_ selectorTag: String, reply: @escaping (Data?) -> Void) {
+        guard engineRunning(), activeSelector() == selectorTag,
+              let data = try? readData(path: "\(ETC)/master.json") else {
+            return reply(nil)
+        }
+        switch clashRequest(configData: data, method: "GET",
+                            path: "proxies/\(selectorTag)", body: nil) {
+        case .answered(200, let body): reply(body)
+        default: reply(nil)
+        }
+    }
+
+    func selectProtocol(_ selectorTag: String, name: String,
+                        reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            guard engineRunning(), activeSelector() == selectorTag,
+                  let data = try? readData(path: "\(ETC)/master.json") else {
+                return reply("当前 VPS 尚未连接")
+            }
+            let current: Proxy
+            switch clashRequest(configData: data, method: "GET",
+                                path: "proxies/\(selectorTag)", body: nil) {
+            case .answered(200, let body):
+                guard let decoded = try? JSONDecoder().decode(Proxy.self, from: body) else {
+                    return reply("读不到当前协议列表")
+                }
+                current = decoded
+            default:
+                return reply("读不到当前协议列表")
+            }
+            guard current.all?.contains(name) == true else {
+                return reply("这台 VPS 不支持所选协议")
+            }
+            if let error = selectProxy(configData: data, selector: selectorTag, name: name) {
+                return reply(error)
+            }
+            switch clashRequest(configData: data, method: "GET",
+                                path: "proxies/\(selectorTag)", body: nil) {
+            case .answered(200, let body):
+                guard let applied = try? JSONDecoder().decode(Proxy.self, from: body),
+                      applied.now == name else {
+                    return reply("协议切换后无法确认已生效")
+                }
+                reply(nil)
+            default:
+                reply("协议切换后无法确认已生效")
+            }
+        }
+    }
+
+    func measureProxyDelay(_ selectorTag: String,
+                           reply: @escaping (Int, String?) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            guard engineRunning(), self.activeSelector() == selectorTag,
+                  let data = try? readData(path: "\(ETC)/master.json") else {
+                return reply(-1, "当前 VPS 尚未连接")
+            }
+            switch clashRequest(configData: data, method: "GET",
+                                path: "proxies/\(selectorTag)/delay?timeout=5000",
+                                body: nil, requestTimeout: 7, attempts: 1) {
+            case .answered(200, let body):
+                guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+                      let delay = object["delay"] as? Int, delay > 0 else {
+                    return reply(-1, "代理延迟结果无效")
+                }
+                reply(delay, nil)
+            case .answered(let status, _):
+                reply(-1, "代理访问测试失败（HTTP \(status)）")
+            case .unreachable(let error):
+                reply(-1, error)
+            }
+        }
+    }
+
+    private func activeSelector() -> String? {
+        try? String(contentsOfFile: ACTIVE_SELECTOR, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func interfaceVersion(reply: @escaping (Int) -> Void) {

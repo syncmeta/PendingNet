@@ -23,6 +23,17 @@ final class PendingNetPairingTests: XCTestCase {
         """.utf8)
     }
 
+    func testPairingErrorsKeepDynamicDetailsWhenLocalized() {
+        XCTAssertTrue(PendingNetPairingError.unsupportedFormat("future-format")
+            .localizedDescription.contains("future-format"))
+        XCTAssertTrue(PendingNetPairingError.unsupportedVersion(99)
+            .localizedDescription.contains("99"))
+        XCTAssertTrue(PendingNetPairingError.keychain(-25299)
+            .localizedDescription.contains("-25299"))
+        XCTAssertTrue(PendingNetPairingError.transport("offline")
+            .localizedDescription.contains("offline"))
+    }
+
     func testDecodePairingFile() throws {
         let pairing = try PendingNetPairingFile.decode(pairingJSON(), now: now)
         XCTAssertEqual(pairing.serverID, "pns_test")
@@ -45,6 +56,29 @@ final class PendingNetPairingTests: XCTestCase {
         XCTAssertThrowsError(try PendingNetPairingFile.decode(data, now: now)) { error in
             XCTAssertEqual(error as? PendingNetPairingError, .unexpectedFields)
         }
+    }
+
+    func testAdminLinkCannotEnterOrdinaryNodeImporter() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: pairingJSON()) as? [String: Any])
+        var enrollment = try XCTUnwrap(object["enrollment"] as? [String: Any])
+        enrollment["role"] = "admin"
+        object["enrollment"] = enrollment
+        let data = try JSONSerialization.data(withJSONObject: object)
+        let file = try PendingNetPairingFile.decode(data, now: now)
+        XCTAssertEqual(file.enrollment.role, "admin")
+        let link = "pendingnet://pair?v=1&d=" + data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        XCTAssertThrowsError(try PendingNetTextImport.decode(link, now: now)) { error in
+            XCTAssertEqual(error as? PendingNetTextImportError, .managementLink(line: 1))
+        }
+        XCTAssertTrue(PendingNetPairingLinkDestination.isManagement(try XCTUnwrap(URL(string: link)), now: now))
+        let ordinaryLink = "pendingnet://pair?v=1&d=" + pairingJSON().base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        XCTAssertFalse(PendingNetPairingLinkDestination.isManagement(try XCTUnwrap(URL(string: ordinaryLink)), now: now))
     }
 
     func testEnrollRequestAndResponse() async throws {

@@ -11,11 +11,11 @@ enum PendingNetCommandError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .setup(let reason): "无法接入隧道控制通道：\(reason)"
-        case .unavailable: "无法创建隧道控制通道"
-        case .notConnected: "隧道未连接，无法切换协议"
-        case .timedOut: "隧道控制通道无响应，请稍后重试"
-        case .reloadRejected(let reason): "扩展拒绝了新配置：\(reason)"
+        case .setup(let reason): String(format: NSLocalizedString("无法接入隧道控制通道：%@", comment: "Tunnel control setup failure"), reason)
+        case .unavailable: String(localized: "无法创建隧道控制通道")
+        case .notConnected: String(localized: "隧道未连接，无法切换协议")
+        case .timedOut: String(localized: "隧道控制通道无响应，请稍后重试")
+        case .reloadRejected(let reason): String(format: NSLocalizedString("扩展拒绝了新配置：%@", comment: "Tunnel rejected reload"), reason)
         }
     }
 }
@@ -60,12 +60,16 @@ final class PendingNetCommandClient: NSObject {
 
     /// selector 的一次快照。成员顺序按内核给出的顺序，不重排。
     ///
-    /// 刻意**不**带各成员的 urltest 延迟：那是按协议出数，和「一台 VPS 一个
-    /// 延迟」的口径打架（见 `PendingNetLatencyTarget`）。内核自己的 urltest
-    /// 照旧跑，只是不再端到用户面前。
+    /// 不把各协议延迟端到 UI；只留当前实际出站的最新样本，供已连接 VPS 的
+    /// 一次主动 URLTest 使用（见 `PendingNetLatencyTarget`）。
     struct Snapshot: Equatable {
+        struct DelaySample: Equatable {
+            let time: Int64
+            let milliseconds: Int
+        }
         var members: [String] = []
         var selected: String?
+        var selectedDelay: DelaySample?
     }
 
     // MARK: - 进程级 libbox 初始化
@@ -101,9 +105,9 @@ final class PendingNetCommandClient: NSObject {
             var error: NSError?
             outcome = LibboxSetup(options, &error)
                 ? .success(())
-                : .failure(.setup(error?.localizedDescription ?? "未知原因"))
+                : .failure(.setup(error?.localizedDescription ?? String(localized: "未知原因")))
         } else {
-            outcome = .failure(.setup("无法访问 App Group 容器"))
+            outcome = .failure(.setup(String(localized: "无法访问 App Group 容器")))
         }
         setupOutcome = outcome
         return try outcome.get()
@@ -114,6 +118,11 @@ final class PendingNetCommandClient: NSObject {
     /// 切换 selector 的当前出站。
     static func selectOutbound(groupTag: String, outboundTag: String) async throws {
         try await perform { try $0.selectOutbound(groupTag, outboundTag: outboundTag) }
+    }
+
+    /// Starts a fresh real URLTest for the selector's protocol outbounds.
+    static func runURLTest(groupTag: String) async throws {
+        try await perform { try $0.urlTest(groupTag) }
     }
 
     /// 本版本 libbox 的这两个调用是同步阻塞的（`BOOL ... error:` 形态，
@@ -375,10 +384,16 @@ final class PendingNetCommandClient: NSObject {
             guard let message, let owner,
                   case .groups(let groupTag) = subscription else { return }
             var snapshot: Snapshot?
+            var mixSelected: String?
+            var samples: [String: Snapshot.DelaySample] = [:]
             while message.hasNext() {
                 guard let group = message.next() else { continue }
                 // 内核会把所有分组都推上来（含 `<selector>-mix` 这个 urltest
                 // 分组），只取我们这台 VPS 的 selector。
+                if group.tag == groupTag + "-mix" {
+                    mixSelected = group.selected.isEmpty ? nil : group.selected
+                    continue
+                }
                 guard group.tag == groupTag else { continue }
                 var found = Snapshot()
                 found.selected = group.selected.isEmpty ? nil : group.selected
@@ -386,11 +401,20 @@ final class PendingNetCommandClient: NSObject {
                     while items.hasNext() {
                         guard let item = items.next() else { continue }
                         found.members.append(item.tag)
+                        if item.urlTestTime > 0, item.urlTestDelay > 0 {
+                            samples[item.tag] = .init(
+                                time: item.urlTestTime,
+                                milliseconds: Int(item.urlTestDelay)
+                            )
+                        }
                     }
                 }
                 snapshot = found
             }
-            guard let snapshot else { return }
+            guard var snapshot else { return }
+            let effective = snapshot.selected == groupTag + "-mix"
+                ? mixSelected : snapshot.selected
+            snapshot.selectedDelay = effective.flatMap { samples[$0] }
             owner.handleSnapshot(snapshot, token: token)
         }
 

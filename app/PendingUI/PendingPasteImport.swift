@@ -17,10 +17,10 @@ struct PendingPasteImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("导入节点")
-                    .font(PendingNetTheme.Fonts.sectionTitle("导入节点"))
+                Text("导入")
+                    .font(PendingNetTheme.Fonts.sectionTitle("导入"))
                     .foregroundStyle(PendingNetTheme.Palette.ink)
-                Text("粘贴 pendingnet://、vless:// 或 hysteria2:// 分享链接；批量导入时一行一个节点。")
+                Text("支持 pendingnet://、vless:// 和 hysteria2:// 链接，一行一个节点。")
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -35,7 +35,7 @@ struct PendingPasteImportSheet: View {
                 .frame(minHeight: 130)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(PendingNetTheme.Palette.surfaceMuted)
+                        .fill(PendingNetTheme.Palette.surface)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)

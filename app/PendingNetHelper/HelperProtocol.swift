@@ -15,7 +15,7 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 6
+public let pendingNetHelperInterfaceVersion = 7
 
 @objc public protocol HelperProtocol {
     // MARK: - Interface version 1
@@ -97,6 +97,14 @@ public let pendingNetHelperInterfaceVersion = 6
     /// App，所以 App 不能像「仅端口」那样直接读 `/proxies`；由 helper 返回它
     /// 已成功应用并在每次启动时重放的 selector tag，供服务器列表画勾。
     func activeSelectorTag(reply: @escaping (String?) -> Void)
+
+    // MARK: - Interface version 7
+
+    /// Root 引擎的协议选择器由助手代读/代写，不把控制口密钥交给 App。
+    func protocolProxy(_ selectorTag: String, reply: @escaping (Data?) -> Void)
+    func selectProtocol(_ selectorTag: String, name: String, reply: @escaping (String?) -> Void)
+    /// Through the selected outbound, not just a TCP handshake to the server.
+    func measureProxyDelay(_ selectorTag: String, reply: @escaping (Int, String?) -> Void)
 }
 
 /// 这一对身份从前是散在 app、助手、launchd plist、签名脚本里的字面量。

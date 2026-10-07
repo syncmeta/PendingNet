@@ -31,12 +31,8 @@ final class PendingNetTunnelController: ObservableObject {
     @Published private(set) var outboundMembers: [String] = []
     /// selector 当前选中的出站。
     @Published private(set) var currentOutbound: String?
-    // 这里以前还有一份「各出站最近一次 urltest 延迟」。那是**按协议**出数，
-    // 同一台 VPS 的 Reality 和 Hysteria2 各给一个数字，差别多半只是偶然波动，
-    // 摆在用户面前只会让人以为要在两者之间做选择。延迟现在是「一台 VPS 一个
-    // 数」，由 `PendingNetLatencyTester` 直接测代理入口的 TCP 握手，在 VPS
-    // 列表上显示。内核自己的 urltest 照旧跑（「混合」那一档的选路要用），
-    // 只是不再端到用户面前当测速结果。
+    // 只记当前实际出站的 URLTest 样本；UI 仍是一台 VPS 一个数，不按协议列数。
+    @Published private(set) var selectedDelay: PendingNetCommandClient.Snapshot.DelaySample?
 
     /// `start()` 因为规则集不可用而降级到全局时留下的提示。UI 取用后
     /// 自行清空——降级不是错误，`start()` 不能因此抛出。
@@ -185,7 +181,7 @@ final class PendingNetTunnelController: ObservableObject {
             localInbound = previous
             inboundStore.save(previous)
             throw PendingNetPairingError.serverRejected(
-                "隧道正在跑，但这会儿拿不到当前 VPS 的节点资料，端口没有改。回到连接页重连一次再试。"
+                String(localized: "隧道正在跑，但这会儿拿不到当前 VPS 的节点资料，端口没有改。回到连接页重连一次再试。")
             )
         }
 
@@ -235,9 +231,32 @@ final class PendingNetTunnelController: ObservableObject {
         currentOutbound = tag
     }
 
+    /// 发起新的出站 HTTPS 测试，等控制通道推来比旧样本更新的结果。
+    func measureSelectedProxyDelay() async throws -> Int {
+        guard isTunnelLive, let selectorTag else {
+            throw PendingNetCommandError.notConnected
+        }
+        let previous = selectedDelay?.time ?? 0
+        // URLTest 时间戳精度为秒。同一秒连点两次，先等跨秒再触发，免得把
+        // 上一次的样本误当成这一次成功。
+        if previous >= Int64(Date().timeIntervalSince1970) {
+            try await Task.sleep(for: .seconds(1))
+        }
+        try await PendingNetCommandClient.runURLTest(groupTag: selectorTag)
+        for _ in 0..<35 {
+            if let sample = selectedDelay, sample.time > previous,
+               sample.milliseconds > 0 {
+                return sample.milliseconds
+            }
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        throw PendingNetLatencyError.proxyTestFailed
+    }
+
     private func apply(_ snapshot: PendingNetCommandClient.Snapshot) {
         outboundMembers = snapshot.members
         currentOutbound = snapshot.selected
+        selectedDelay = snapshot.selectedDelay
     }
 
     /// 控制通道的生命周期跟随两件事：隧道是否在位，以及 App 是否在前台。
@@ -251,6 +270,7 @@ final class PendingNetTunnelController: ObservableObject {
             commandClient?.stop()
             outboundMembers = []
             currentOutbound = nil
+            selectedDelay = nil
             return
         }
         guard isForeground else {
@@ -271,7 +291,7 @@ final class PendingNetTunnelController: ObservableObject {
         serverID: String
     ) async throws {
         guard try PendingNetCredentialStore.load(serverID: serverID) != nil else {
-            throw PendingNetPairingError.serverRejected("这台设备还没有这台 VPS 的访问凭据，请重新导入它的链接")
+            throw PendingNetPairingError.serverRejected(String(localized: "这台设备还没有这台 VPS 的访问凭据，请重新导入它的链接"))
         }
         // 控制通道要在隧道连上的那一刻就知道该订阅哪个 selector，不能等
         // 界面那边的绑定先跑。
@@ -304,13 +324,13 @@ final class PendingNetTunnelController: ObservableObject {
         var reason: String?
         do {
             try await ruleSetStore.ensureAvailable(for: mode)
-            if !ruleSetStore.isReady(for: mode) { reason = "规则集文件不完整或不是有效的 .srs" }
+            if !ruleSetStore.isReady(for: mode) { reason = String(localized: "规则集文件不完整或不是有效的 .srs") }
         } catch {
             reason = error.localizedDescription
         }
         guard let reason else { return }
         setRouteMode(.global, profile: profile, serverName: serverName)
-        degradeNotice = "规则集不可用，本次已降级为全局：\(reason)"
+        degradeNotice = String(format: NSLocalizedString("规则集不可用，本次已降级为全局：%@", comment: "Route mode degraded at tunnel start"), reason)
     }
 
     func stop() async {
@@ -397,7 +417,7 @@ final class PendingNetTunnelController: ObservableObject {
         serverName: String
     ) throws -> String {
         guard let base = PendingNetTunnelPaths.container() else {
-            throw PendingNetPairingError.serverRejected("无法访问 App Group 容器")
+            throw PendingNetPairingError.serverRejected(String(localized: "无法访问 App Group 容器"))
         }
         try PendingNetTunnelPaths.prepare(base: base)
         let data = try PendingNetTunnelConfig.make(

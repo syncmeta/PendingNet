@@ -26,28 +26,18 @@ struct MenuBarView: View {
 
     private var protoProxy: Proxy? {
         guard appliedServer != nil, let tag = appliedSelectorTag else { return nil }
-        return state.proxies[tag]
+        return engine.takeover == "local" ? state.proxies[tag] : engine.protocolProxy
     }
 
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 9) {
-                // 这里不再放 PendingNet 字样与图标 -- 菜单栏图标本身就是品牌标识，
-                // 框里只留连接状态药丸，避免重复。
-                PendingStatusPill(
-                    text: engine.connectionBusy ? "正在切换" : (engine.running ? "已连接" : (engine.takeover == "local" || engine.helperReady ? "已停止" : "等待授权")),
-                    kind: engine.connectionBusy ? .neutral : (engine.running ? .success : .neutral)
-                )
-                Spacer()
-            }
-
             if engine.takeover != "local" && !engine.helperReady {
                 Button("授权后台服务…") { engine.registerHelper() }
                     .buttonStyle(PendingPrimaryButtonStyle())
                     .disabled(engine.connectionBusy || vpsPairing.pairing)
             } else {
-                Toggle(engine.running ? "已连接" : "已停止", isOn: Binding(
+                Toggle("连接", isOn: Binding(
                     get: { engine.running },
                     set: { on in
                         Task {
@@ -105,7 +95,7 @@ struct MenuBarView: View {
                         .opacity(selected ? 1 : 0)
                         .frame(width: 12)
                     // verbatim: 地址是标识符，不能被本地化
-                    Text(verbatim: server.address)
+                    Text(verbatim: server.name.isEmpty ? server.address : server.name)
                         .font(selected
                             ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
                             : PendingNetTheme.Fonts.body.monospaced())
@@ -137,7 +127,13 @@ struct MenuBarView: View {
                     },
                     selection: protoProxy?.now
                 ) { name in
-                    Task { await state.select(selector: selector, name: name) }
+                    Task {
+                        if engine.takeover == "local" {
+                            await state.select(selector: selector, name: name)
+                        } else {
+                            await engine.selectProtocol(selector: selector, name: name)
+                        }
+                    }
                 }
                 .disabled(engine.connectionBusy || vpsPairing.pairing)
             }
@@ -180,19 +176,6 @@ struct MenuBarView: View {
                     openWindow(id: "main")
                 }
                 .buttonStyle(PendingQuietButtonStyle())
-                // 设置就是主窗口里的那一栏，不再另开一个设置窗口。
-                Button("设置") {
-                    navigation.section = .settings
-                    openWindow(id: "main")
-                }
-                .buttonStyle(.plain)
-                .font(PendingNetTheme.Fonts.chrome)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-                Spacer()
-                Button("退出") { NSApplication.shared.terminate(nil) }
-                    .buttonStyle(.plain)
-                    .font(PendingNetTheme.Fonts.chrome)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
         }
         .padding(14)

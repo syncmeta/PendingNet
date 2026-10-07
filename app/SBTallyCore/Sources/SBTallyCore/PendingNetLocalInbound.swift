@@ -117,16 +117,23 @@ public enum PendingNetLocalInboundError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .notANumber:
-            "端口只能是数字，比如 2080。"
+            localizedInboundError("端口只能是数字，比如 2080。")
         case .outOfRange:
             // verbatim 区间：1024 / 65535 是标识符不是数量
-            "端口要在 1024 到 65535 之间。"
+            localizedInboundError("端口要在 1024 到 65535 之间。")
         case .reserved(let port):
-            "\(port) 是 PendingNet 自己的控制端口，换一个。"
+            String(format: localizedInboundError("%lld 是 PendingNet 自己的控制端口，换一个。"), Int64(port))
         case .inUse(let port):
-            "端口 \(port) 已经被别的程序占用了，换一个再试。"
+            String(format: localizedInboundError("端口 %lld 已经被别的程序占用了，换一个再试。"), Int64(port))
         }
     }
+}
+
+/// This Swift package has no resources of its own; both apps provide the
+/// translations in their main bundle. Tests without app resources fall back
+/// to the original Chinese messages.
+private func localizedInboundError(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "Local proxy port validation")
 }
 
 /// 端口 / 局域网设置的存档。两端同一套键名。

@@ -113,11 +113,11 @@ struct PendingPageHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(PendingNetTheme.Fonts.pageTitle(title))
                 .foregroundStyle(PendingNetTheme.Palette.ink)
             if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle))
                     .font(PendingNetTheme.Fonts.body)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
@@ -140,11 +140,11 @@ struct PendingSectionCard<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(PendingNetTheme.Fonts.sectionTitle(title))
                     .foregroundStyle(PendingNetTheme.Palette.ink)
                 if let subtitle {
-                    Text(subtitle)
+                    Text(LocalizedStringKey(subtitle))
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                 }
@@ -185,7 +185,7 @@ struct PendingStatusPill: View {
     }
 
     var body: some View {
-        Text(text)
+        Text(LocalizedStringKey(text))
             .font(PendingNetTheme.Fonts.chrome)
             .foregroundStyle(foreground)
             .padding(.horizontal, 10)
@@ -211,7 +211,7 @@ struct PendingPrimaryButtonStyle: ButtonStyle {
 }
 
 struct PendingQuietButtonStyle: ButtonStyle {
-    var fill = PendingNetTheme.Palette.surfaceMuted
+    var fill = PendingNetTheme.Palette.surface
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -302,7 +302,7 @@ struct PendingPill<Accessory: View>: View {
             Button(action: action) {
                 // verbatim: 药丸上可能是 IP/端口这类标识符，走 LocalizedStringKey
                 // 会被加上千分位分隔符。
-                Text(verbatim: title)
+                Text(verbatim: monospacedTitle ? title : NSLocalizedString(title, comment: "Pill label"))
                     .font(monospacedTitle
                         ? PendingNetTheme.Fonts.chrome.monospaced()
                         : PendingNetTheme.Fonts.chrome)
@@ -319,7 +319,7 @@ struct PendingPill<Accessory: View>: View {
         .background(
             Capsule().fill(selected
                 ? PendingNetTheme.Palette.accent
-                : PendingNetTheme.Palette.surfaceMuted)
+                : PendingNetTheme.Palette.surface)
         )
         .overlay(
             Capsule().stroke(
@@ -383,11 +383,11 @@ struct PendingEmptyState: View {
             Image(systemName: icon)
                 .font(.system(size: 28, weight: .light))
                 .foregroundStyle(PendingNetTheme.Palette.accent)
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(PendingNetTheme.Fonts.bodyEmphasized)
                 .foregroundStyle(PendingNetTheme.Palette.ink)
             if let detail, !detail.isEmpty {
-                Text(detail)
+                Text(LocalizedStringKey(detail))
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .multilineTextAlignment(.center)

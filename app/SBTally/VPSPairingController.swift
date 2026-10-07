@@ -7,7 +7,7 @@ private enum VPSPairingControllerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingCredential: "找不到这台 VPS 的设备凭据，请重新导入它的链接"
+        case .missingCredential: String(localized: "找不到这台 VPS 的设备凭据，请重新导入它的链接")
         }
     }
 }
@@ -92,7 +92,7 @@ final class VPSPairingController: ObservableObject {
                     lastRuntime = try node.runtimeServer()
                 }
             }
-            lastMessage = "已导入 \(items.count) 个节点"
+            lastMessage = String(format: NSLocalizedString("已导入 %lld 个节点", comment: "Imported node count"), Int64(items.count))
             return lastRuntime
         } catch {
             lastMessage = nil
@@ -112,7 +112,7 @@ final class VPSPairingController: ObservableObject {
         )
         var record = PairedVPSServer(
             serverID: result.server.serverID,
-            name: result.server.name,
+            name: URL(string: file.control.endpoint)?.host ?? result.server.name,
             endpoint: file.control.endpoint,
             certificateSHA256: file.control.certificateSHA256,
             deviceID: result.deviceID,
@@ -173,6 +173,11 @@ final class VPSPairingController: ObservableObject {
         lastError = message
     }
 
+    /// 名称只属于客户端存档；不会改写服务器的节点身份或配置。
+    func renameServer(_ serverID: String, to requestedName: String) {
+        store.rename(serverID: serverID, to: requestedName)
+    }
+
     /// 把“取节点资料 + 写配置 + 重启 + 回读 selector”整段锁成一笔。
     /// 视图层的 disabled 只能拦下一次点击，拦不住已经排进 Task 队列的第二次点击。
     func beginConnectionChange() -> Bool {
@@ -192,7 +197,10 @@ final class VPSPairingController: ObservableObject {
 
     private func detailedMessage(for error: Error) -> String {
         if let urlError = error as? URLError {
-            return "\(urlError.localizedDescription)（URL 错误 \(urlError.errorCode)）"
+            return String(
+                format: NSLocalizedString("%@（URL 错误 %ld）", comment: "VPS import URL error detail"),
+                urlError.localizedDescription,
+                urlError.errorCode)
         }
         return error.localizedDescription
     }

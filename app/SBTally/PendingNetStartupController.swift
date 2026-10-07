@@ -27,7 +27,7 @@ final class PendingNetStartupController: ObservableObject {
         case .requiresApproval:
             startsAtLogin = false
             requiresApproval = true
-            lastError = "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet。"
+            lastError = String(localized: "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet。")
         case .notRegistered, .notFound:
             startsAtLogin = false
             requiresApproval = false
@@ -49,8 +49,8 @@ final class PendingNetStartupController: ObservableObject {
         } catch {
             refresh()
             lastError = enabled
-                ? "开机自启没能打开：\(error.localizedDescription)"
-                : "开机自启没能关闭：\(error.localizedDescription)"
+                ? String(format: NSLocalizedString("开机自启没能打开：%@", comment: "Login item registration failure"), error.localizedDescription)
+                : String(format: NSLocalizedString("开机自启没能关闭：%@", comment: "Login item removal failure"), error.localizedDescription)
         }
     }
 

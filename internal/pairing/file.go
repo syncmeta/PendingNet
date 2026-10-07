@@ -48,6 +48,9 @@ type Control struct {
 type Enrollment struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
+	// Role is omitted for ordinary links. Admin links deliberately add a field
+	// that older strict clients reject instead of silently storing an admin token.
+	Role string `json:"role,omitempty"`
 }
 
 // Parse decodes a pairing document, rejects unknown fields, and validates it.
@@ -162,6 +165,9 @@ func (f File) Validate(now time.Time) error {
 	}
 	if len(f.Enrollment.Token) < 32 {
 		return errors.New("enrollment token is too short")
+	}
+	if f.Enrollment.Role != "" && f.Enrollment.Role != "admin" {
+		return errors.New("pairing role is unsupported")
 	}
 	if f.Enrollment.ExpiresAt.IsZero() {
 		return errors.New("enrollment expiry is missing")

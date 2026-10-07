@@ -9,14 +9,16 @@ import Network
 ///   把 ICMP 丢掉，测出来的「不通」是假的。
 /// - 不按协议出数。Reality 和 Hysteria2 各测一次得到的两个数字，差别多半是
 ///   偶然波动，摆在用户面前只会让人以为要在两者之间做选择。
-/// - 不混搭「当前这台走代理测、别的直连测」。同一列数字必须可比，混了就没法
-///   横向比较，而横向比较正是这一列数字唯一的用处。
+/// - 连接时当前 VPS 可做真实代理访问测试；其他节点仍测端口。两种结果在行里
+///   明确标成「代理」/「端口」，不能把它们当同一种延迟横向比较。
 public struct PendingNetLatencyTarget: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         /// 代理入口：Reality 的 TCP 端口，用户的 TCP 流量真的落在这里。
         case proxyEntry
         /// 兜底：还没拉到节点资料时只知道控制端口。
         case controlPort
+        /// 通过选中出站真实访问 HTTPS 测试站。
+        case proxyAccess
     }
 
     public let host: String
@@ -33,9 +35,11 @@ public struct PendingNetLatencyTarget: Equatable, Sendable {
     public var explanation: String {
         switch kind {
         case .proxyEntry:
-            "代理入口 \(host):\(port)"
+            String(format: localizedLatency("代理入口 %@:%lld"), host, Int64(port))
         case .controlPort:
-            "控制端口 \(host):\(port)"
+            String(format: localizedLatency("控制端口 %@:%lld"), host, Int64(port))
+        case .proxyAccess:
+            String(format: localizedLatency("经所选代理访问 %@"), host)
         }
     }
 
@@ -82,14 +86,13 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
     case failed(String)
 
     /// VPS 列表那一行右边显示的东西。测量中返回 nil——那时候该显示转圈。
-    /// 只给数字，不带「延迟」二字，列表下面也不再挂一句解释：按钮就叫
-    /// 「测延迟」，这一列是什么不用再说第二遍。要知道测的是哪个端点，
-    /// 进「详情」。
+    /// 数字旁标明「代理」或「端口」，避免把实际出站访问与 TCP 握手混淆。
     public var rowText: String? {
         switch self {
         case .measuring: nil
-        case .ok(let milliseconds, _): "\(milliseconds) ms"
-        case .failed: "不通"
+        case .ok(let milliseconds, let target):
+            "\(milliseconds) ms · \(localizedLatency(target.kind == .proxyAccess ? "代理" : "端口"))"
+        case .failed: localizedLatency("不通")
         }
     }
 
@@ -102,7 +105,7 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
     /// 详情里的完整说法：数字 + 测的是哪个端点。
     public var detailText: String? {
         switch self {
-        case .measuring: "正在测…"
+        case .measuring: localizedLatency("正在测…")
         case .ok(let milliseconds, let target): "\(milliseconds) ms · \(target.explanation)"
         case .failed(let reason): reason
         }
@@ -114,6 +117,8 @@ public enum PendingNetLatencyError: Error, Equatable {
     case unresolvableAddress
     /// 超过等待上限还没握上手。
     case timedOut
+    /// 出站代理没有完成 HTTPS 测试。
+    case proxyTestFailed
 }
 
 /// 把底层错误翻译成人话。用户要知道的是「被拒了 / 超时了 / 域名解析不了」，
@@ -123,9 +128,11 @@ public enum PendingNetLatencyFailure {
         if let latencyError = error as? PendingNetLatencyError {
             switch latencyError {
             case .unresolvableAddress:
-                return "这台 VPS 的地址读不出来，请重新导入它的链接"
+                return localizedLatency("这台 VPS 的地址读不出来，请重新导入它的链接")
             case .timedOut:
-                return "连接超时：\(target.port) 端口一直没有回应，可能被防火墙拦住了"
+                return String(format: localizedLatency("连接超时：%lld 端口一直没有回应，可能被防火墙拦住了"), Int64(target.port))
+            case .proxyTestFailed:
+                return localizedLatency("代理访问测试未通过，请检查连接和协议")
             }
         }
         if let nwError = error as? NWError {
@@ -133,24 +140,28 @@ public enum PendingNetLatencyFailure {
             case .posix(let code):
                 switch code {
                 case .ECONNREFUSED:
-                    return "连接被拒绝：这台 VPS 的 \(target.port) 端口上没有服务在听"
+                    return String(format: localizedLatency("连接被拒绝：这台 VPS 的 %lld 端口上没有服务在听"), Int64(target.port))
                 case .ETIMEDOUT:
-                    return "连接超时：\(target.port) 端口一直没有回应，可能被防火墙拦住了"
+                    return String(format: localizedLatency("连接超时：%lld 端口一直没有回应，可能被防火墙拦住了"), Int64(target.port))
                 case .EHOSTUNREACH, .ENETUNREACH:
-                    return "网络到不了这台 VPS，先看看本机网络"
+                    return localizedLatency("网络到不了这台 VPS，先看看本机网络")
                 case .ECONNRESET:
-                    return "连接被对方掐断了，这台 VPS 上的服务可能不正常"
+                    return localizedLatency("连接被对方掐断了，这台 VPS 上的服务可能不正常")
                 default:
                     break
                 }
             case .dns:
-                return "域名解析不了：检查一下这台 VPS 的地址和本机 DNS"
+                return localizedLatency("域名解析不了：检查一下这台 VPS 的地址和本机 DNS")
             default:
                 break
             }
         }
-        return "连不上这台 VPS：\(error.localizedDescription)"
+        return String(format: localizedLatency("连不上这台 VPS：%@"), error.localizedDescription)
     }
+}
+
+private func localizedLatency(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "VPS latency feedback")
 }
 
 /// 逐台 VPS 测延迟，结果按 serverID 存着给界面用。两端共用同一个实现。
@@ -199,11 +210,39 @@ public final class PendingNetLatencyTester: ObservableObject {
         }
     }
 
+    /// 当前已连接的 VPS：强制经其出站访问 HTTPS 测试站，不碰其他节点的选择。
+    public func measureProxy(
+        _ record: PairedVPSRecord,
+        probe: @escaping @Sendable () async throws -> Int
+    ) async {
+        let target = PendingNetLatencyTarget(
+            host: "www.gstatic.com", port: 443, kind: .proxyAccess
+        )
+        results[record.serverID] = .measuring
+        do {
+            results[record.serverID] = .ok(milliseconds: try await probe(), target: target)
+        } catch {
+            results[record.serverID] = .failed(
+                PendingNetLatencyFailure.message(for: error, target: target)
+            )
+        }
+    }
+
     /// 逐台测一遍。并发跑：一台不通要等到超时，串行会让后面的一起陪等。
-    public func measureAll(_ records: [PairedVPSRecord]) async {
+    public func measureAll(
+        _ records: [PairedVPSRecord],
+        activeServerID: String? = nil,
+        proxyProbe: (@Sendable () async throws -> Int)? = nil
+    ) async {
         await withTaskGroup(of: Void.self) { group in
             for record in records {
-                group.addTask { @MainActor in await self.measure(record) }
+                group.addTask { @MainActor in
+                    if record.serverID == activeServerID, let proxyProbe {
+                        await self.measureProxy(record, probe: proxyProbe)
+                    } else {
+                        await self.measure(record)
+                    }
+                }
             }
         }
     }

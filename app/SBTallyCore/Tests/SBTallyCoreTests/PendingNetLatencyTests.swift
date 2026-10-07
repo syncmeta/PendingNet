@@ -211,7 +211,7 @@ final class PendingNetLatencyTests: XCTestCase {
                 target: PendingNetLatencyTarget(host: "203.0.113.10", port: 443, kind: .proxyEntry)
             )
         )
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "42 ms")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "42 ms · 端口")
         XCTAssertFalse(tester.busy)
     }
 
@@ -241,8 +241,32 @@ final class PendingNetLatencyTests: XCTestCase {
         var second = record(proxyTCPHost: "198.51.100.7", proxyTCPPort: 8443)
         second.serverID = "s2"
         await tester.measureAll([record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 443), second])
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "443 ms")
-        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "443 ms · 端口")
+        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · 端口")
+    }
+
+    @MainActor
+    func testConnectedServerUsesRealProxyProbeWithoutSwitchingOtherNodes() async {
+        let tester = PendingNetLatencyTester(probe: { _, port, _ in port })
+        var second = record(proxyTCPHost: "198.51.100.7", proxyTCPPort: 8443)
+        second.serverID = "s2"
+        await tester.measureAll(
+            [record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 443), second],
+            activeServerID: "s1",
+            proxyProbe: { 87 }
+        )
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "87 ms · 代理")
+        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · 端口")
+    }
+
+    @MainActor
+    func testFailedRealProxyProbeDoesNotFallBackToMisleadingTCPNumber() async {
+        let tester = PendingNetLatencyTester(probe: { _, _, _ in 2 })
+        await tester.measureProxy(record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 443)) {
+            throw PendingNetLatencyError.proxyTestFailed
+        }
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "不通")
+        XCTAssertEqual(tester.outcome(for: "s1")?.failureText, "代理访问测试未通过，请检查连接和协议")
     }
 
     @MainActor

@@ -39,6 +39,7 @@ final class EngineController: ObservableObject {
     /// TUN / 系统代理下由 root helper 实际应用的 VPS selector。仅端口模式仍从
     /// `AppState.proxies["proxy"]` 读取；两份引擎的控制口和密钥不能混用。
     @Published private(set) var activeSelectorTag: String?
+    @Published private(set) var protocolProxy: Proxy?
     /// 统计服务这一侧的状态。统计页面要靠它把「引擎没跑」「统计起不来」
     /// 「真的没流量」分开说，不能再一律「尚未启用」。
     @Published private(set) var statsDaemon: PendingNetStatsService.DaemonState = .stopped
@@ -67,6 +68,7 @@ final class EngineController: ObservableObject {
         logTail = userEngine.logTail()
         statsDaemon = userEngine.statsDaemon.currentState()
         activeSelectorTag = nil
+        protocolProxy = nil
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -105,17 +107,21 @@ final class EngineController: ObservableObject {
     /// 计算属性里。
     func friendlyErrorText() -> String? {
         guard let error = lastError else { return nil }
+        if error == PendingNetEngineBinary.missingEngineMessage {
+            return NSLocalizedString(error, comment: "Missing bundled proxy engine reported by helper")
+        }
         if error.localizedCaseInsensitiveContains("operation not permitted") {
             // Pending approval is the common case; a leftover legacy
             // registration is only plausible once approval is done.
             if helperNeedsApproval {
-                return "请在系统设置 -> 通用 -> 登录项与扩展中允许 PendingNet 后台项目。"
+                return String(localized: "请在系统设置 -> 通用 -> 登录项与扩展中允许 PendingNet 后台项目。")
             }
-            return "旧版后台服务仍在系统中。请先在系统设置里关闭 PendingNet 后台项目，再回来重新授权。"
+            return String(localized: "旧版后台服务仍在系统中。请先在系统设置里关闭 PendingNet 后台项目，再回来重新授权。")
         }
         if error.localizedCaseInsensitiveContains("could not connect") ||
-            error.localizedCaseInsensitiveContains("助手连接失败") {
-            return "后台服务尚未连接，请重新授权。"
+            error.localizedCaseInsensitiveContains("助手连接失败") ||
+            error.localizedCaseInsensitiveContains(String(localized: "助手连接失败")) {
+            return String(localized: "后台服务尚未连接，请重新授权。")
         }
         return error
     }
@@ -274,7 +280,7 @@ final class EngineController: ObservableObject {
                 try? await Task.sleep(for: timeout)
                 if once.resume(fallback) {
                     await MainActor.run {
-                        self?.lastError = "特权助手没有响应，请重新授权"
+                        self?.lastError = String(localized: "特权助手没有响应，请重新授权")
                         self?.helperReady = false
                     }
                 }
@@ -348,8 +354,8 @@ final class EngineController: ObservableObject {
             // that needs the user to flip a switch, not to retry.
             helperNeedsApproval = service.status == .requiresApproval
             lastError = helperNeedsApproval
-                ? "后台服务已更新，请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet"
-                : "后台服务是旧版本且没能自动更新，请退出并重新打开 PendingNet；仍然如此的话，在系统设置 → 通用 → 登录项与扩展里把 PendingNet 关掉再打开"
+                ? String(localized: "后台服务已更新，请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet")
+                : String(localized: "后台服务是旧版本且没能自动更新，请退出并重新打开 PendingNet；仍然如此的话，在系统设置 → 通用 → 登录项与扩展里把 PendingNet 关掉再打开")
         }
         return ok
     }
@@ -420,7 +426,7 @@ final class EngineController: ObservableObject {
                 // Surfaced rather than swallowed: this is the one step that can
                 // leave the user with no daemon at all, so it must not fail
                 // silently the way it did before.
-                lastError = "重新注册后台服务失败：\(error.localizedDescription)"
+                lastError = String(format: NSLocalizedString("重新注册后台服务失败：%@", comment: "Helper re-registration failure"), error.localizedDescription)
             }
         }
         helperNeedsApproval = service.status == .requiresApproval
@@ -468,12 +474,12 @@ final class EngineController: ObservableObject {
                     }
                 } else {
                     pendingTakeover = nil
-                    lastError = "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目，然后再选一次接管方式"
+                    lastError = String(localized: "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目，然后再选一次接管方式")
                 }
             } catch {
                 pendingTakeover = nil
                 helperReady = false
-                lastError = "助手授权失败：\(error.localizedDescription)"
+                lastError = String(format: NSLocalizedString("助手授权失败：%@", comment: "Helper authorization failure"), error.localizedDescription)
             }
         }
     }
@@ -546,10 +552,12 @@ final class EngineController: ObservableObject {
             running = false
             statsDaemon = .stopped
             activeSelectorTag = nil
+            protocolProxy = nil
             return
         }
         guard let result = await helperStatus() else {
             activeSelectorTag = nil
+            protocolProxy = nil
             return
         }
         running = result.0
@@ -557,14 +565,18 @@ final class EngineController: ObservableObject {
         logTail = result.2
         statsDaemon = await helperStatsState()
         activeSelectorTag = running ? await helperActiveSelectorTag() : nil
+        // An old snapshot must never make the next VPS show the prior protocol.
+        protocolProxy = nil
+        if let tag = activeSelectorTag {
+            protocolProxy = await helperProtocolProxy(tag)
+        }
     }
 
     /// 助手那侧采集器的状态。够不着助手（旧版、没响应）不当成「没有统计」——
     /// 那是助手的问题，说清楚是它。
     private func helperStatsState() async -> PendingNetStatsService.DaemonState {
         let unreachable = PendingNetStatsService.DaemonState.failed(
-            "后台服务还不是这一版，统计要等它更新。退出 PendingNet 再打开一次；"
-            + "还不行就在设置里重新授权后台服务。")
+            String(localized: "后台服务还不是这一版，统计要等它更新。退出 PendingNet 再打开一次；还不行就在设置里重新授权后台服务。"))
         return await withCompatibleHelper(unreachable, timeout: Self.quickTimeout) { p, reply in
             p.statsStatus { running, port, failure in
                 if running { PendingNetStatsEndpoint.shared.port = port }
@@ -586,8 +598,43 @@ final class EngineController: ObservableObject {
         }
     }
 
+    private func helperProtocolProxy(_ selectorTag: String) async -> Proxy? {
+        let data: Data? = await withCompatibleHelper(nil, timeout: Self.quickTimeout) { p, reply in
+            p.protocolProxy(selectorTag, reply: reply)
+        }
+        return data.flatMap { try? JSONDecoder().decode(Proxy.self, from: $0) }
+    }
+
+    func selectProtocol(selector: String, name: String) async {
+        let error: String? = await withCompatibleHelper(
+            String(localized: "后台服务未就绪"), timeout: Self.engineTimeout
+        ) { p, reply in
+            p.selectProtocol(selector, name: name, reply: reply)
+        }
+        if let error { lastError = error }
+        await refresh()
+    }
+
+    func measureProxyDelay(selector: String) async throws -> Int {
+        guard running else { throw PendingNetLatencyError.proxyTestFailed }
+        if takeover == "local" {
+            return try await PendingNetLocalAPIProvider().measureProxyDelay(selector: selector)
+        }
+        let result: (Int, String?) = await withCompatibleHelper(
+            (-1, String(localized: "后台服务未就绪")), timeout: Self.engineTimeout
+        ) { p, reply in
+            p.measureProxyDelay(selector) { delay, error in reply((delay, error)) }
+        }
+        guard result.0 > 0, result.1 == nil else {
+            throw NSError(domain: "PendingNetLatency", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey:
+                                     result.1 ?? String(localized: "代理访问测试未通过")])
+        }
+        return result.0
+    }
+
     private func call(_ f: @escaping (HelperProtocol, @escaping (String?) -> Void) -> Void) async {
-        let err: String? = await withCompatibleHelper("助手连接失败", timeout: Self.engineTimeout) { p, reply in
+        let err: String? = await withCompatibleHelper(String(localized: "助手连接失败"), timeout: Self.engineTimeout) { p, reply in
             f(p) { reply($0) }
         }
         if let err { lastError = err }
@@ -670,7 +717,7 @@ final class EngineController: ObservableObject {
     /// 自己拉起来的，直接 PATCH 它的控制口就行（见 `AppState.pushMode`）。
     func setRouteMode(_ mode: String) async -> PendingNetRouteModeOutcome {
         guard helperReady else {
-            return .unreachable(lastError ?? "后台服务还没授权")
+            return .unreachable(lastError ?? String(localized: "后台服务还没授权"))
         }
         // 版本握手是硬要求：这个方法是 interface version 4 才有的，直接发给
         // 可能是旧版的助手会让 XPC 把整条连接拆掉。
@@ -682,7 +729,7 @@ final class EngineController: ObservableObject {
         // 拿到的是兜底值 —— 真正的原因（旧版助手 / 没响应 / XPC 报错）在这期间
         // 已经被写进 lastError 了。
         if case .unreachable = outcome {
-            return .unreachable(lastError ?? "后台服务没有响应")
+            return .unreachable(lastError ?? String(localized: "后台服务没有响应"))
         }
         return outcome
     }
@@ -700,7 +747,7 @@ final class EngineController: ObservableObject {
                 return false
             }
         }
-        let err: String? = await withCompatibleHelper("特权助手尚未就绪", timeout: Self.engineTimeout) { p, reply in
+        let err: String? = await withCompatibleHelper(String(localized: "特权助手尚未就绪"), timeout: Self.engineTimeout) { p, reply in
             p.applyServerConfiguration(
                 runtime.serverID,
                 name: runtime.name,

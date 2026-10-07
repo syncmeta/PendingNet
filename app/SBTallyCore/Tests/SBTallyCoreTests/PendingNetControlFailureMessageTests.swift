@@ -25,6 +25,14 @@ final class PendingNetControlFailureMessageTests: XCTestCase {
         )
     }
 
+    func testUnrecognizedEngineResponseHasSpecificRecovery() {
+        let error = URLError(.badServerResponse)
+        XCTAssertEqual(
+            PendingNetControlFailureMessage.text(for: error),
+            "代理引擎返回了无法识别的状态，请重新连接后再试。"
+        )
+    }
+
     func testUnknownFailureStaysShortAndActionable() {
         let error = NSError(domain: "test", code: 7, userInfo: [
             NSLocalizedDescriptionKey: String(repeating: "technical details ", count: 50),

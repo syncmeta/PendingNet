@@ -9,12 +9,18 @@ public enum PendingNetRuntimeConfigError: LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedProtocol(let type): "PendingNet 不支持节点协议：\(type)"
-        case .malformedProtocol(let id): "VPS 返回的节点协议资料不完整：\(id)"
-        case .invalidLocalConfiguration: "本机 sing-box 配置格式无效"
-        case .missingProxySelector: "本机 sing-box 配置缺少 proxy 选择器"
+        case .unsupportedProtocol(let type):
+            String(format: localizedRuntimeConfigError("PendingNet 不支持节点协议：%@"), type)
+        case .malformedProtocol(let id):
+            String(format: localizedRuntimeConfigError("VPS 返回的节点协议资料不完整：%@"), id)
+        case .invalidLocalConfiguration: localizedRuntimeConfigError("本机 sing-box 配置格式无效")
+        case .missingProxySelector: localizedRuntimeConfigError("本机 sing-box 配置缺少 proxy 选择器")
         }
     }
+}
+
+private func localizedRuntimeConfigError(_ key: String) -> String {
+    NSLocalizedString(key, tableName: nil, bundle: .main, value: key, comment: "Runtime configuration error")
 }
 
 public struct PendingNetRuntimeServer: Sendable, Equatable {

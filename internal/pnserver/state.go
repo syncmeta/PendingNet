@@ -20,6 +20,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -37,6 +38,7 @@ var (
 	ErrNotInitialized     = errors.New("PendingNet Server is not initialized")
 	ErrInvalidPairing     = errors.New("pairing token is invalid, expired, or already used")
 	ErrUnauthorized       = errors.New("device token is unauthorized")
+	ErrUserNotFound       = errors.New("user not found")
 )
 
 // State is private server control-plane state. Secret tokens are only stored
@@ -50,10 +52,13 @@ type State struct {
 	CreatedAt         time.Time      `json:"created_at"`
 	Pairings          []PairingGrant `json:"pairings"`
 	Devices           []Device       `json:"devices"`
+	Users             []User         `json:"users,omitempty"`
 }
 
 type PairingGrant struct {
 	ID          string     `json:"id"`
+	UserID      string     `json:"user_id,omitempty"`
+	Role        string     `json:"role,omitempty"`
 	TokenSHA256 string     `json:"token_sha256"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   time.Time  `json:"expires_at"`
@@ -62,15 +67,34 @@ type PairingGrant struct {
 
 type Device struct {
 	ID          string    `json:"id"`
+	UserID      string    `json:"user_id,omitempty"`
+	Role        string    `json:"role,omitempty"`
 	Name        string    `json:"name"`
 	TokenSHA256 string    `json:"token_sha256"`
 	CreatedAt   time.Time `json:"created_at"`
+}
+
+// User owns one pairing link and the devices enrolled through it. Legacy
+// records are assigned an owner lazily without invalidating their tokens.
+type User struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Role      string     `json:"role,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	LoginIPs  []LoginIP  `json:"login_ips,omitempty"`
+}
+
+type LoginIP struct {
+	IP          string    `json:"ip"`
+	FirstSeenAt time.Time `json:"first_seen_at"`
 }
 
 // DeviceCredential is returned once after a successful enrollment.
 type DeviceCredential struct {
 	DeviceID   string
 	DeviceName string
+	Role       string
 	Token      string
 }
 
@@ -142,6 +166,7 @@ func (s *Store) Initialize(name, endpoint string) (State, error) {
 		CreatedAt:         s.now(),
 		Pairings:          []PairingGrant{},
 		Devices:           []Device{},
+		Users:             []User{},
 	}
 	if err := s.writeState(state); err != nil {
 		_ = os.Remove(s.certPath())
@@ -161,6 +186,16 @@ func (s *Store) Load() (State, error) {
 // CreatePairing creates and persists a one-time grant, returning the only copy
 // of its raw token in a portable pairing file.
 func (s *Store) CreatePairing(ttl time.Duration) (pairing.File, error) {
+	return s.createPairing(ttl, "")
+}
+
+// CreateAdminPairing issues a visibly distinct, one-time management link.
+// The grant stored server-side, not the link's editable JSON, is authoritative.
+func (s *Store) CreateAdminPairing(ttl time.Duration) (pairing.File, error) {
+	return s.createPairing(ttl, "admin")
+}
+
+func (s *Store) createPairing(ttl time.Duration, role string) (pairing.File, error) {
 	if ttl <= 0 || ttl > 24*time.Hour {
 		return pairing.File{}, errors.New("pairing ttl must be greater than zero and at most 24h")
 	}
@@ -180,10 +215,15 @@ func (s *Store) CreatePairing(ttl time.Duration) (pairing.File, error) {
 	if err != nil {
 		return pairing.File{}, err
 	}
+	user, err := s.newUser(now, role)
+	if err != nil {
+		return pairing.File{}, err
+	}
 	expires := now.Add(ttl)
 	state.Pairings = append(state.Pairings, PairingGrant{
-		ID: grantID, TokenSHA256: hashToken(token), CreatedAt: now, ExpiresAt: expires,
+		ID: grantID, UserID: user.ID, Role: role, TokenSHA256: hashToken(token), CreatedAt: now, ExpiresAt: expires,
 	})
+	state.Users = append(state.Users, user)
 	if err := s.writeState(state); err != nil {
 		return pairing.File{}, err
 	}
@@ -193,13 +233,18 @@ func (s *Store) CreatePairing(ttl time.Duration) (pairing.File, error) {
 		Control: pairing.Control{
 			Endpoint: state.ControlEndpoint, CertificateSHA256: state.CertificateSHA256,
 		},
-		Enrollment: pairing.Enrollment{Token: token, ExpiresAt: expires},
+		Enrollment: pairing.Enrollment{Token: token, ExpiresAt: expires, Role: role},
 	}, nil
 }
 
 // Enroll consumes a one-time pairing token and creates an independent device
 // credential. A token can never be used twice, even for the same device.
 func (s *Store) Enroll(token, deviceName string) (DeviceCredential, error) {
+	return s.EnrollFromIP(token, deviceName, "")
+}
+
+// EnrollFromIP records the direct peer address, never a client-supplied header.
+func (s *Store) EnrollFromIP(token, deviceName, peerIP string) (DeviceCredential, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.loadState()
@@ -231,18 +276,50 @@ func (s *Store) Enroll(token, deviceName string) (DeviceCredential, error) {
 	if err != nil {
 		return DeviceCredential{}, err
 	}
+	userID := state.Pairings[match].UserID
+	userIndex := indexUser(state.Users, userID)
+	if userIndex < 0 {
+		if userID != "" {
+			return DeviceCredential{}, ErrInvalidPairing
+		}
+		// A pre-user-model pairing stays valid until its original expiry.
+		user, err := s.newUser(now, state.Pairings[match].Role)
+		if err != nil {
+			return DeviceCredential{}, err
+		}
+		state.Users = append(state.Users, user)
+		userIndex = len(state.Users) - 1
+		userID = user.ID
+		state.Pairings[match].UserID = userID
+	}
+	if state.Users[userIndex].RevokedAt != nil {
+		return DeviceCredential{}, ErrInvalidPairing
+	}
+	addFirstSeenIP(&state.Users[userIndex], peerIP, now)
 	state.Pairings[match].UsedAt = &now
 	state.Devices = append(state.Devices, Device{
-		ID: deviceID, Name: deviceName, TokenSHA256: hashToken(deviceToken), CreatedAt: now,
+		ID: deviceID, UserID: userID, Role: state.Pairings[match].Role,
+		Name: deviceName, TokenSHA256: hashToken(deviceToken), CreatedAt: now,
 	})
 	if err := s.writeState(state); err != nil {
 		return DeviceCredential{}, err
 	}
-	return DeviceCredential{DeviceID: deviceID, DeviceName: deviceName, Token: deviceToken}, nil
+	return DeviceCredential{DeviceID: deviceID, DeviceName: deviceName,
+		Role: state.Pairings[match].Role, Token: deviceToken}, nil
 }
 
 // Authenticate verifies a previously issued device bearer token.
 func (s *Store) Authenticate(token string) (Device, error) {
+	return s.authenticate(token, "", false)
+}
+
+// AuthenticateFromIP only writes state on a new IP or a legacy device's first
+// authenticated request; repeated polling preserves the original timestamp.
+func (s *Store) AuthenticateFromIP(token, peerIP string) (Device, error) {
+	return s.authenticate(token, peerIP, true)
+}
+
+func (s *Store) authenticate(token, peerIP string, recordIP bool) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, err := s.loadState()
@@ -250,12 +327,98 @@ func (s *Store) Authenticate(token string) (Device, error) {
 		return Device{}, err
 	}
 	wantHash := hashToken(token)
-	for _, device := range state.Devices {
+	for i, device := range state.Devices {
 		if secureEqual(device.TokenSHA256, wantHash) {
+			userIndex := indexUser(state.Users, device.UserID)
+			if device.UserID != "" && (userIndex < 0 || state.Users[userIndex].RevokedAt != nil) {
+				return Device{}, ErrUnauthorized
+			}
+			if recordIP {
+				now := s.now()
+				changed := false
+				if userIndex < 0 {
+					user, err := s.newUser(now, device.Role)
+					if err != nil {
+						return Device{}, err
+					}
+					state.Users = append(state.Users, user)
+					userIndex = len(state.Users) - 1
+					device.UserID = user.ID
+					state.Devices[i].UserID = user.ID
+					changed = true
+				}
+				if addFirstSeenIP(&state.Users[userIndex], peerIP, now) {
+					changed = true
+				}
+				if changed {
+					if err := s.writeState(state); err != nil {
+						return Device{}, err
+					}
+				}
+			}
 			return device, nil
 		}
 	}
 	return Device{}, ErrUnauthorized
+}
+
+// RevokeUser invalidates all credentials and unconsumed grants owned by user.
+func (s *Store) RevokeUser(userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	index := indexUser(state.Users, userID)
+	if index < 0 {
+		return ErrUserNotFound
+	}
+	if state.Users[index].RevokedAt != nil {
+		return nil
+	}
+	now := s.now()
+	state.Users[index].RevokedAt = &now
+	return s.writeState(state)
+}
+
+func (s *Store) newUser(now time.Time, role string) (User, error) {
+	id, err := randomValue(s.randReader(), "usr_", 12)
+	if err != nil {
+		return User{}, err
+	}
+	name, err := randomValue(s.randReader(), "user-", 6)
+	if err != nil {
+		return User{}, err
+	}
+	return User{ID: id, Name: name, Role: role, CreatedAt: now}, nil
+}
+
+func indexUser(users []User, id string) int {
+	if id == "" {
+		return -1
+	}
+	for i := range users {
+		if users[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func addFirstSeenIP(user *User, raw string, now time.Time) bool {
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return false
+	}
+	ip := addr.Unmap().String()
+	for _, seen := range user.LoginIPs {
+		if seen.IP == ip {
+			return false
+		}
+	}
+	user.LoginIPs = append(user.LoginIPs, LoginIP{IP: ip, FirstSeenAt: now})
+	return true
 }
 
 func (s *Store) loadState() (State, error) {
@@ -278,6 +441,9 @@ func (s *Store) loadState() (State, error) {
 	}
 	if state.Devices == nil {
 		state.Devices = []Device{}
+	}
+	if state.Users == nil {
+		state.Users = []User{}
 	}
 	return state, nil
 }

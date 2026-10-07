@@ -11,13 +11,13 @@ enum PendingNetUserEngineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingSingBox:
-            PendingNetEngineBinary.missingEngineMessage
+            NSLocalizedString(PendingNetEngineBinary.missingEngineMessage, comment: "Missing bundled proxy engine")
         case .noConfiguration:
-            "还没有可运行的节点配置，请先导入节点链接并应用。"
+            String(localized: "还没有可运行的节点配置，请先导入节点链接并应用。")
         case .validationFailed(let detail):
-            "本机代理配置校验失败：\(detail)"
+            String(format: NSLocalizedString("本机代理配置校验失败：%@", comment: "Local proxy validation failure"), detail)
         case .startFailed(let detail):
-            "本机代理启动失败：\(detail)"
+            String(format: NSLocalizedString("本机代理启动失败：%@", comment: "Local proxy startup failure"), detail)
         }
     }
 }

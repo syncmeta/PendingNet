@@ -44,4 +44,15 @@ final class PendingNetSharedNodeTests: XCTestCase {
             XCTAssertEqual(error as? PendingNetTextImportError, .unsupportedLink(line: 2))
         }
     }
+
+    func testImportErrorsKeepFormattedLineNumbers() {
+        XCTAssertFalse(PendingNetTextImportError.empty.localizedDescription.isEmpty)
+        for (error, line) in [
+            (PendingNetTextImportError.unsupportedLink(line: 2), "2"),
+            (.managementLink(line: 3), "3"),
+        ] {
+            XCTAssertFalse(error.localizedDescription.contains("%lld"))
+            XCTAssertTrue(error.localizedDescription.contains(line))
+        }
+    }
 }

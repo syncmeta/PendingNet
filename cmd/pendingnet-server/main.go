@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"sbtally/internal/pairing"
 	"sbtally/internal/pnserver"
 )
 
@@ -44,7 +45,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|status|serve|version> [flags]")
+		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|client export|status|serve|version> [flags]")
 	}
 	switch args[0] {
 	case "init":
@@ -60,6 +61,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runPairCreate(args[2:], stdout, stderr)
 	case "import-singb":
 		return runImportSingb(args[1:], stdout, stderr)
+	case "client":
+		if len(args) < 2 || args[1] != "export" {
+			return errors.New("usage: pendingnet-server client export --platform <android|windows> --out <path> [--state-dir <path>]")
+		}
+		return runClientExport(args[2:], stdout, stderr)
 	case "status":
 		return runStatus(args[1:], stdout, stderr)
 	case "serve":
@@ -381,6 +387,50 @@ func runImportSingb(args []string, stdout, stderr io.Writer) error {
 	})
 }
 
+func runClientExport(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("client export", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	stateDir := fs.String("state-dir", defaultStateDir, "private PendingNet Server state directory")
+	platform := fs.String("platform", "", "target platform: android or windows")
+	out := fs.String("out", "", "new private JSON file (required; never print credentials to stdout)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 || *platform == "" || *out == "" {
+		return errors.New("--platform and --out are required; no positional arguments are accepted")
+	}
+	profile, err := pnserver.NewStore(*stateDir).LoadNodeProfile()
+	if err != nil {
+		return err
+	}
+	config, err := pnserver.BuildClientConfig(profile, *platform)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(*out), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(config); err != nil {
+		_ = file.Close()
+		_ = os.Remove(*out)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(*out)
+		return err
+	}
+	if err := os.Chmod(*out, 0o600); err != nil {
+		_ = os.Remove(*out)
+		return err
+	}
+	fmt.Fprintln(stdout, *out)
+	return nil
+}
+
 func runInit(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -413,14 +463,31 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-time pairing file lifetime (max 24h)")
 	out := fs.String("out", "", "write the pairing credential to this path (default stdout)")
 	format := fs.String("format", "link", "pairing credential format: link (pendingnet:// URL) or json (*.pdn document)")
+	admin := fs.Bool("admin", false, "issue a management credential (requires --out)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *format != "link" && *format != "json" {
 		return fmt.Errorf("unknown --format %q, expected link or json", *format)
 	}
+	if *admin && *out == "" {
+		return errors.New("admin pairing requires --out to avoid writing a management credential to stdout")
+	}
+	if *out != "" {
+		if _, err := os.Stat(*out); err == nil {
+			return fmt.Errorf("pairing output already exists: %s", *out)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	store := pnserver.NewStore(*stateDir)
-	pairFile, err := store.CreatePairing(*ttl)
+	var pairFile pairing.File
+	var err error
+	if *admin {
+		pairFile, err = store.CreateAdminPairing(*ttl)
+	} else {
+		pairFile, err = store.CreatePairing(*ttl)
+	}
 	if err != nil {
 		return err
 	}
@@ -444,7 +511,17 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(*out), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(*out, b, 0o600); err != nil {
+	file, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(b); err != nil {
+		_ = file.Close()
+		_ = os.Remove(*out)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(*out)
 		return err
 	}
 	if err := os.Chmod(*out, 0o600); err != nil {
@@ -519,7 +596,7 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           (&pnserver.API{Store: store}).Handler(),
+		Handler:           productionServeHandler(store),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -539,6 +616,13 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	return err
+}
+
+// Keep the production API wiring testable without binding a port or starting
+// systemd units. Configuration writes remain fail-closed until safe validation
+// and health-checked restart hooks can be supplied here.
+func productionServeHandler(store *pnserver.Store) http.Handler {
+	return (&pnserver.API{Store: store}).Handler()
 }
 
 func writeIndentedJSON(w io.Writer, value any) error {

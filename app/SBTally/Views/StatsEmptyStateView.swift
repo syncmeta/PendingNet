@@ -23,7 +23,9 @@ struct StatsEmptyStateView: View {
     }
 
     var body: some View {
-        let message = PendingNetStatsService.emptyMessage(for: availability, subject: subject)
+        let message = PendingNetStatsService.emptyMessage(
+            for: availability,
+            subject: NSLocalizedString(subject, comment: "Statistics subject"))
         PendingEmptyState(icon: icon, title: message.title, detail: message.detail)
     }
 
