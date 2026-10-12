@@ -21,13 +21,9 @@ func TestReleaseInstallerVerifiesAndExtractsAsset(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(zipBuffer.Bytes())
-	metadata := fmt.Sprintf(`{"tag_name":"v1.2.3","assets":[{"name":"Xray-linux-64.zip","browser_download_url":"https://download.test/xray.zip","digest":"sha256:%s"}]}`, hex.EncodeToString(sum[:]))
+	engine := LockedEngine{Version: "v1.2.3", Assets: map[string]EngineAsset{"amd64": {URL: "https://download.test/xray.zip", Digest: "sha256:" + hex.EncodeToString(sum[:])}}}
 	installer := &releaseInstaller{
-		apiBase: "https://api.test",
 		fetch: func(_ context.Context, rawURL string, _ int64) ([]byte, error) {
-			if rawURL == "https://api.test/repos/XTLS/Xray-core/releases/latest" {
-				return []byte(metadata), nil
-			}
 			if rawURL == "https://download.test/xray.zip" {
 				return zipBuffer.Bytes(), nil
 			}
@@ -35,7 +31,7 @@ func TestReleaseInstallerVerifiesAndExtractsAsset(t *testing.T) {
 		},
 	}
 	destination := filepath.Join(t.TempDir(), "xray")
-	version, err := installer.installLatest(context.Background(), "XTLS/Xray-core", "Xray-linux-64.zip", "xray", destination)
+	version, err := installer.installLocked(context.Background(), engine, "amd64", "xray", destination)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,15 +48,5 @@ func TestReleaseInstallerRejectsDigestMismatch(t *testing.T) {
 	err := verifyReleaseDigest([]byte("tampered"), "sha256:"+string(bytes.Repeat([]byte{'0'}, 64)))
 	if err == nil {
 		t.Fatal("expected digest mismatch")
-	}
-}
-
-func TestReleaseAssetNames(t *testing.T) {
-	xray, hy2, err := releaseAssetNames("arm64")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if xray != "Xray-linux-arm64-v8a.zip" || hy2 != "hysteria-linux-arm64" {
-		t.Fatalf("assets %q %q", xray, hy2)
 	}
 }

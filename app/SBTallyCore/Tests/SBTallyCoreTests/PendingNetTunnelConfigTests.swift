@@ -688,7 +688,7 @@ final class PendingNetTunnelPathsTests: XCTestCase {
         // 指向同一个文件会把扩展自己的诊断日志截断掉。
         XCTAssertEqual(
             PendingNetTunnelPaths.crashLogURL(in: base).path,
-            "/tmp/group-container/go-crash.log"
+            "/tmp/group-container/CrashReport-packet-tunnel.log"
         )
         XCTAssertNotEqual(
             PendingNetTunnelPaths.crashLogURL(in: base),

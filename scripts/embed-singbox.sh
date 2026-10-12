@@ -38,7 +38,7 @@ if ! command -v swift >/dev/null 2>&1; then
 fi
 
 sing_box_checkout
-version=$(git -C "$SING_BOX_DIR" describe --tags --always | sed 's/^v//')
+version=${SING_BOX_VERSION#v}
 
 mkdir -p "$app/Contents/MacOS"
 staging=$(mktemp -d "${TMPDIR:-/tmp}/singbox-embed.XXXXXX")

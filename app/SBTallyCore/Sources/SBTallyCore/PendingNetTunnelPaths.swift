@@ -58,12 +58,12 @@ public enum PendingNetTunnelPaths {
         base.appendingPathComponent("stderr.log")
     }
 
-    /// Go 运行时崩溃栈的落点（`LibboxRedirectStderr` → `debug.SetCrashOutput`）。
+    /// Go 运行时崩溃栈的落点（`LibboxSetup` → `debug.SetCrashOutput`）。
     ///
-    /// 必须与 `stderrLogURL` 分开：`RedirectStderr` 内部是 `os.Create`，
+    /// 必须与 `stderrLogURL` 分开：内核 Setup 内部是 `os.Create`，
     /// 指向同一个文件会把已经在追加写的诊断日志截断掉。
     public static func crashLogURL(in base: URL) -> URL {
-        base.appendingPathComponent("go-crash.log")
+        base.appendingPathComponent("CrashReport-packet-tunnel.log")
     }
 
     /// 扩展 `startTunnel` 失败时留下的错误原文。

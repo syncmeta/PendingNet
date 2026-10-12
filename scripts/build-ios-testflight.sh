@@ -28,6 +28,8 @@ bundle_id=com.pendingname.pendingnet
 extension_bundle_id=com.pendingname.pendingnet.extension
 team_id=M42BKJN82S
 
+
+# shellcheck disable=SC1007
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 archive_only=${PENDINGNET_IOS_ARCHIVE_ONLY:-0}
 upload=${PENDINGNET_IOS_UPLOAD:-0}
@@ -35,6 +37,8 @@ upload=${PENDINGNET_IOS_UPLOAD:-0}
 command -v xcodegen >/dev/null || { echo "缺 xcodegen（brew install xcodegen）" >&2; exit 2; }
 test -d "$root/app/Vendor/Libbox.xcframework" \
   || { echo "缺 app/Vendor/Libbox.xcframework —— 先跑 scripts/build-libbox-xcframework.sh" >&2; exit 2; }
+
+python3 "$root/scripts/check-libbox-lock.py" "$root/app/Vendor/Libbox.xcframework"
 
 # --- 凭据 -------------------------------------------------------------------
 key_id=${PENDINGNET_ASC_KEY_ID:-9PS6Y7K4X9}
@@ -88,6 +92,8 @@ cleanup() {
   rm -rf "$snap"
 }
 trap cleanup EXIT HUP INT TERM
+python3 "$snap/src/scripts/check-upstream-lock.py"
+python3 "$snap/src/scripts/check-libbox-lock.py" "$root/app/Vendor/Libbox.xcframework"
 # Libbox.xcframework 不进仓库（.gitignore），快照里得自己补一份。
 mkdir -p "$snap/src/app/Vendor"
 /usr/bin/ditto "$root/app/Vendor/Libbox.xcframework" "$snap/src/app/Vendor/Libbox.xcframework"

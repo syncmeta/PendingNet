@@ -17,12 +17,22 @@ macOS 版的日常更新走的是自建的 Sparkle appcast（见 [macos-updates.
 
 ## 产物从哪来
 
+每次发版先更新 `app/project.yml` 的版本/build，再运行 `python3 scripts/lock-upstream-engines.py`，将 `internal/pnserver/upstream-lock.json` 与该次版本一起提交。这个步骤只在发布准备时查询上游稳定 Release；普通构建和 VPS 更新不查询上游 latest。新版本/build 与清单不一致时，三个发布构建脚本都会拒绝继续。
+
+清单锁定 Xray/Hysteria2 的 amd64、arm64 下载地址和 SHA-256，以及客户端 sing-box 的版本与完整源码提交。macOS 从该提交构建；iOS 先运行 `scripts/build-libbox-xcframework.sh`，记录库的源码身份和文件指纹，TestFlight 构建会拒绝复用旧库或改动后的库。上游内核改变后，必须通过配置兼容检查、iOS 编译和相应客户端测试才可发布；生成清单不代表内核已通过兼容验证。
+
+`scripts/build-linux-server.sh` 同时产出 `upstream-lock.json`，SHA256SUMS 包含这个文件。GitHub Release 上传服务端资产时也应上传该清单。已发布版本的内核目标由嵌入二进制的清单决定，不随上游后来发布新版本改变。
+
+已有 VPS 可重新运行安装脚本，或使用 `--update-only` 只更新、不生成配对链接。它会先对齐 PendingNet 控制服务，再运行 `pendingnet-server update-engines`：先下载并校验锁定资产、验证现有 Xray 配置，再备份两个可执行文件，保留原服务启停状态，更新后验证服务 PID 和对应监听端口稳定。失败时恢复两个旧文件和原启停状态；中断更新的日志会在下次运行时先恢复。配置、证书、节点密钥和已配对凭据不重建。Hysteria2 的原生配置接受情况通过启动及监听检查验证，尚不等价于真实客户端握手成功。
+
+只管理 `pendingnet-xray.service` 和 `pendingnet-hysteria.service`；共享二进制、非 PendingNet 单元或不同配置路径会拒绝更新，不更新 VPS 上独立的 sing-box/nginx。`--no-upgrade` 保留控制服务和内核；`--force-provision` 仍是重新部署，不能作为普通更新使用。
+
 一次 Release 要挂两类东西：
 
 | 资产 | 给谁 | 谁产的 |
 | --- | --- | --- |
 | `PendingNet-<版本>.zip` | 下载 macOS 客户端的人 | `scripts/build-macos-update.sh`（签名 + 公证 + staple） |
-| `pendingnet-server-linux-amd64`<br>`pendingnet-server-linux-arm64`<br>`SHA256SUMS` | VPS 上的一键部署脚本 | `scripts/build-linux-server.sh` |
+| `pendingnet-server-linux-amd64`<br>`pendingnet-server-linux-arm64`<br>`SHA256SUMS`<br>`upstream-lock.json` | VPS 上的一键部署脚本及内核版本核对 | `scripts/build-linux-server.sh` |
 
 `deploy/vps-install.sh` 在 VPS 上第一件事就是去最新的 Release 找那三个东西：
 下到二进制、用 `SHA256SUMS` 核过才敢用。**缺了不会失败**——它会退回到在 VPS 上现装
@@ -80,6 +90,7 @@ gh release create pendingnet/v0.3.28 \
   dist/server/pendingnet-server-linux-amd64 \
   dist/server/pendingnet-server-linux-arm64 \
   dist/server/SHA256SUMS \
+  dist/server/upstream-lock.json \
   --title "PendingNet 0.3.28" \
   --notes-file /tmp/release-notes.md
 ```

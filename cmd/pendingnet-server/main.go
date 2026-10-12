@@ -45,7 +45,7 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|client export|status|serve|version> [flags]")
+		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|client export|status|serve|version|engine-lock|update-engines> [flags]")
 	}
 	switch args[0] {
 	case "init":
@@ -70,6 +70,17 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runStatus(args[1:], stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
+	case "engine-lock":
+		if len(args) != 1 {
+			return errors.New("engine-lock takes no arguments")
+		}
+		lock, err := pnserver.ReleaseEngineLock()
+		if err != nil {
+			return err
+		}
+		return writeIndentedJSON(stdout, lock)
+	case "update-engines":
+		return runUpdateEngines(args[1:], stdout, stderr)
 	case "version":
 		return runVersion(args[1:], stdout, stderr)
 	default:
@@ -212,7 +223,7 @@ func runProvision(args []string, stdout, stderr io.Writer) (runErr error) {
 
 	versions := pnserver.InstalledEngineVersions{Xray: "existing", Hysteria2: "existing"}
 	if !*skipDownload {
-		versions, err = pnserver.InstallLatestProxyEngines(context.Background(), *xrayBinary, *hy2Binary)
+		versions, err = pnserver.InstallReleaseProxyEngines(context.Background(), *xrayBinary, *hy2Binary)
 		if err != nil {
 			return err
 		}

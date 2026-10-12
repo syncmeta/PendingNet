@@ -7,13 +7,8 @@ import UserNotifications
 
 /// libbox 内核与 NetworkExtension 之间的平台适配层。
 ///
-/// 方法集合以 `app/Vendor/Libbox.xcframework` 里的 `Libbox.objc.h`
-/// （sing-box v1.13.13）为准，**不是** SFI 主线那一份 —— 主线的
-/// `LibboxPlatformInterface` 多出 SSH／neighbor／tailscale／writeLog
-/// 等一批方法，本版本没有。另外 ObjC 侧的 `usePlatformAutoDetectInterfaceControl`
-/// ／`autoDetectInterfaceControl:` ／`sendNotification:` 经 Swift 导入器
-/// 改名为 `usePlatformAutoDetectControl` ／`autoDetectControl` ／`send`，
-/// 按 Swift 名实现。改动前先读头文件，再让编译器裁决。
+/// 平台协议以发版锁定源码构建出的 Libbox.objc.h 为准。
+/// 可选 shell/bridge/SSH 能力明确返回不支持；TUN 与系统网络接口正常实现。
 final class PendingNetPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol,
     LibboxCommandServerHandlerProtocol
 {
@@ -71,11 +66,16 @@ final class PendingNetPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
             // 被整个绕过 —— 表现是「能上网但分流不对」，最难查的那一类。
             var dnsSettings: NEDNSSettings?
             do {
-                let dnsServer = try options.getDNSServerAddress()
-                if dnsServer.value.isEmpty {
+                let iterator = try options.getDNSServerAddress()
+                var servers: [String] = []
+                while iterator.hasNext() {
+                    let value = iterator.next()
+                    if !value.isEmpty { servers.append(value) }
+                }
+                if servers.isEmpty {
                     tunnel.writeMessage("(packet-tunnel) tun DNS 地址为空，DNS 将不经隧道")
                 } else {
-                    let newDNSSettings = NEDNSSettings(servers: [dnsServer.value])
+                    let newDNSSettings = NEDNSSettings(servers: servers)
                     settings.dnsSettings = newDNSSettings
                     dnsSettings = newDNSSettings
                 }
@@ -415,6 +415,37 @@ final class PendingNetPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
     func systemCertificates() -> (any LibboxStringIteratorProtocol)? {
         nil
     }
+
+    func cancelNotification(_ identifier: String?, typeID _: Int32) throws {
+        guard let identifier else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
+    }
+
+    func usePlatformShell() -> Bool { false }
+    func usePlatformBridge() -> Bool { false }
+    func checkPlatformShell() throws { throw unsupportedPlatformFeature() }
+    func lookupUser(_: String?) throws -> LibboxPlatformUser { throw unsupportedPlatformFeature() }
+    func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: LibboxStringIteratorProtocol?, term _: String?, rows _: Int32, cols _: Int32) throws -> LibboxShellSessionProtocol { throw unsupportedPlatformFeature() }
+    func createBridge(_: LibboxBridgeOptions?) throws -> LibboxBridgeSessionProtocol { throw unsupportedPlatformFeature() }
+    func startNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws { throw unsupportedPlatformFeature() }
+    func closeNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
+    func registerMyInterface(_: String?) {}
+    func tailscaleHostname() -> String { "pendingnet-ios" }
+    func lookupSFTPServer(_ error: NSErrorPointer) -> String {
+        error?.pointee = unsupportedPlatformFeature() as NSError
+        return ""
+    }
+    func readSystemSSHHostKey(_ error: NSErrorPointer) -> String {
+        error?.pointee = unsupportedPlatformFeature() as NSError
+        return ""
+    }
+    private func unsupportedPlatformFeature() -> Error {
+        PendingNetTunnelError.message("此 iOS 客户端不支持平台 shell、bridge 或 SSH 功能")
+    }
+    func connectSSHAgent(_: UnsafeMutablePointer<Int32>?) throws { throw unsupportedPlatformFeature() }
+    func triggerNativeCrash() throws { throw PendingNetTunnelError.message("客户端未开放主动崩溃诊断") }
 
     // MARK: - LibboxCommandServerHandler
 

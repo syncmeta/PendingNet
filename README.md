@@ -45,6 +45,17 @@ sudo cat /root/pendingnet-admin.txt
 
 复制完整链接到客户端「管理 → 导入管理链接」。链接十分钟有效、只能导入一次，每台管理设备单独签发；输出文件已有时不会覆盖，请改用新文件名。管理员凭据只保存在导入设备本机，不经 iCloud 同步。管理页支持用户查询、撤销、链接签发和配置导出；在线修改服务器配置尚未开放。
 
+### 更新已部署的 VPS
+
+支持内核锁定更新的新版本发布后，运行：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh \
+  | sudo PENDINGNET_UPDATE_ONLY=1 bash
+```
+
+更新控制服务以及该 PendingNet 发版锁定的 Xray/Hysteria2，保留节点配置、密钥和设备凭据；内核更新会短暂重启正在运行的对应代理服务，失败会回滚。没有定时自动升级。可先用 `sudo pendingnet-server update-engines --dry-run` 查看当前已装 PendingNet 的内核目标；`--no-upgrade` 保留现有程序和内核。不要用 `--force-provision` 更新，它会重新生成密钥。
+
 ### 导出 Android / Windows sing-box 配置
 
 已配置 Reality 节点的 PendingNet Server 可在 VPS 本地导出独立配置文件（需使用包含 `client export` 的新版服务端）：

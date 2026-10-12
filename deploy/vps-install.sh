@@ -38,13 +38,14 @@ XRAY_PORT="${PENDINGNET_XRAY_PORT:-443}"
 HY2_PORT="${PENDINGNET_HY2_PORT:-443}"
 PAIR_TTL="${PENDINGNET_PAIR_TTL:-10m}"
 GO_VERSION="${PENDINGNET_GO_VERSION:-1.26.4}"
-# 内网镜像 / 私有 fork 用这两个改取件地址，默认都指向 GitHub 上的 $REPO。
+# 内网镜像 / 私有 fork 用这两个改取件地址，默认都指向 GitHub 上的 ${REPO}。
 RELEASE_BASE_URL="${PENDINGNET_RELEASE_BASE_URL:-}"
 REPO_URL="${PENDINGNET_REPO_URL:-}"
 GITHUB_TOKEN="${PENDINGNET_GITHUB_TOKEN:-}"
 FORCE_PROVISION="${PENDINGNET_FORCE_PROVISION:-0}"
 SOURCE_ONLY="${PENDINGNET_SOURCE_ONLY:-0}"
 NO_UPGRADE="${PENDINGNET_NO_UPGRADE:-0}"
+UPDATE_ONLY="${PENDINGNET_UPDATE_ONLY:-0}"
 
 # 屏幕上只留进度和链接，絮叨全进这个文件——出错时 on_error 会把路径指出来。
 DETAIL_LOG="${PENDINGNET_LOG:-/tmp/pendingnet-install.log}"
@@ -62,13 +63,13 @@ else
 fi
 
 log()  { printf '%s==>%s %s\n' "$C_CYAN" "$C_RESET" "$*"; }
-# info 不上屏：细节只写进 $DETAIL_LOG。日志写不进去（磁盘满、目录不可写）
+# info 不上屏：细节只写进 ${DETAIL_LOG}。日志写不进去（磁盘满、目录不可写）
 # 也不能让部署整体失败——它只是日志。
 info() { printf '%s\n' "$*" >>"$DETAIL_LOG" 2>/dev/null || true; }
 warn() { printf '%s警告:%s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
 die()  { printf '%s错误:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
-# 跑一个话多的命令：stdout / stderr 全进 $DETAIL_LOG，只有它失败时才把这一段
+# 跑一个话多的命令：stdout / stderr 全进 ${DETAIL_LOG}，只有它失败时才把这一段
 # 原样吐到屏幕上。成功路径上屏幕干净，出错时一个字都不少。
 run_quiet() {
     local before=0 code=0
@@ -105,7 +106,9 @@ usage() {
                           环境变量 PENDINGNET_FORCE_PROVISION=1
   --source-only           跳过预编译资产，直接从源码编译
                           环境变量 PENDINGNET_SOURCE_ONLY=1
-  --no-upgrade            不检查版本，沿用机器上已装的服务端二进制。
+  --update-only           只更新控制服务和本次发版锁定的内核，不生成配对链接。
+                          环境变量 PENDINGNET_UPDATE_ONLY=1
+  --no-upgrade            保留现有控制服务和代理内核，不检查版本。
                           旧版服务端吐的是 .pdn JSON 而不是配对链接，
                           脚本检测到这种情况会明确警告。
                           环境变量 PENDINGNET_NO_UPGRADE=1
@@ -164,6 +167,7 @@ parse_args() {
             --force-provision) FORCE_PROVISION=1; shift ;;
             --source-only)    SOURCE_ONLY=1; shift ;;
             --no-upgrade)     NO_UPGRADE=1; shift ;;
+            --update-only)    UPDATE_ONLY=1; shift ;;
             -h|--help)        usage; exit 0 ;;
             *) usage >&2; die "不认识的参数: $1" ;;
         esac
@@ -218,7 +222,7 @@ detect_arch() {
             ARCH=arm64; GOARCH=arm64
             warn "arm64：服务端代码里有这条分支，但从没在真的 arm64 机器上跑过。出问题请回退到 amd64。"
             ;;
-        *) die "不支持的 CPU 架构 $machine，只支持 x86_64 / aarch64。" ;;
+        *) die "不支持的 CPU 架构 ${machine}，只支持 x86_64 / aarch64。" ;;
     esac
     info "架构 $machine → $ARCH"
 }
@@ -284,7 +288,7 @@ check_ports() {
         holder="$(port_holder "$proto" "$port")"
         if [[ -n "$holder" ]]; then
             blocked=1
-            warn "${proto^^}/$port（$role 要用）已经被占了: $holder"
+            warn "${proto^^}/${port}（$role 要用）已经被占了: $holder"
         fi
     done
     if [[ $blocked -eq 0 ]]; then
@@ -379,25 +383,24 @@ download_release_binary() {
     local asset="pendingnet-server-linux-$ARCH"
     local dest="$WORK_DIR/pendingnet-server"
     local sums="$WORK_DIR/SHA256SUMS"
-    info "找预编译的服务端二进制（资产名 $asset）"
+    info "找预编译的服务端二进制（资产名 ${asset}）"
     if [[ -n "$RELEASE_BASE_URL" ]]; then
         curl -fsSL --max-time 300 -o "$dest" "$RELEASE_BASE_URL/$asset" </dev/null || { info "下不到 $RELEASE_BASE_URL/$asset"; return 1; }
         curl -fsSL --max-time 60 -o "$sums" "$RELEASE_BASE_URL/SHA256SUMS" </dev/null || { info "下不到 $RELEASE_BASE_URL/SHA256SUMS"; return 1; }
-    elif [[ -n "$GITHUB_TOKEN" ]]; then
+    else
+        # Resolve latest once, then use this immutable release's asset IDs for
+        # both files. A newer release appearing mid-download cannot mix them.
         local release_json asset_id sums_id
         release_json="$(curl_auth "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null || true)"
         [[ -n "$release_json" ]] || { info "Release API 读不到"; return 1; }
-        asset_id="$(printf '%s' "$release_json" | tr '{' '\n' | grep -F "\"$asset\"" | grep -oE '"id": ?[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
-        sums_id="$(printf '%s' "$release_json" | tr '{' '\n' | grep -F '"SHA256SUMS"' | grep -oE '"id": ?[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
-        [[ -n "$asset_id" && -n "$sums_id" ]] || { info "最新 Release 里没有 $asset 或 SHA256SUMS"; return 1; }
+        printf '%s' "$release_json" > "$WORK_DIR/release.json"
+        asset_id="$(python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); print(next((a["id"] for a in x["assets"] if a["name"]==sys.argv[2]), ""))' "$WORK_DIR/release.json" "$asset")"
+        sums_id="$(python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); print(next((a["id"] for a in x["assets"] if a["name"]=="SHA256SUMS"), ""))' "$WORK_DIR/release.json")"
+        [[ -n "$asset_id" && -n "$sums_id" ]] || { info "最新 Release 缺少服务端资产"; return 1; }
         curl_auth -H "Accept: application/octet-stream" -o "$dest" \
             "https://api.github.com/repos/$REPO/releases/assets/$asset_id" </dev/null || return 1
         curl_auth -H "Accept: application/octet-stream" -o "$sums" \
             "https://api.github.com/repos/$REPO/releases/assets/$sums_id" </dev/null || return 1
-    else
-        local base="https://github.com/$REPO/releases/latest/download"
-        curl -fsSL --max-time 300 -o "$dest" "$base/$asset" </dev/null || { info "下不到 $asset"; return 1; }
-        curl -fsSL --max-time 60 -o "$sums" "$base/SHA256SUMS" </dev/null || { info "下不到 SHA256SUMS"; return 1; }
     fi
     local expected
     expected="$(grep -E "[[:space:]]\*?$asset\$" "$sums" | head -1 | awk '{print $1}' || true)"
@@ -405,7 +408,7 @@ download_release_binary() {
     local actual
     actual="$(sha256sum "$dest" | awk '{print $1}')"
     if [[ "$actual" != "$expected" ]]; then
-        warn "sha256 对不上（期望 $expected，实际 $actual），扔了不用"
+        warn "sha256 对不上（期望 ${expected}，实际 ${actual}），扔了不用"
         return 1
     fi
     chmod 0755 "$dest"
@@ -418,14 +421,14 @@ download_release_binary() {
 install_go_toolchain() {
     local go_bin=/usr/local/go/bin/go
     if [[ -x "$go_bin" ]] && "$go_bin" version 2>/dev/null | grep -qF "go$GO_VERSION"; then
-        info "/usr/local/go already at go$GO_VERSION，直接用"
+        info "/usr/local/go already at go${GO_VERSION}，直接用"
         return 0
     fi
     ensure_packages tar
     local tarball="go${GO_VERSION}.linux-${GOARCH}.tar.gz"
     log "装 Go 工具链 $GO_VERSION"
     curl -fsSL --max-time 600 -o "$WORK_DIR/$tarball" "https://go.dev/dl/$tarball" </dev/null \
-        || die "Go 工具链下不下来（https://go.dev/dl/$tarball）。这台机器连不上 go.dev 的话，改用 README「一、VPS 端」的手工路径：在本机交叉编译好再 scp 上来。"
+        || die "Go 工具链下不下来（https://go.dev/dl/${tarball}）。这台机器连不上 go.dev 的话，改用 README「一、VPS 端」的手工路径：在本机交叉编译好再 scp 上来。"
     rm -rf /usr/local/go
     tar -C /usr/local -xzf "$WORK_DIR/$tarball"
     [[ -x "$go_bin" ]] || die "Go 装完了但 $go_bin 不在，tarball 可能是坏的。"
@@ -441,7 +444,7 @@ build_from_source() {
     if [[ -z "$REPO_URL" && -n "$GITHUB_TOKEN" ]]; then
         clone_url="https://x-access-token:$GITHUB_TOKEN@github.com/$REPO.git"
     fi
-    info "clone ${REPO_URL:-$REPO}（$REF）"
+    info "clone ${REPO_URL:-$REPO}（${REF}）"
     git clone --quiet --depth 1 --branch "$REF" "$clone_url" "$src" </dev/null \
         || die "clone 不下来。私有仓库要设 PENDINGNET_GITHUB_TOKEN；分支名不对就用 --ref 指定。"
     info "编译 ./cmd/pendingnet-server"
@@ -462,9 +465,10 @@ obtain_binary() {
     if [[ "$SOURCE_ONLY" == "1" ]]; then
         build_from_source
     elif ! download_release_binary; then
+        if already_installed; then die "无法取得完整正式 Release；现有部署未改动。源码构建需显式 --source-only。"; fi
         build_from_source
     fi
-    log "取到服务端二进制（$BINARY_SOURCE）"
+    log "取到服务端二进制（${BINARY_SOURCE}）"
 }
 
 already_provisioned() { [[ -f "$STATE_DIR/node.json" ]]; }
@@ -541,7 +545,7 @@ sync_server_binary() {
     info "重启 pendingnet-server.service"
     if systemctl restart pendingnet-server.service && server_service_settled; then
         log "服务端已升级 $(installed_version_line)"
-        info "来源 $BINARY_SOURCE；旧的那份留在 $backup（手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
+        info "来源 ${BINARY_SOURCE}；旧的那份留在 ${backup}（手工回退：mv 回 $INSTALLED_BIN 再 systemctl restart pendingnet-server）"
         return 0
     fi
     warn "新服务端起不来，回滚到升级前那一份"
@@ -551,7 +555,7 @@ sync_server_binary() {
     if systemctl restart pendingnet-server.service && server_service_settled; then
         die "服务端升级失败，已经回滚到升级前那一份并重启好了（控制服务在跑，机器还能用）。查 journalctl -u pendingnet-server -n 50 --no-pager 看新版本为什么起不来。"
     fi
-    die "服务端升级失败，回滚之后控制服务也没起来。立刻查 journalctl -u pendingnet-server -n 50 --no-pager；升级前的二进制在 $backup。"
+    die "服务端升级失败，回滚之后控制服务也没起来。立刻查 journalctl -u pendingnet-server -n 50 --no-pager；升级前的二进制在 ${backup}。"
 }
 
 # Type=simple 的服务，systemctl restart 一 fork 出来就算成功了。所以盯几秒
@@ -577,6 +581,20 @@ align_server_binary() {
     fi
     obtain_binary
     sync_server_binary
+}
+
+align_release_engines() {
+    [[ "$NO_UPGRADE" != "1" ]] || return 0
+    local help
+    help="$("$INSTALLED_BIN" update-engines -h 2>&1 </dev/null || true)"
+    if [[ "$help" != *"Usage of update-engines:"* ]]; then
+        warn "此 PendingNet Release 尚未包含内核锁定更新功能；保留原内核。"
+        [[ "$UPDATE_ONLY" != "1" ]] || die "目标 Release 不支持完整内核更新。"
+        return 0
+    fi
+    log "更新到本次 PendingNet 发版锁定的内核（保留配置和凭据）"
+    run_quiet "$INSTALLED_BIN" update-engines --state-dir "$STATE_DIR" \
+      || die "内核更新未完成；检查日志和保留的回滚备份。"
 }
 
 # 兜底断言：pair create 之后必须是一条 pendingnet:// 链接。不是就不算成功——
@@ -609,7 +627,7 @@ warn_endpoint_drift() {
     recorded="$(grep -oE '"control_endpoint": *"[^"]+"' "$STATE_DIR/state.json" 2>/dev/null | head -1 | sed 's/.*"\(https[^"]*\)"/\1/' || true)"
     [[ -n "$recorded" ]] || return 0
     if [[ "$recorded" != "https://$SERVER_IP:$CONTROL_PORT" ]]; then
-        warn "这台机器登记的控制地址是 $recorded，和现在这次的 https://$SERVER_IP:$CONTROL_PORT 不一样。"
+        warn "这台机器登记的控制地址是 ${recorded}，和现在这次的 https://$SERVER_IP:$CONTROL_PORT 不一样。"
         warn "配对链接里带的是登记的那个地址。IP 真的变了的话，用 --force-provision 重做一次部署。"
     fi
 }
@@ -617,7 +635,7 @@ warn_endpoint_drift() {
 do_install() {
     [[ -n "$DISPLAY_NAME" ]] || DISPLAY_NAME="$(hostname 2>/dev/null || echo PendingNet VPS)"
     log "安装控制服务"
-    info "名字「$DISPLAY_NAME」，控制地址 https://$SERVER_IP:$CONTROL_PORT"
+    info "名字「${DISPLAY_NAME}」，控制地址 https://$SERVER_IP:$CONTROL_PORT"
     # 被调程序打的那坨 JSON 和 systemctl 的 Created symlink 都不上屏，进日志；
     # 失败时 run_quiet 会把整段原样打出来。
     run_quiet "$WORK_DIR/pendingnet-server" install \
@@ -658,9 +676,14 @@ main() {
     : >"$DETAIL_LOG" 2>/dev/null || true
     info "pendingnet vps-install $(date -u '+%F %T UTC') 参数: $*"
     require_root
+    if [[ "$UPDATE_ONLY" == "1" && ( "$FORCE_PROVISION" == "1" || "$NO_UPGRADE" == "1" ) ]]; then die "--update-only 不能与 --force-provision 或 --no-upgrade 同用。"; fi
     detect_os
     detect_arch
-    ensure_packages curl ca-certificates iproute2 coreutils
+    ensure_packages curl ca-certificates iproute2 coreutils python3 util-linux
+
+    # Serialize installer invocations before replacing control or engine files.
+    exec 9>/run/pendingnet-install.lock
+    flock -n 9 || die "另一个 PendingNet 安装/更新正在运行。"
 
     WORK_DIR="$(mktemp -d)"
     # shellcheck disable=SC2064
@@ -676,6 +699,8 @@ main() {
             warn_endpoint_drift
         fi
         align_server_binary
+        align_release_engines
+        if [[ "$UPDATE_ONLY" == "1" ]]; then log "更新完成（未生成配对链接）"; exit 0; fi
         log "生成配对链接"
         local quick_link
         quick_link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
@@ -687,6 +712,8 @@ main() {
         exit 0
     fi
 
+    [[ "$UPDATE_ONLY" != "1" ]] || die "--update-only 需要已完成部署的 VPS；不能与 --force-provision 同用。"
+
     if [[ "$FORCE_PROVISION" == "1" ]] && already_provisioned; then
         printf '\n%s--force-provision：这台机器上已经有一份部署了。%s\n' "$C_YELLOW$C_BOLD" "$C_RESET" >&2
         printf '%s要重新生成 Reality / Hysteria2 的全部密钥，已经配对的客户端会立刻失效，\n' "$C_YELLOW" >&2
@@ -696,7 +723,7 @@ main() {
     fi
 
     [[ -n "$SERVER_IP" ]] || detect_public_ip
-    valid_ipv4 "$SERVER_IP" || die "--server-ip 得是一个 IPv4 地址，收到的是「$SERVER_IP」。"
+    valid_ipv4 "$SERVER_IP" || die "--server-ip 得是一个 IPv4 地址，收到的是「${SERVER_IP}」。"
 
     check_ports
 

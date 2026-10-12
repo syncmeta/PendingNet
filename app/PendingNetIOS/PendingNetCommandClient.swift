@@ -440,6 +440,7 @@ final class PendingNetCommandClient: NSObject {
         // 以下命令没有订阅，回调不会到达；留空实现只为满足协议。
         func setDefaultLogLevel(_: Int32) {}
         func writeStatus(_: LibboxStatusMessage?) {}
+        func writeOutbounds(_: LibboxOutboundGroupItemIteratorProtocol?) {}
         // 头文件里的 selector 是 `writeConnectionEvents:`，但 Swift 侧导入成
         // `write(_:)`（编译器按重命名规则改写）。以编译器为准。
         func write(_: LibboxConnectionEvents?) {}

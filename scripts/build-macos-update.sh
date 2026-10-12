@@ -57,6 +57,7 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
+python3 "$snap/src/scripts/check-upstream-lock.py"
 snap_yml="$snap/src/app/project.yml"
 # tail -n 1：project.yml 里 base 和 target 各有一份，要的是 target 那份
 version=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' "$snap_yml" | tail -n 1 | tr -d '"')

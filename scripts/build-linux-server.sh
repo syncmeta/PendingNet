@@ -16,6 +16,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+python3 "$root/scripts/check-upstream-lock.py"
 out="$root/dist/server"
 targets=(amd64 arm64)
 
@@ -41,18 +42,20 @@ for arch in "${targets[@]}"; do
     # CGO_ENABLED=0：产物要能扔进任何一台 Debian，不依赖目标机的 libc 版本。
     # -trimpath 把发布机的绝对路径从二进制里去掉。
     CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-        go build -trimpath -ldflags "-s -w -X main.version=$stamp" -o "$out/$name" "$root/cmd/pendingnet-server"
+        go -C "$root" build -trimpath -ldflags "-s -w -X main.version=$stamp" -o "$out/$name" ./cmd/pendingnet-server
     chmod 0755 "$out/$name"
 done
+
+cp "$root/internal/pnserver/upstream-lock.json" "$out/upstream-lock.json"
 
 echo "==> 写 SHA256SUMS"
 (
     cd "$out"
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum pendingnet-server-linux-* > SHA256SUMS
+        sha256sum pendingnet-server-linux-* upstream-lock.json > SHA256SUMS
     else
         # macOS 上没有 sha256sum，shasum -a 256 的输出格式一样。
-        shasum -a 256 pendingnet-server-linux-* > SHA256SUMS
+        shasum -a 256 pendingnet-server-linux-* upstream-lock.json > SHA256SUMS
     fi
     cat SHA256SUMS
 )
@@ -66,9 +69,10 @@ cat <<EOF
   gh release upload pendingnet/v${version:-<版本>} \\
     "$out/pendingnet-server-linux-amd64" \\
     "$out/pendingnet-server-linux-arm64" \\
-    "$out/SHA256SUMS"
+    "$out/SHA256SUMS" \\
+    "$out/upstream-lock.json"
 
-创建新 Release 的话就把这三个路径接在 gh release create 后面。
+创建新 Release 的话就把这四个路径接在 gh release create 后面。
 资产名不要改——deploy/vps-install.sh 是按这三个名字去找的。
 
 arm64 那个从没在真的 arm64 机器上跑过，只是编出来了。

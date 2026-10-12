@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,9 +19,7 @@ import (
 )
 
 const (
-	githubAPIBase      = "https://api.github.com"
-	maxReleaseMetadata = 4 << 20
-	maxReleaseAsset    = 128 << 20
+	maxReleaseAsset = 128 << 20
 )
 
 type InstalledEngineVersions struct {
@@ -33,8 +30,7 @@ type InstalledEngineVersions struct {
 type releaseFetcher func(context.Context, string, int64) ([]byte, error)
 
 type releaseInstaller struct {
-	apiBase string
-	fetch   releaseFetcher
+	fetch releaseFetcher
 }
 
 func newReleaseInstaller() *releaseInstaller {
@@ -50,7 +46,7 @@ func newReleaseInstaller() *releaseInstaller {
 			return nil
 		},
 	}
-	return &releaseInstaller{apiBase: githubAPIBase, fetch: func(ctx context.Context, rawURL string, limit int64) ([]byte, error) {
+	return &releaseInstaller{fetch: func(ctx context.Context, rawURL string, limit int64) ([]byte, error) {
 		u, err := url.Parse(rawURL)
 		if err != nil || u.Scheme != "https" {
 			return nil, errors.New("release URL must use HTTPS")
@@ -80,7 +76,7 @@ func newReleaseInstaller() *releaseInstaller {
 	}}
 }
 
-func InstallLatestProxyEngines(ctx context.Context, xrayDestination, hysteriaDestination string) (InstalledEngineVersions, error) {
+func InstallReleaseProxyEngines(ctx context.Context, xrayDestination, hysteriaDestination string) (InstalledEngineVersions, error) {
 	if runtime.GOOS != "linux" {
 		return InstalledEngineVersions{}, errors.New("proxy engines can only be installed on Linux")
 	}
@@ -92,15 +88,15 @@ func InstallLatestProxyEngines(ctx context.Context, xrayDestination, hysteriaDes
 			return InstalledEngineVersions{}, err
 		}
 	}
-	xrayAsset, hysteriaAsset, err := releaseAssetNames(runtime.GOARCH)
+	lock, err := ReleaseEngineLock()
 	if err != nil {
 		return InstalledEngineVersions{}, err
 	}
-	xrayVersion, err := installer.installLatest(ctx, "XTLS/Xray-core", xrayAsset, "xray", xrayDestination)
+	xrayVersion, err := installer.installLocked(ctx, lock.Xray, runtime.GOARCH, "xray", xrayDestination)
 	if err != nil {
 		return InstalledEngineVersions{}, fmt.Errorf("install Xray: %w", err)
 	}
-	hy2Version, err := installer.installLatest(ctx, "apernet/hysteria", hysteriaAsset, "", hysteriaDestination)
+	hy2Version, err := installer.installLocked(ctx, lock.Hysteria2, runtime.GOARCH, "", hysteriaDestination)
 	if err != nil {
 		_ = os.Remove(xrayDestination)
 		return InstalledEngineVersions{}, fmt.Errorf("install Hysteria2: %w", err)
@@ -108,59 +104,28 @@ func InstallLatestProxyEngines(ctx context.Context, xrayDestination, hysteriaDes
 	return InstalledEngineVersions{Xray: xrayVersion, Hysteria2: hy2Version}, nil
 }
 
-func releaseAssetNames(goarch string) (string, string, error) {
-	switch goarch {
-	case "amd64":
-		return "Xray-linux-64.zip", "hysteria-linux-amd64", nil
-	case "arm64":
-		return "Xray-linux-arm64-v8a.zip", "hysteria-linux-arm64", nil
-	default:
-		return "", "", fmt.Errorf("unsupported Linux architecture %q", goarch)
+func (i *releaseInstaller) installLocked(ctx context.Context, engine LockedEngine, arch, zippedBinary, destination string) (string, error) {
+	asset, ok := engine.Assets[arch]
+	if !ok {
+		return "", fmt.Errorf("release has no engine asset for %s", arch)
 	}
-}
-
-func (i *releaseInstaller) installLatest(ctx context.Context, repo, assetName, zippedBinary, destination string) (string, error) {
-	metadata, err := i.fetch(ctx, i.apiBase+"/repos/"+repo+"/releases/latest", maxReleaseMetadata)
+	data, err := i.fetch(ctx, asset.URL, maxReleaseAsset)
 	if err != nil {
 		return "", err
 	}
-	var release struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name   string `json:"name"`
-			URL    string `json:"browser_download_url"`
-			Digest string `json:"digest"`
-		} `json:"assets"`
+	if err := verifyReleaseDigest(data, asset.Digest); err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal(metadata, &release); err != nil {
-		return "", fmt.Errorf("decode release metadata: %w", err)
-	}
-	if release.TagName == "" {
-		return "", errors.New("release metadata has no tag")
-	}
-	for _, asset := range release.Assets {
-		if asset.Name != assetName {
-			continue
-		}
-		data, err := i.fetch(ctx, asset.URL, maxReleaseAsset)
+	if zippedBinary != "" {
+		data, err = extractZipBinary(data, zippedBinary)
 		if err != nil {
 			return "", err
 		}
-		if err := verifyReleaseDigest(data, asset.Digest); err != nil {
-			return "", err
-		}
-		if zippedBinary != "" {
-			data, err = extractZipBinary(data, zippedBinary)
-			if err != nil {
-				return "", err
-			}
-		}
-		if err := writeExecutable(destination, data); err != nil {
-			return "", err
-		}
-		return release.TagName, nil
 	}
-	return "", fmt.Errorf("release %s does not contain %s", release.TagName, assetName)
+	if err := writeExecutable(destination, data); err != nil {
+		return "", err
+	}
+	return engine.Version, nil
 }
 
 func verifyReleaseDigest(data []byte, digest string) error {

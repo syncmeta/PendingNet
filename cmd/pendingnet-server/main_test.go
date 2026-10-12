@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,22 @@ import (
 	"sbtally/internal/pairing"
 	"sbtally/internal/pnserver"
 )
+
+func TestEngineUpdateDryRunDoesNotWriteState(t *testing.T) {
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if err := run([]string{"update-engines", "--dry-run", "--state-dir", dir}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var lock pnserver.EngineLock
+	if err := json.Unmarshal(out.Bytes(), &lock); err != nil || lock.SingBox.Commit == "" {
+		t.Fatal("missing locked targets")
+	}
+	files, err := os.ReadDir(dir)
+	if err != nil || len(files) != 0 {
+		t.Fatal("dry-run modified state")
+	}
+}
 
 func TestProductionServeHandlerKeepsConfigWritesDisabled(t *testing.T) {
 	dir := t.TempDir()

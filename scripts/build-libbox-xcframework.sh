@@ -23,7 +23,8 @@ die() { echo "error: $*" >&2; exit 1; }
 command -v go >/dev/null || die "go is required"
 command -v xcodebuild >/dev/null || die "Xcode command line tools are required"
 
-export PATH="$(go env GOPATH)/bin:$PATH"
+tool_gopath=$(go env GOPATH)
+export PATH="$tool_gopath/bin:$PATH"
 
 # 校验的是身份，不只是存在性：官方 golang.org/x/mobile 的 gomobile/gobind 也会满足
 # "command -v" 检查，但会用错误的工具链构建出坏的产物（见文件顶部关键点 1）。
@@ -44,13 +45,11 @@ fi
 
 sing_box_checkout
 
+rm -rf "$CORE_DIR/Libbox.xcframework"
 ( cd "$CORE_DIR" && go run ./cmd/internal/build_libbox -target apple -platform ios )
 
-CANDIDATE=""
-for path in "$CORE_DIR/Libbox.xcframework" "/private/tmp/sing-box-for-apple/Libbox.xcframework"; do
-  [[ -d "$path" ]] && { CANDIDATE="$path"; break; }
-done
-[[ -n "$CANDIDATE" ]] || die "Libbox.xcframework was not produced"
+CANDIDATE="$CORE_DIR/Libbox.xcframework"
+[[ -d "$CANDIDATE" ]] || die "Libbox.xcframework was not produced"
 
 mkdir -p "$REPO_ROOT/app/Vendor"
 # 原地写入前先落到临时目录再原子替换：ditto 中途失败不能先删掉旧的好产物，
@@ -58,6 +57,7 @@ mkdir -p "$REPO_ROOT/app/Vendor"
 STAGING="$REPO_ROOT/app/Vendor/.Libbox.xcframework.tmp"
 rm -rf "$STAGING"
 ditto "$CANDIDATE" "$STAGING"
+python3 "$REPO_ROOT/scripts/check-libbox-lock.py" "$STAGING" --write
 rm -rf "$DEST"
 mv "$STAGING" "$DEST"
 echo "built $DEST from sing-box $SING_BOX_REF"

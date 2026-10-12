@@ -5,7 +5,15 @@
 # 仓库编。各写各的 ref 就意味着 Mac 上跑一个版本、iPhone 上跑另一个，而且这种
 # 不一致谁也不会主动去查。版本号只在这里出现一次。
 
-SING_BOX_REF="${SING_BOX_REF:-v1.13.13}"
+# All callers supply their repository root; do not infer it from Xcode's $0.
+lock_root=${REPO_ROOT:-${root:-}}
+if [ -z "$lock_root" ]; then echo "caller must set root or REPO_ROOT" >&2; return 1; fi
+SING_BOX_VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sing_box"]["version"])' "$lock_root/internal/pnserver/upstream-lock.json")
+locked_commit=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sing_box"]["commit"])' "$lock_root/internal/pnserver/upstream-lock.json")
+if [ -n "${SING_BOX_REF:-}" ] && [ "$SING_BOX_REF" != "$locked_commit" ]; then
+  echo "SING_BOX_REF must match the PendingNet release lock" >&2; return 1
+fi
+SING_BOX_REF=$locked_commit
 SING_BOX_DIR="${SING_BOX_DIR:-/private/tmp/pendingnet-sing-box}"
 
 # macOS 内置引擎的构建 tag。只覆盖本项目真正用到的东西：
@@ -27,15 +35,14 @@ SING_BOX_TAGS="${SING_BOX_TAGS:-with_gvisor,with_quic,with_utls,with_clash_api,b
 # 这个函数在每次 Xcode 构建里都会跑，不能变成「没网就构建不了」。
 sing_box_checkout() {
   if [ ! -d "$SING_BOX_DIR/.git" ]; then
-    # 浅克隆到指定 tag，节省磁盘（本机磁盘紧张）；产物与全量克隆等价。
-    git clone --branch "$SING_BOX_REF" --depth 1 \
-      https://github.com/SagerNet/sing-box.git "$SING_BOX_DIR"
-    return
+    git clone --branch "$SING_BOX_VERSION" --depth 1 https://github.com/SagerNet/sing-box.git "$SING_BOX_DIR" || return
   fi
-  wanted=$(git -C "$SING_BOX_DIR" rev-parse --verify --quiet "$SING_BOX_REF^{commit}" || true)
-  if [ -n "$wanted" ] && [ "$(git -C "$SING_BOX_DIR" rev-parse HEAD)" = "$wanted" ]; then
-    return
+  if [ "$(git -C "$SING_BOX_DIR" rev-parse HEAD)" != "$SING_BOX_REF" ]; then
+    git -C "$SING_BOX_DIR" fetch --depth 1 origin "$SING_BOX_REF" || return
+    git -C "$SING_BOX_DIR" checkout --detach "$SING_BOX_REF" || return
   fi
-  git -C "$SING_BOX_DIR" fetch --tags --depth 1 origin "$SING_BOX_REF"
-  git -C "$SING_BOX_DIR" checkout --detach FETCH_HEAD
+  test "$(git -C "$SING_BOX_DIR" rev-parse HEAD)" = "$SING_BOX_REF" || return 1
+  test -z "$(git -C "$SING_BOX_DIR" status --porcelain --untracked-files=all)" || {
+    echo "sing-box source has changes or untracked inputs; refusing release build" >&2; return 1;
+  }
 }

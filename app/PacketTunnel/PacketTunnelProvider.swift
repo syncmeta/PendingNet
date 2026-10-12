@@ -54,17 +54,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         setup.logMaxLines = 500
         setup.debug = false
 
+        setup.oomKillerEnabled = true
+        setup.crashReportSource = "packet-tunnel"
         var setupError: NSError?
         if !LibboxSetup(setup, &setupError) {
             let reason = setupError?.localizedDescription ?? "未知原因"
             throw PendingNetTunnelError.message("libbox setup 失败：\(reason)")
         }
-        // 只能排在 Setup 之后，原因见 redirectGoCrashOutput 的注释。
-        redirectGoCrashOutput(base: base)
-        // 本版本 libbox（sing-box v1.13.13）没有 SetupOptions.oomKillerEnabled，
-        // 内存约束通过这个开关生效：它设置 Go 的软内存上限并收紧 GC。
-        // 实测扩展贴顶时 goroutine 栈占近一半内存，这是唯一的兜底。
-        LibboxSetMemoryLimit(true)
 
         var serverError: NSError?
         let server = LibboxNewCommandServer(platformInterface, platformInterface, &serverError)
@@ -160,29 +156,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         setvbuf(stderr, nil, _IONBF, 0)
-    }
-
-    /// Go 运行时崩溃栈的出口。**只管这一项**。
-    ///
-    /// 名字有误导性：v1.13.13 的 `RedirectStderr` 并不重定向 fd 2，它是
-    /// `os.Create(path)` + `debug.SetCrashOutput(file)` + `Close()`——接管的
-    /// 只有 panic traceback。
-    ///
-    /// 而且它必须排在 `LibboxSetup` **之后**：内部 `Chown` 用的
-    /// `sUserID`/`sGroupID` 只在 `Setup()` 里被赋值，提前调用等于
-    /// `chown(path, 0, 0)`，在以 mobile 身份运行的沙盒扩展里必然 EPERM，
-    /// 而失败路径会 `os.Remove` 掉刚创建的那个文件。
-    ///
-    /// 落点也必须与 `stderr.log` 分开：`os.Create` 会截断，指向同一个文件
-    /// 就是每次启动都把扩展自己的诊断日志清空。
-    private func redirectGoCrashOutput(base: URL) {
-        var error: NSError?
-        let path = PendingNetTunnelPaths.crashLogURL(in: base).path
-        if !LibboxRedirectStderr(path, &error) {
-            writeMessage(
-                "(packet-tunnel) 接管 Go 崩溃栈输出失败：\(error?.localizedDescription ?? "未知原因")"
-            )
-        }
     }
 
     /// 把 `startTunnel` 的失败原文留在 App Group 里，供主 App 展示。
