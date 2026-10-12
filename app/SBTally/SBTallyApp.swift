@@ -107,6 +107,14 @@ struct SBTallyApp: App {
                 }
         }
         .defaultSize(width: 720, height: 500)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 PendingNet") {
+                    let credits = NSAttributedString(string: "GitHub", attributes: [.link: PendingNetProjectLink.url])
+                    NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+                }
+            }
+        }
 
         MenuBarExtra {
             MenuBarView()

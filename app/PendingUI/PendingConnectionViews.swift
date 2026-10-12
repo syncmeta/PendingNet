@@ -45,13 +45,6 @@ struct PendingConnectionHeader: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if showsStatus {
-                PendingStatusPill(text: statusText, kind: statusKind)
-            }
-            Spacer()
-            if isBusy {
-                ProgressView().controlSize(.small)
-            }
             switch action {
             case .toggle(let isOn, let enabled):
                 Toggle("连接", isOn: Binding(
@@ -67,6 +60,9 @@ struct PendingConnectionHeader: View {
                     .buttonStyle(PendingPrimaryButtonStyle())
                     .disabled(!enabled)
             }
+            if isBusy { ProgressView().controlSize(.small) }
+            if showsStatus { PendingStatusPill(text: statusText, kind: statusKind) }
+            Spacer()
         }
     }
 }
@@ -75,7 +71,6 @@ struct PendingConnectionHeader: View {
 struct PendingRouteModePicker: View {
     let selection: PendingNetRouteMode?
     var isEnabled = true
-    var onDelete: ((String) -> Void)? = nil
     let onSelect: (PendingNetRouteMode) -> Void
 
     var body: some View {
@@ -102,7 +97,6 @@ struct PendingProtocolPicker: View {
     let selected: String?
     /// 正在切到哪一个（药丸上转圈）。macOS 上没有这个中间态，传 nil。
     var switchingTag: String? = nil
-    var onDelete: ((String) -> Void)? = nil
     let onSelect: (String) -> Void
 
     var body: some View {

@@ -10,8 +10,7 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                PendingPageHeader(title: "设置")
+            VStack(alignment: .leading, spacing: 12) {
                 startupCard
                 PendingLocalInboundCard(
                     listenAddress: engine.localListenAddress,
@@ -42,8 +41,8 @@ struct SettingsView: View {
     }
 
     private var startupCard: some View {
-        PendingSectionCard("启动") {
-            VStack(alignment: .leading, spacing: 8) {
+        Group {
+            VStack(alignment: .leading, spacing: 12) {
                 Toggle("开机自启", isOn: Binding(
                     get: { startup.startsAtLogin },
                     set: { enabled in
@@ -71,7 +70,7 @@ struct SettingsView: View {
     private var updateCard: some View {
         PendingUpdateCard(version: updater.currentVersion) {
             Button("检查更新…") { updater.checkForUpdates() }
-                .buttonStyle(PendingQuietButtonStyle())
+                .buttonStyle(.borderless)
                 .disabled(!updater.canCheckForUpdates)
         } extra: {
             if updater.isConfigured {

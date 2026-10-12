@@ -15,7 +15,7 @@ struct PendingNetIOSSettingsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 12) {
                     PendingLocalInboundCard(
                         listenAddress: controller.tunnel.localInbound.listenAddress,
                         port: controller.tunnel.localInbound.port,
@@ -44,11 +44,12 @@ struct PendingNetIOSSettingsView: View {
                         }
                     )
                     PendingUpdateCard(version: Self.versionText)
+                    Link("GitHub", destination: PendingNetProjectLink.url)
                 }
                 .padding(PendingNetTheme.Metrics.gutter)
             }
             .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
-            .navigationTitle("设置")
+            .toolbar(.hidden, for: .navigationBar)
             .toolbarBackground(PendingNetTheme.Palette.canvas, for: .navigationBar)
             .tint(PendingNetTheme.Palette.accent)
         }

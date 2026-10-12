@@ -1,4 +1,4 @@
-"连接" = "Connection";
+"连接" = "Connect";
 "实时流量" = "Live Traffic";
 "应用" = "Apps";
 "域名" = "Domains";
@@ -54,7 +54,7 @@
 "地址" = "Address";
 "详情" = "Details";
 "延迟" = "Latency";
-"测延迟" = "Test Latency";
+"测延迟" = "Test";
 "正在测延迟…" = "Testing latency…";
 "正在测…" = "Testing…";
 "不通" = "Unreachable";
@@ -129,7 +129,7 @@
 "当前版本 %@" = "Current version %@";
 "最近 %lld 行 · 文件 %@" = "Last %lld lines · File %@";
 "%lld 行 · %@" = "%lld lines · %@";
-"管理" = "Management";
+"管理" = "Manage";
 "导入管理链接" = "Import Management Link";
 "粘贴 pendingnet:// 管理链接" = "Paste a pendingnet:// management link";
 "服务器" = "Server";
@@ -256,3 +256,4 @@
 "服务器尚未提供 Hysteria2 证书指纹，请升级服务端后重试" = "The server has not provided a Hysteria2 certificate fingerprint. Update the server and try again.";
 "删除管理 VPS？" = "Delete Management VPS?";
 "仅删除本机管理记录和管理员凭据，保留连接节点和服务器。" = "Delete only local management records and administrator credentials. Keep the connection node and server.";
+"关于 PendingNet" = "About PendingNet";

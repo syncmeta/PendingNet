@@ -28,7 +28,7 @@ struct PendingNetIOSHomeView: View {
                     .padding(PendingNetTheme.Metrics.gutter)
             }
             .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
-            .navigationTitle("连接")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(PendingNetTheme.Palette.canvas, for: .navigationBar)
             .tint(PendingNetTheme.Palette.accent)
             .toolbar {

@@ -1,7 +1,7 @@
 import SBTallyCore
 import SwiftUI
 
-/// 两端设置页共用的三张卡：端口 / 规则集 / 更新。
+/// 两端设置页共用的无标题设置行：端口 / 规则集 / 更新。
 ///
 /// 连接页已经这么做过一轮（见 PendingConnectionViews）。设置页跟上：同一套
 /// 内容、同一个顺序、同一种版式，两端只在**确实不适用**的地方少几行——iOS
@@ -34,8 +34,8 @@ struct PendingLocalInboundCard: View {
     @EnvironmentObject private var toast: PendingToastCenter
 
     var body: some View {
-        PendingSectionCard("端口") {
-            VStack(alignment: .leading, spacing: 10) {
+        Group {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 10) {
                     // verbatim: 地址和端口都是标识符，别被本地化成 "2,080"
                     Text(verbatim: "\(listenAddress) :")
@@ -43,7 +43,7 @@ struct PendingLocalInboundCard: View {
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     portTextField
                     Button("保存") { commit() }
-                        .buttonStyle(PendingQuietButtonStyle())
+                        .buttonStyle(.borderless)
                         .disabled(saving || portField == String(port))
                     if saving { ProgressView().controlSize(.small) }
                     Spacer(minLength: 0)
@@ -71,6 +71,7 @@ struct PendingLocalInboundCard: View {
     private var portTextField: some View {
         let field = TextField("", text: $portField)
             .textFieldStyle(.roundedBorder)
+            .accessibilityLabel("端口")
             .font(PendingNetTheme.Fonts.body.monospaced())
             .frame(width: 92)
             .onSubmit { commit() }
@@ -147,7 +148,7 @@ struct PendingRuleSetCard: View {
     @EnvironmentObject private var toast: PendingToastCenter
 
     var body: some View {
-        PendingSectionCard("规则集") {
+        Group {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline) {
@@ -159,11 +160,10 @@ struct PendingRuleSetCard: View {
                             .font(PendingNetTheme.Fonts.caption.monospaced())
                             .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                         Spacer()
-                        Text(item.ready ? LocalizedStringKey("已就绪") : LocalizedStringKey("缺失"))
-                            .font(PendingNetTheme.Fonts.caption)
-                            .foregroundStyle(item.ready
-                                ? PendingNetTheme.Palette.success
-                                : PendingNetTheme.Palette.inkMuted)
+                        Image(systemName: item.ready ? "checkmark" : "xmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(item.ready ? PendingNetTheme.Palette.success : PendingNetTheme.Palette.danger)
+                            .accessibilityLabel(item.ready ? String(localized: "已就绪") : String(localized: "缺失"))
                     }
                 }
 
@@ -185,7 +185,7 @@ struct PendingRuleSetCard: View {
                         Text(isReady ? LocalizedStringKey("重新下载") : LocalizedStringKey("下载"))
                     }
                 }
-                .buttonStyle(PendingQuietButtonStyle())
+                .buttonStyle(.borderless)
                 .disabled(refreshing)
             }
         }
@@ -213,12 +213,12 @@ struct PendingUpdateCard<Trailing: View, Extra: View>: View {
     }
 
     var body: some View {
-        PendingSectionCard("更新") {
-            VStack(alignment: .leading, spacing: 10) {
+        Group {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     // verbatim: 版本号是标识符，不是数量
                     Text(verbatim: String(format: NSLocalizedString("当前版本 %@", comment: "Current app version"), version))
-                        .font(PendingNetTheme.Fonts.bodyEmphasized)
+                        .font(PendingNetTheme.Fonts.body)
                         .foregroundStyle(PendingNetTheme.Palette.ink)
                     Spacer()
                     trailing
