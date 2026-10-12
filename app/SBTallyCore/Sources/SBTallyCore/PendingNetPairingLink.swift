@@ -10,13 +10,17 @@ import Foundation
 /// 逐条对齐的读端，两边各自有测试，同样的链接必须解出同样的东西。
 public extension PendingNetPairingFile {
     static let urlScheme = "pendingnet"
+    static let managementURLScheme = "pendingnetm"
+    static func isPairingScheme(_ scheme: String?) -> Bool {
+        [urlScheme, managementURLScheme].contains(scheme?.lowercased() ?? "")
+    }
     static let urlHost = "pair"
 
     /// 解析一条 `pendingnet://` 配对链接。首尾空白照吃 —— 链接是被粘进来的。
     static func decode(link: String, now: Date = Date()) throws -> Self {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let components = URLComponents(string: trimmed),
-              components.scheme?.lowercased() == urlScheme,
+              isPairingScheme(components.scheme),
               components.host?.lowercased() == urlHost,
               components.path.isEmpty || components.path == "/",
               components.user == nil, components.password == nil,
@@ -48,7 +52,11 @@ public extension PendingNetPairingFile {
         guard let payload, let data = base64URLDecoded(payload) else {
             throw PendingNetPairingError.invalidLink
         }
-        return try decode(data, now: now)
+        let pairing = try decode(data, now: now)
+        guard components.scheme?.lowercased() != managementURLScheme || pairing.enrollment.role == "admin" else {
+            throw PendingNetPairingError.invalidLink
+        }
+        return pairing
     }
 
     /// 粘贴框专用：一段文本，是链接就当链接、是 `.pdn` 原文就当文件内容。

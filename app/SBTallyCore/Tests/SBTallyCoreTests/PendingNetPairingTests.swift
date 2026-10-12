@@ -74,11 +74,15 @@ final class PendingNetPairingTests: XCTestCase {
             XCTAssertEqual(error as? PendingNetTextImportError, .managementLink(line: 1))
         }
         XCTAssertTrue(PendingNetPairingLinkDestination.isManagement(try XCTUnwrap(URL(string: link)), now: now))
+        let managementLink = link.replacingOccurrences(of: "pendingnet://", with: "pendingnetm://")
+        XCTAssertTrue(PendingNetPairingLinkDestination.isManagement(try XCTUnwrap(URL(string: managementLink)), now: now))
+        XCTAssertEqual(try PendingNetPairingFile.decode(link: managementLink, now: now).enrollment.role, "admin")
         let ordinaryLink = "pendingnet://pair?v=1&d=" + pairingJSON().base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
         XCTAssertFalse(PendingNetPairingLinkDestination.isManagement(try XCTUnwrap(URL(string: ordinaryLink)), now: now))
+        XCTAssertThrowsError(try PendingNetPairingFile.decode(link: ordinaryLink.replacingOccurrences(of: "pendingnet://", with: "pendingnetm://"), now: now))
     }
 
     func testEnrollRequestAndResponse() async throws {

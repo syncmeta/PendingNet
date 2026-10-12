@@ -242,3 +242,17 @@
 "PendingNet Server 拒绝配对（HTTP %lld）" = "PendingNet Server rejected pairing (HTTP %lld)";
 "第 %lld 行不是支持的节点链接（支持 pendingnet://、vless://、hysteria2:// 和 hy2://）" = "Line %lld is not a supported node link (pendingnet://, vless://, hysteria2://, or hy2://).";
 "第 %lld 行是管理链接，请在“管理”页面导入，不能作为普通节点导入" = "Line %lld is a management link. Import it on the Management page, not as a regular node.";
+
+// Node sharing and management links
+"链接包含访问凭据，请只分享给信任的人。" = "Links contain access credentials. Share only with people you trust.";
+"删除 VPS？" = "Delete VPS?";
+"粘贴 pendingnetm:// 管理链接" = "Paste a pendingnetm:// management link";
+"分享节点" = "Share Nodes";
+"删除同步的节点记录和访问凭据。若正在连接这台 VPS，将先断开连接；不会卸载服务器。" = "Delete the synced node record and access credentials. An active connection to this VPS will be disconnected first. The server will not be uninstalled.";
+"标准节点链接" = "Standard Node Links";
+"配对链接 10 分钟内有效，只能使用一次。" = "The pairing link is valid for 10 minutes and can be used once.";
+"PendingNet 配对链接" = "PendingNet Pairing Link";
+"隧道尚未停止，请稍后再删除" = "The tunnel has not stopped. Try deleting again shortly.";
+"服务器尚未提供 Hysteria2 证书指纹，请升级服务端后重试" = "The server has not provided a Hysteria2 certificate fingerprint. Update the server and try again.";
+"删除管理 VPS？" = "Delete Management VPS?";
+"仅删除本机管理记录和管理员凭据，保留连接节点和服务器。" = "Delete only local management records and administrator credentials. Keep the connection node and server.";

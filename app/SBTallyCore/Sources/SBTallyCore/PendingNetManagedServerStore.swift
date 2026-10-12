@@ -55,6 +55,15 @@ public final class PendingNetManagedServerStore {
         servers = next
     }
 
+    public func remove(serverID: String) throws {
+        guard !unreadable else { throw PendingNetManagedServerStoreError.unreadable }
+        let next = servers.filter { $0.serverID != serverID }
+        let data = try JSONEncoder().encode(next)
+        defaults.set(data, forKey: key)
+        guard defaults.data(forKey: key) == data else { throw PendingNetManagedServerStoreError.writeFailed }
+        servers = next
+    }
+
     /// Verify local metadata can be durably written before consuming a
     /// one-time admin grant. This does not involve Keychain or iCloud.
     public func ensureWritable() throws {

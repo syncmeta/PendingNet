@@ -88,6 +88,18 @@ final class PendingNetManagementController: ObservableObject {
         }
     }
 
+    func removeServer(_ id: String) {
+        guard !working, !enrollmentInFlight else { return }
+        do {
+            try store.ensureWritable()
+            try PendingNetAdminCredentialStore.remove(serverID: id)
+            try store.remove(serverID: id)
+            clearTransientLink()
+            servers = store.servers
+            if selectedServerID == id { selectedServerID = servers.first?.serverID }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     func refresh() async {
         guard let server = servers.first(where: { $0.serverID == selectedServerID }) else { return }
         refreshGeneration += 1
@@ -218,6 +230,8 @@ struct PendingNetManagementView: View {
     @State private var exportFilename = ""
     @State private var showExporter = false
     @State private var exportServerID: String?
+    @State private var deletingManagedServerID: String?
+    @State private var managedRowHeights: [String: CGFloat] = [:]
 
     var body: some View {
         ScrollView {
@@ -228,7 +242,7 @@ struct PendingNetManagementView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("导入管理链接")
                         .font(.headline)
-                    SecureField("粘贴 pendingnet:// 管理链接", text: $link)
+                    SecureField("粘贴 pendingnetm:// 管理链接", text: $link)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                     Button("导入") {
@@ -242,23 +256,7 @@ struct PendingNetManagementView: View {
                 }
 
                 if !controller.servers.isEmpty {
-                    Picker("服务器", selection: Binding(
-                        get: { controller.selectedServerID },
-                        set: { id in
-                            controller.selectServer(id)
-                            showExporter = false
-                            exportDocument = nil
-                            exportServerID = nil
-                            revokeUserID = nil
-                            revokeServerID = nil
-                            confirmAdminIssue = false
-                            adminIssueServerID = nil
-                        }
-                    )) {
-                        ForEach(controller.servers) { server in
-                            Text(server.name).tag(Optional(server.serverID))
-                        }
-                    }
+                    managedServers
                     Button("刷新") { Task { await controller.refresh() } }
                         .disabled(controller.working)
 
@@ -335,6 +333,16 @@ struct PendingNetManagementView: View {
             .padding(PendingNetTheme.Metrics.gutter)
         }
         .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
+        .alert("删除管理 VPS？", isPresented: Binding(get: { deletingManagedServerID != nil }, set: { if !$0 { deletingManagedServerID = nil } })) {
+            Button("取消", role: .cancel) { deletingManagedServerID = nil }
+            Button("删除", role: .destructive) {
+                if let id = deletingManagedServerID { controller.removeServer(id) }
+                deletingManagedServerID = nil
+                showExporter = false; exportDocument = nil; exportServerID = nil
+            }
+        } message: {
+            Text("仅删除本机管理记录和管理员凭据，保留连接节点和服务器。")
+        }
         .task(id: controller.selectedServerID) { await controller.refresh() }
         .onAppear { acceptOpenedLink() }
         .onDisappear {
@@ -402,6 +410,44 @@ struct PendingNetManagementView: View {
                 controller.exportFinished(result)
             }
         }
+    }
+
+    private func selectManagedServer(_ id: String?) {
+        controller.selectServer(id)
+        showExporter = false; exportDocument = nil; exportServerID = nil
+        revokeUserID = nil; revokeServerID = nil
+        confirmAdminIssue = false; adminIssueServerID = nil
+    }
+
+    @ViewBuilder private var managedServers: some View {
+        #if os(iOS)
+        List(controller.servers) { server in
+            Button { selectManagedServer(server.serverID) } label: {
+                HStack {
+                    Text(verbatim: server.name).foregroundStyle(PendingNetTheme.Palette.ink)
+                    Spacer()
+                    if controller.selectedServerID == server.serverID { Image(systemName: "checkmark") }
+                }.padding(.vertical, 14)
+            }
+            .background(GeometryReader { proxy in Color.clear.preference(key: PendingVPSRowHeight.self, value: [server.serverID: proxy.size.height]) })
+            .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button("删除", role: .destructive) { deletingManagedServerID = server.serverID }
+                    .disabled(controller.working || controller.enrollmentInFlight)
+            }
+        }
+        .listStyle(.plain).scrollDisabled(true)
+        .frame(height: controller.servers.reduce(CGFloat(0)) { $0 + (managedRowHeights[$1.serverID] ?? 70) })
+        .onPreferenceChange(PendingVPSRowHeight.self) { managedRowHeights = $0 }
+        #else
+        HStack {
+            Picker("服务器", selection: Binding(get: { controller.selectedServerID }, set: { selectManagedServer($0) })) {
+                ForEach(controller.servers) { server in Text(server.name).tag(Optional(server.serverID)) }
+            }
+            Button("删除", role: .destructive) { deletingManagedServerID = controller.selectedServerID }
+                .disabled(controller.working || controller.enrollmentInFlight)
+        }
+        #endif
     }
 
     private func acceptOpenedLink() {

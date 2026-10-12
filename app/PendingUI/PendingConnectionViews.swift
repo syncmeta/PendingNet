@@ -75,6 +75,7 @@ struct PendingConnectionHeader: View {
 struct PendingRouteModePicker: View {
     let selection: PendingNetRouteMode?
     var isEnabled = true
+    var onDelete: ((String) -> Void)? = nil
     let onSelect: (PendingNetRouteMode) -> Void
 
     var body: some View {
@@ -101,6 +102,7 @@ struct PendingProtocolPicker: View {
     let selected: String?
     /// 正在切到哪一个（药丸上转圈）。macOS 上没有这个中间态，传 nil。
     var switchingTag: String? = nil
+    var onDelete: ((String) -> Void)? = nil
     let onSelect: (String) -> Void
 
     var body: some View {
@@ -152,8 +154,10 @@ struct PendingVPSList: View {
     /// VPS 代理入口的 TCP 握手往返时间，见 `PendingNetLatencyTarget`。
     var latencies: [String: PendingNetLatencyOutcome] = [:]
     var detailID: Binding<String?>? = nil
+    var onDelete: ((String) -> Void)? = nil
     let onSelect: (String) -> Void
     let onShowDetails: (String) -> Void
+    @State private var rowHeights: [String: CGFloat] = [:]
     var detailPopover: ((PairedVPSRecord) -> AnyView)? = nil
 
     var body: some View {
@@ -162,6 +166,26 @@ struct PendingVPSList: View {
                 .font(PendingNetTheme.Fonts.caption)
                 .foregroundStyle(PendingNetTheme.Palette.inkMuted)
         } else {
+            #if os(iOS)
+            List(items) { item in
+                row(item)
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: PendingVPSRowHeight.self, value: [item.id: proxy.size.height])
+                    })
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(PendingNetTheme.Palette.surface)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        if let onDelete {
+                            Button("删除", role: .destructive) { onDelete(item.id) }
+                        }
+                    }
+            }
+            .listStyle(.plain)
+            .scrollDisabled(true)
+            .frame(height: items.reduce(CGFloat(0)) { $0 + (rowHeights[$1.id] ?? 88) })
+            .onPreferenceChange(PendingVPSRowHeight.self) { rowHeights = $0 }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            #else
             VStack(spacing: 0) {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     if index > 0 {
@@ -176,6 +200,7 @@ struct PendingVPSList: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(PendingNetTheme.Palette.hairline, lineWidth: 1)
             }
+            #endif
         }
     }
 
@@ -371,5 +396,12 @@ struct PendingVPSDetails: View {
                 .foregroundStyle(PendingNetTheme.Palette.ink)
                 .multilineTextAlignment(.trailing)
         }
+    }
+}
+
+struct PendingVPSRowHeight: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }

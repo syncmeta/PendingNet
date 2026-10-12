@@ -21,6 +21,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
     /// 这条记录最后一次被改动的时刻，跨设备合并时用它做 last-writer-wins。
     /// 老存档里没有这一项，解码时退回 `pairedAt`。
     public var updatedAt: Date
+    public var deletedAt: Date?
+    public var restoredAt: Date?
 
     public init(
         serverID: String,
@@ -33,7 +35,9 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         proxyTCPHost: String? = nil,
         proxyTCPPort: Int? = nil,
         pairedAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        deletedAt: Date? = nil,
+        restoredAt: Date? = nil
     ) {
         self.serverID = serverID
         self.name = name
@@ -46,6 +50,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         self.proxyTCPPort = proxyTCPPort
         self.pairedAt = pairedAt
         self.updatedAt = updatedAt
+        self.deletedAt = deletedAt
+        self.restoredAt = restoredAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -63,6 +69,8 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
         // 记录都能赢过它，而不是把老记录当成「刚刚改过」压住对面的新数据。
         pairedAt = try container.decodeIfPresent(Date.self, forKey: .pairedAt) ?? .distantPast
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? pairedAt
+        deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+        restoredAt = try container.decodeIfPresent(Date.self, forKey: .restoredAt)
     }
 
     /// 界面上代表这台 VPS 的就是它的 IP（或主机名）—— 不带协议、不带端口。
@@ -84,24 +92,21 @@ public struct PairedVPSRecord: Codable, Identifiable, Equatable, Sendable {
 }
 
 public enum PairedVPSMerge {
-    /// 按 serverID 取并集，同一台以 `updatedAt` 新的那份为准；打平手时留本地的
-    /// （不然每次开机两边互相覆盖，列表会无谓地抖）。
-    ///
-    /// 故意不做「删除」：现在两端都没有删除已配对 VPS 的入口，做成并集就不会
-    /// 出现「一台设备上的旧存档把另一台刚配好的 VPS 顶掉」。将来真要支持删除，
-    /// 得在记录里加墓碑位，不能靠缺席来表达。
+    /// Deletion is a retained tombstone. Only an explicit import with a newer
+    /// restoration stamp may revive it; stale/legacy devices cannot do so by
+    /// writing an ordinary record or renaming a cached entry.
     public static func merge(local: [PairedVPSRecord], remote: [PairedVPSRecord]) -> [PairedVPSRecord] {
         var byID: [String: PairedVPSRecord] = [:]
-        for record in local {
-            byID[record.serverID] = record
-        }
-        for record in remote {
-            guard let existing = byID[record.serverID] else {
-                byID[record.serverID] = record
-                continue
-            }
-            if record.updatedAt > existing.updatedAt {
-                byID[record.serverID] = record
+        for record in local + remote {
+            guard let current = byID[record.serverID] else { byID[record.serverID] = record; continue }
+            if let deleted = current.deletedAt, record.deletedAt == nil {
+                if let restored = record.restoredAt, restored > deleted { byID[record.serverID] = record }
+            } else if let deleted = record.deletedAt, current.deletedAt == nil {
+                if current.restoredAt == nil || current.restoredAt! <= deleted { byID[record.serverID] = record }
+            } else if record.updatedAt > current.updatedAt {
+                var chosen = record
+                if let restored = current.restoredAt, chosen.restoredAt == nil || chosen.restoredAt! < restored { chosen.restoredAt = restored }
+                byID[record.serverID] = chosen
             }
         }
         return sorted(Array(byID.values))
@@ -152,6 +157,7 @@ public final class PairedVPSStore: ObservableObject {
     /// 留着是为了排查问题。
     public var isCloudAvailable: Bool { cloud != nil }
 
+    private var records: [PairedVPSRecord] = []
     private let defaults: UserDefaults
     private let cloud: UbiquitousKeyValueStoring?
     private let localKey: String
@@ -173,13 +179,14 @@ public final class PairedVPSStore: ObservableObject {
         self.now = now
         let localRecords = decode(defaults.data(forKey: localKey))
         let remoteRecords = cloudRecords()
-        servers = PairedVPSMerge.merge(local: localRecords, remote: remoteRecords)
+        records = PairedVPSMerge.merge(local: localRecords, remote: remoteRecords)
+        servers = records.filter { $0.deletedAt == nil }
         persistLocally()
         // A fresh device starts before iCloud's initial download has necessarily
         // populated the KVS cache. Publishing [] here can therefore erase the
         // real cloud value. Only publish when this device actually contributes
         // a record that the currently visible cloud value lacks or has older.
-        if cloudNeedsUpdate(remote: remoteRecords, merged: servers) {
+        if cloudNeedsUpdate(remote: remoteRecords, merged: records) {
             persistToCloud()
         }
         observeCloud()
@@ -202,12 +209,26 @@ public final class PairedVPSStore: ObservableObject {
     // MARK: - 写
 
     /// 新增或就地更新一台 VPS，并盖上新的 `updatedAt`（本设备成为最新写者）。
-    public func upsert(_ record: PairedVPSRecord) {
+    public func upsert(_ record: PairedVPSRecord, restoringDeleted: Bool = false) {
+        mergeCloudIntoLocal()
+        let existing = records.first { $0.serverID == record.serverID }
+        guard existing?.deletedAt == nil || restoringDeleted else { return }
         var stamped = record
-        stamped.updatedAt = now()
-        var next = servers.filter { $0.serverID != stamped.serverID }
-        next.append(stamped)
-        servers = PairedVPSMerge.sorted(next)
+        stamped.deletedAt = nil
+        stamped.updatedAt = max(now(), existing?.updatedAt.addingTimeInterval(0.001) ?? .distantPast)
+        stamped.restoredAt = restoringDeleted ? stamped.updatedAt : existing?.restoredAt
+        records = PairedVPSMerge.sorted(records.filter { $0.serverID != stamped.serverID } + [stamped])
+        servers = records.filter { $0.deletedAt == nil }
+        persist()
+    }
+
+    public func delete(serverID: String) {
+        mergeCloudIntoLocal()
+        guard var record = records.first(where: { $0.serverID == serverID }), record.deletedAt == nil else { return }
+        record.updatedAt = max(now(), record.updatedAt.addingTimeInterval(0.001))
+        record.deletedAt = record.updatedAt
+        records = PairedVPSMerge.sorted(records.filter { $0.serverID != serverID } + [record])
+        servers = records.filter { $0.deletedAt == nil }
         persist()
     }
 
@@ -223,9 +244,10 @@ public final class PairedVPSStore: ObservableObject {
     /// 是什么时候写的，盖上「现在」会让它压住对面真正更新的那一份。
     public func adoptLegacy(_ records: [PairedVPSRecord]) {
         guard !records.isEmpty else { return }
-        let merged = PairedVPSMerge.merge(local: servers, remote: records)
-        guard merged != servers else { return }
-        servers = merged
+        let merged = PairedVPSMerge.merge(local: self.records, remote: records)
+        guard merged != self.records else { return }
+        self.records = merged
+        servers = merged.filter { $0.deletedAt == nil }
         persist()
     }
 
@@ -254,9 +276,10 @@ public final class PairedVPSStore: ObservableObject {
 
     private func mergeCloudIntoLocal() {
         let remoteRecords = cloudRecords()
-        let merged = PairedVPSMerge.merge(local: servers, remote: remoteRecords)
-        if merged != servers {
-            servers = merged
+        let merged = PairedVPSMerge.merge(local: records, remote: remoteRecords)
+        if merged != records {
+            records = merged
+            servers = merged.filter { $0.deletedAt == nil }
             persistLocally()
         }
         // Also repair a cloud value that is missing records already held
@@ -286,12 +309,12 @@ public final class PairedVPSStore: ObservableObject {
     }
 
     private func persistLocally() {
-        guard let data = try? JSONEncoder().encode(servers) else { return }
+        guard let data = try? JSONEncoder().encode(records) else { return }
         defaults.set(data, forKey: localKey)
     }
 
     private func persistToCloud() {
-        guard let data = try? JSONEncoder().encode(servers) else { return }
+        guard let data = try? JSONEncoder().encode(records) else { return }
         cloud?.setData(data, forKey: cloudKey)
     }
 
@@ -311,7 +334,7 @@ public final class PairedVPSStore: ObservableObject {
         }
         return merged.contains { record in
             guard let cloudRecord = remoteByID[record.serverID] else { return true }
-            return record.updatedAt > cloudRecord.updatedAt
+            return PairedVPSMerge.merge(local: [cloudRecord], remote: [record]).first != cloudRecord
         }
     }
 }

@@ -234,6 +234,7 @@ public struct PendingNetNodeProfile: Codable, Equatable, Sendable {
         public var obfsPassword: String
         public var serverName: String
         public var certificatePublicKeySHA256: String
+        public var certificateSHA256: String? = nil
 
         enum CodingKeys: String, CodingKey {
             case server, password
@@ -242,6 +243,7 @@ public struct PendingNetNodeProfile: Codable, Equatable, Sendable {
             case obfsPassword = "obfs_password"
             case serverName = "server_name"
             case certificatePublicKeySHA256 = "certificate_public_key_sha256"
+            case certificateSHA256 = "certificate_sha256"
         }
     }
 

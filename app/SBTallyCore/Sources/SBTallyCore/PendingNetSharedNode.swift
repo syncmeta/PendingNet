@@ -38,7 +38,7 @@ public enum PendingNetTextImport {
             let line = String(rawLine).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
             do {
-                if line.lowercased().hasPrefix("pendingnet://") {
+                if PendingNetPairingFile.isPairingScheme(URLComponents(string: line)?.scheme) {
                     let pairing = try PendingNetPairingFile.decode(link: line, now: now)
                     guard pairing.enrollment.role != "admin" else {
                         throw PendingNetTextImportError.managementLink(line: offset + 1)
@@ -114,6 +114,15 @@ public struct PendingNetSharedNode: Equatable, Sendable {
             guard let password = decodedUser(components), !password.isEmpty else {
                 throw PendingNetTextImportError.unsupportedLink(line: 1)
             }
+            let rawPin = query["pinsha256"] ?? ""
+            let legacySPKI = Data(base64Encoded: rawPin)?.count == 32 ? rawPin : ""
+            let spki = query["pendingnet-spki"] ?? legacySPKI
+            if !rawPin.isEmpty && spki.isEmpty {
+                // sing-box accepts SPKI pins, not full-certificate fingerprints.
+                // Never treat one as the other or silently disable verification.
+                throw PendingNetTextImportError.unsupportedLink(line: 1)
+            }
+            if query["insecure"] == "1" && spki.isEmpty { throw PendingNetTextImportError.unsupportedLink(line: 1) }
             protocolItem = .init(
                 id: "hy2",
                 type: "hysteria2",
@@ -126,7 +135,8 @@ public struct PendingNetSharedNode: Equatable, Sendable {
                     obfsType: query["obfs"] ?? "",
                     obfsPassword: query["obfs-password"] ?? query["obfspassword"] ?? "",
                     serverName: query["sni"] ?? host,
-                    certificatePublicKeySHA256: query["pinsha256"] ?? ""
+                    certificatePublicKeySHA256: spki,
+                    certificateSHA256: legacySPKI.isEmpty && !rawPin.isEmpty ? rawPin : nil
                 )
             )
         default:

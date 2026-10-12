@@ -21,7 +21,7 @@ struct PendingNetIOSApp: App {
                     .tabItem { Label("连接", systemImage: "bolt.horizontal.circle") }
                     .tag(0)
                 PendingNetManagementView()
-                    .tabItem { Label("管理", systemImage: "person.crop.circle.badge.gearshape") }
+                    .tabItem { Label("管理", systemImage: "server.rack") }
                     .tag(1)
                 PendingNetIOSSettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape") }
@@ -33,7 +33,7 @@ struct PendingNetIOSApp: App {
             .tint(PendingNetTheme.Palette.accent)
             // 点一条 pendingnet:// 配对链接就直接导入。
             .onOpenURL { url in
-                guard url.scheme?.lowercased() == PendingNetPairingFile.urlScheme else { return }
+                guard PendingNetPairingFile.isPairingScheme(url.scheme) else { return }
                 if PendingNetPairingLinkDestination.isManagement(url) {
                     managementLinks.offer(url.absoluteString)
                     selectedTab = 1

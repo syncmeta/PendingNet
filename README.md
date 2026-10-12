@@ -13,7 +13,7 @@
   <img alt="Go" src="https://img.shields.io/badge/lang-Go%201.26-00ADD8?logo=go&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift%206-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20iOS%20%C2%B7%20Debian-lightgrey" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.39-informational" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.40-informational" />
 </p>
 苹果生态用 VPS 搭自建节点的一整套解决方案
 
@@ -43,7 +43,13 @@ sudo pendingnet-server pair create --admin --ttl 10m --out /root/pendingnet-admi
 sudo cat /root/pendingnet-admin.txt
 ```
 
-复制完整链接到客户端「管理 → 导入管理链接」。链接十分钟有效、只能导入一次，每台管理设备单独签发；输出文件已有时不会覆盖，请改用新文件名。管理员凭据只保存在导入设备本机，不经 iCloud 同步。管理页支持用户查询、撤销、链接签发和配置导出；在线修改服务器配置尚未开放。
+复制完整 `pendingnetm://` 链接到客户端「管理 → 导入管理链接」（新版仍兼容旧的管理链接）。链接十分钟有效、只能导入一次，每台管理设备单独签发；输出文件已有时不会覆盖，请改用新文件名。管理员凭据只保存在导入设备本机，不经 iCloud 同步。管理页支持用户查询、撤销、链接签发和配置导出；在线修改服务器配置尚未开放。
+
+### 分享与删除节点
+
+连接页的节点「详情」可复制或分享标准 VLESS Reality / Hysteria2 链接；已在本机导入同一台 VPS 管理权限时，还可签发十分钟有效、一次性的 `pendingnet://` 普通配对链接。标准链接使用现有节点密钥，配对链接为接收方建立独立用户。链接含访问凭据，请只交给可信的人。
+
+iOS 列表左滑可删除 VPS，确认后先断开当前连接，再删除同步记录和访问凭据；删除标记防止旧设备恢复节点。重新导入可恢复。删除客户端节点不会卸载 VPS，也不会撤销服务器端用户。管理页也支持删除本机管理记录和管理员凭据，iOS 左滑显示删除；连接节点继续保留。繁体中文系统现在可匹配 `zh-Hant` 界面资源。
 
 ### 更新已部署的 VPS
 

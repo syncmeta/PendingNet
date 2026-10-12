@@ -235,3 +235,29 @@ final class PairedVPSStoreTests: XCTestCase {
         XCTAssertEqual(store.servers.map(\.serverID), ["old"])
     }
 }
+
+extension PairedVPSStoreTests {
+    func testDeletionSurvivesCloudLegacyAndLateProfileWritesUntilExplicitImport() throws {
+        let cloud = FakeCloudStore()
+        let defaults = makeDefaults("deletion")
+        let store = PairedVPSStore(defaults: defaults, cloud: cloud, now: { self.late })
+        let old = makeRecord(id: "a", updatedAt: early)
+        store.upsert(old)
+        store.delete(serverID: "a")
+        XCTAssertTrue(store.servers.isEmpty)
+        store.adoptLegacy([old])
+        store.upsert(old)
+        XCTAssertTrue(store.servers.isEmpty)
+        let restarted = PairedVPSStore(defaults: defaults, cloud: cloud, now: { self.late })
+        XCTAssertTrue(restarted.servers.isEmpty)
+        var legacyNewer = old
+        legacyNewer.updatedAt = late.addingTimeInterval(100)
+        cloud.setData(try JSONEncoder().encode([legacyNewer]), forKey: PairedVPSStore.defaultCloudKey)
+        restarted.refreshFromCloud()
+        XCTAssertTrue(restarted.servers.isEmpty)
+        restarted.upsert(old, restoringDeleted: true)
+        XCTAssertEqual(restarted.servers.map(\.serverID), ["a"])
+        let another = PairedVPSStore(defaults: makeDefaults("deletion-other"), cloud: cloud)
+        XCTAssertEqual(another.servers.map(\.serverID), ["a"])
+    }
+}

@@ -26,6 +26,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>pendingnet</string>
+				<string>pendingnetm</string>
 			</array>
 		</dict>
 	</array>

@@ -23,6 +23,18 @@ final class PendingNetManagedServerStoreTests: XCTestCase {
         }
     }
 
+    func testRemovePersistsWithoutChangingConnectionRecords() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "PendingNetManagedServerStoreTests.\(UUID().uuidString)"))
+        let ordinary = Data("unchanged".utf8)
+        defaults.set(ordinary, forKey: PairedVPSStore.defaultLocalKey)
+        let store = PendingNetManagedServerStore(defaults: defaults)
+        let server = PendingNetManagedServer(serverID: "test", name: "Test", endpoint: "https://example.com:7443", certificateSHA256: "pin", deviceID: "device")
+        try store.upsert(server)
+        try store.remove(serverID: "test")
+        XCTAssertTrue(PendingNetManagedServerStore(defaults: defaults).servers.isEmpty)
+        XCTAssertEqual(defaults.data(forKey: PairedVPSStore.defaultLocalKey), ordinary)
+    }
+
     func testCorruptLocalMetadataIsNotOverwritten() throws {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "PendingNetManagedServerStoreTests.\(UUID().uuidString)"))
         let corrupt = Data("not-json".utf8)
@@ -40,6 +52,7 @@ final class PendingNetManagedServerStoreTests: XCTestCase {
         XCTAssertThrowsError(try store.ensureWritable()) { error in
             XCTAssertTrue(error is PendingNetManagedServerStoreError)
         }
+        XCTAssertThrowsError(try store.remove(serverID: server.serverID))
         XCTAssertEqual(defaults.data(forKey: PendingNetManagedServerStore.defaultLocalKey), corrupt)
     }
 

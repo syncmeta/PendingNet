@@ -203,3 +203,20 @@ func TestPairingURLRejectsMalformed(t *testing.T) {
 		}
 	}
 }
+
+func TestManagementSchemeAndLegacyCompatibility(t *testing.T) {
+	now := time.Now()
+	admin := validFile(now)
+	admin.Enrollment.Role = "admin"
+	link, err := admin.URL(now)
+	if err != nil || !strings.HasPrefix(link, "pendingnetm://") {
+		t.Fatalf("management scheme: %s %v", link, err)
+	}
+	if _, err := ParseURL(strings.Replace(link, "pendingnetm://", "pendingnet://", 1), now); err != nil {
+		t.Fatal(err)
+	}
+	client, _ := validFile(now).URL(now)
+	if _, err := ParseURL(strings.Replace(client, "pendingnet://", "pendingnetm://", 1), now); err == nil {
+		t.Fatal("management scheme accepted client grant")
+	}
+}

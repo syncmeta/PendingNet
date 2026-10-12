@@ -43,6 +43,16 @@ final class PendingNetCredentialStoreTests: XCTestCase {
         XCTAssertNil(try makeCore(FakeKeychain()).load(serverID: "vps1"))
     }
 
+    func testRemoveAllLocationsPreservesOtherServers() throws {
+        let backend = FakeKeychain()
+        let core = makeCore(backend)
+        try core.save(accessToken: "keep", serverID: "b")
+        for location in locations { backend.items[backend.slot(location, service: service, serverID: "a")] = Data("delete".utf8) }
+        try core.remove(serverID: "a")
+        XCTAssertNil(try core.load(serverID: "a"))
+        XCTAssertEqual(try core.load(serverID: "b"), "keep")
+    }
+
     // MARK: - 迁移（老用户升级后现有配对不能丢）
 
     func testLegacyTokenIsStillReadableAfterUpgrade() throws {

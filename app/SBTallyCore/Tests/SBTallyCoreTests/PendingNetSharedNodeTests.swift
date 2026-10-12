@@ -56,3 +56,31 @@ final class PendingNetSharedNodeTests: XCTestCase {
         }
     }
 }
+
+extension PendingNetSharedNodeTests {
+    func testShareRoundTripsSecretsAndIPv6() throws {
+        for source in [
+            "vless://uuid@[2001:db8::1]:443?security=reality&sni=example.com&pbk=key&sid=ff&flow=xtls-rprx-vision#台北",
+            "hysteria2://a%3Ab%40c%2F%3F%23%25@[2001:db8::2]:8443?sni=example.com&obfs=salamander&obfs-password=a%26b%2Bc&pinsha256=abababababababababababababababababababababababababababababababab&pendingnet-spki=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%3D#台北"
+        ] {
+            let original = try PendingNetSharedNode.decode(link: source)
+            let links = try PendingNetNodeShare.links(profile: original.profile, name: original.record.name)
+            let decoded = try PendingNetSharedNode.decode(link: XCTUnwrap(links.first).link)
+            XCTAssertEqual(decoded.profile.protocols, original.profile.protocols)
+            XCTAssertEqual(decoded.record.name, original.record.name)
+        }
+    }
+}
+
+extension PendingNetSharedNodeTests {
+    func testCertificateFingerprintIsNotMisreadAsSPKIAndUnpinnedTLSIsValidated() throws {
+        XCTAssertThrowsError(try PendingNetSharedNode.decode(link: "hy2://pw@host.example:443?pinSHA256=" + String(repeating: "ab", count: 32)))
+        XCTAssertThrowsError(try PendingNetSharedNode.decode(link: "hy2://pw@host.example:443?insecure=1"))
+        let node = try PendingNetSharedNode.decode(link: "hy2://pw@host.example:443?sni=host.example")
+        let runtime = try node.runtimeServer()
+        let outbounds = try XCTUnwrap(JSONSerialization.jsonObject(with: runtime.proxyOutbounds) as? [[String: Any]])
+        let object = try XCTUnwrap(outbounds.first)
+        let tls = try XCTUnwrap(object["tls"] as? [String: Any])
+        XCTAssertEqual(tls["insecure"] as? Bool, false)
+    }
+}

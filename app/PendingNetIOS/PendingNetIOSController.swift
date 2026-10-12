@@ -67,6 +67,21 @@ final class PendingNetIOSController: ObservableObject {
             .store(in: &cancellables)
     }
 
+    func deleteServer(_ serverID: String) async {
+        guard !working, switchingServerID == nil else { return }
+        working = true
+        defer { working = false }
+        do {
+            if selectedServerID == serverID {
+                try await tunnel.stopAndForgetConfiguration()
+                nodeProfile = nil
+            }
+            try PendingNetCredentialStore.remove(serverID: serverID)
+            store.delete(serverID: serverID)
+            await refreshNodeProfile()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     func renameServer(_ serverID: String, to name: String) {
         store.rename(serverID: serverID, to: name)
     }
@@ -91,6 +106,18 @@ final class PendingNetIOSController: ObservableObject {
     }
 
     private func applyStoreServers(_ next: [IOSPairedServer]) {
+        let removedSelection = selectedServerID.map { id in !next.contains { $0.serverID == id } } ?? false
+        if removedSelection {
+            nodeProfile = nil
+            if !working {
+                working = true
+                Task {
+                    defer { working = false }
+                    do { try await tunnel.stopAndForgetConfiguration(); await refreshNodeProfile() }
+                    catch { errorMessage = error.localizedDescription }
+                }
+            }
+        }
         servers = next
         refreshCredentialState()
         let remembered = selectedServerID ?? defaults.string(forKey: selectedKey)
@@ -147,7 +174,7 @@ final class PendingNetIOSController: ObservableObject {
                         accessToken: node.originalLink,
                         serverID: node.record.serverID
                     )
-                    store.upsert(node.record)
+                    store.upsert(node.record, restoringDeleted: true)
                     unpairedServerIDs.remove(node.record.serverID)
                     selectedServerID = node.record.serverID
                     nodeProfile = node.profile
@@ -178,7 +205,7 @@ final class PendingNetIOSController: ObservableObject {
             capabilities: result.server.capabilities,
             nodeProtocols: servers.first { $0.serverID == result.server.serverID }?.nodeProtocols
         )
-        store.upsert(paired)
+        store.upsert(paired, restoringDeleted: true)
         unpairedServerIDs.remove(paired.serverID)
         selectedServerID = paired.serverID
         persistServers()
@@ -201,6 +228,7 @@ final class PendingNetIOSController: ObservableObject {
 
         selectedServerID = target.serverID
         await refreshNodeProfile()
+        guard servers.contains(where: { $0.serverID == target.serverID }), selectedServerID == target.serverID else { return }
         guard let profile = nodeProfile, profile.serverID == target.serverID else {
             // refreshNodeProfile 已经把原因写进 errorMessage 了。
             selectedServerID = previousID
@@ -266,6 +294,7 @@ final class PendingNetIOSController: ObservableObject {
             guard profile.serverID == server.serverID else {
                 throw PendingNetPairingError.invalidServerResponse
             }
+            guard selectedServerID == server.serverID, servers.contains(where: { $0.serverID == server.serverID }) else { return }
             nodeProfile = profile
             // 协议名单落进存档，「详情」在没网的时候也有东西可显示。
             var updated = server

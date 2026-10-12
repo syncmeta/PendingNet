@@ -105,6 +105,7 @@ targets:
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - pendingnet
+              - pendingnetm
     entitlements:
       path: PendingNetIOS/PendingNetIOS.entitlements
       properties:
@@ -210,6 +211,7 @@ targets:
             CFBundleTypeRole: Viewer
             CFBundleURLSchemes:
               - pendingnet
+              - pendingnetm
         SUFeedURL: $(PENDINGNET_UPDATE_FEED_URL)
         SUPublicEDKey: iVYT89UTxhljv5zkk6Si7C1TFOZJPUFmb/ysQufwHGY=
         SUEnableAutomaticChecks: true

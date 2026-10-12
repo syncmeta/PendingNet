@@ -16,6 +16,7 @@ struct PendingNetIOSHomeView: View {
     @State private var switchingOutbound: String?
     @State private var switchingRouteMode = false
     @State private var detailServerID: String?
+    @State private var deletingServerID: String?
     /// 每台 VPS 一个延迟数，和 macOS 同一套语义、同一份实现
     /// （见 `PendingNetLatencyTarget`）。
     @StateObject private var latency = PendingNetLatencyTester()
@@ -66,6 +67,16 @@ struct PendingNetIOSHomeView: View {
                 onRename: { controller.renameServer(server.serverID, to: $0) }
             )
         }
+        .alert("删除 VPS？", isPresented: Binding(get: { deletingServerID != nil }, set: { if !$0 { deletingServerID = nil } })) {
+            Button("取消", role: .cancel) { deletingServerID = nil }
+            Button("删除", role: .destructive) {
+                guard let id = deletingServerID else { return }
+                deletingServerID = nil
+                Task { await controller.deleteServer(id) }
+            }
+        } message: {
+            Text("删除同步的节点记录和访问凭据。若正在连接这台 VPS，将先断开连接；不会卸载服务器。")
+        }
         .task { await controller.refreshNodeProfile() }
         .task { await controller.tunnel.load() }
         // selector tag 只取决于 serverID，节点资料一到就能算出来；隧道是否
@@ -112,6 +123,7 @@ struct PendingNetIOSHomeView: View {
         PendingConnectionHeader(
             statusText: statusText,
             statusKind: statusKind,
+            showsStatus: false,
             isBusy: isBusy,
             action: .toggle(
                 isOn: isConnected,
@@ -261,7 +273,8 @@ struct PendingNetIOSHomeView: View {
                 selectedID: controller.selectedServerID,
                 switchingID: controller.switchingServerID,
                 unpairedIDs: controller.unpairedServerIDs,
-                latencies: latency.results
+                latencies: latency.results,
+                onDelete: { deletingServerID = $0 }
             ) { serverID in
                 guard controller.switchingServerID == nil,
                       !controller.working,
@@ -394,6 +407,8 @@ struct PendingNetServerDetailSheet: View {
                         latency: latency
                     )
 
+                    PendingNodeSharePanel(server: server)
+
                     HStack {
                         TextField("名称（留空则用 IP）", text: $nameDraft)
                             .textFieldStyle(.roundedBorder)
@@ -431,7 +446,7 @@ struct PendingNetServerDetailSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
         .onAppear { nameDraft = server.name }
     }
 }

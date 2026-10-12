@@ -4,7 +4,7 @@ import Foundation
 /// validates the document but never consumes its one-time grant.
 public enum PendingNetPairingLinkDestination {
     public static func isManagement(_ url: URL, now: Date = Date()) -> Bool {
-        guard url.scheme?.lowercased() == PendingNetPairingFile.urlScheme,
+        guard PendingNetPairingFile.isPairingScheme(url.scheme),
               let pairing = try? PendingNetPairingFile.decode(link: url.absoluteString, now: now) else {
             return false
         }

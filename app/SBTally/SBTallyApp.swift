@@ -92,6 +92,13 @@ struct SBTallyApp: App {
                 .onChange(of: engine.lastError) { _, _ in
                     if let text = engine.friendlyErrorText() { toast.show(text) }
                 }
+                .onChange(of: vpsPairing.servers) { old, next in
+                    let tag = engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag
+                    let removed = old.filter { oldRecord in !next.contains { $0.serverID == oldRecord.serverID } }
+                    if removed.contains(where: { PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == tag }) {
+                        Task { await engine.stop(); state.clearLocalControl() }
+                    }
+                }
                 .onChange(of: vpsPairing.lastError) { _, value in
                     if let value { toast.show(value) }
                 }

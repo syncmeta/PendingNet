@@ -333,6 +333,24 @@ final class PendingNetTunnelController: ObservableObject {
         degradeNotice = String(format: NSLocalizedString("规则集不可用，本次已降级为全局：%@", comment: "Route mode degraded at tunnel start"), reason)
     }
 
+    func stopAndForgetConfiguration() async throws {
+        manager?.connection.stopVPNTunnel()
+        for _ in 0..<80 {
+            let status = manager?.connection.status ?? .disconnected
+            if status == .disconnected || status == .invalid { break }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let status = manager?.connection.status ?? .disconnected
+        guard status == .disconnected || status == .invalid else {
+            throw PendingNetPairingError.serverRejected(String(localized: "隧道尚未停止，请稍后再删除"))
+        }
+        if let base = PendingNetTunnelPaths.container() {
+            for url in [PendingNetTunnelPaths.snapshotURL(in: base), PendingNetTunnelPaths.configURL(in: base)] {
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+
     func stop() async {
         manager?.connection.stopVPNTunnel()
     }

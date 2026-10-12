@@ -110,7 +110,7 @@ public extension PendingNetNodeProfile {
                 var tls: [String: Any] = [
                     "enabled": true,
                     "server_name": node.serverName,
-                    "insecure": true,
+                    "insecure": !node.certificatePublicKeySHA256.isEmpty,
                 ]
                 if !node.certificatePublicKeySHA256.isEmpty {
                     tls["certificate_public_key_sha256"] = [node.certificatePublicKeySHA256]

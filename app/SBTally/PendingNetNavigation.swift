@@ -32,7 +32,7 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
         case .apps: "square.grid.2x2"
         case .domains: "globe.asia.australia"
         case .logs: "doc.text.magnifyingglass"
-        case .management: "person.crop.circle.badge.gearshape"
+        case .management: "server.rack"
         case .settings: "gear"
         }
     }

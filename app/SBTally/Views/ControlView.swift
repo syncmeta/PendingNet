@@ -233,6 +233,8 @@ struct ControlView: View {
                 latency: latency.outcome(for: server.serverID)
             )
 
+            PendingNodeSharePanel(server: server)
+
             HStack {
                 TextField("名称（留空则用 IP）", text: $serverNameDraft)
                     .textFieldStyle(.roundedBorder)

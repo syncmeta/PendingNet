@@ -165,6 +165,16 @@ public struct PendingNetCredentialStoreCore: Sendable {
         return backend.add(add)
     }
 
+    public func remove(serverID: String) throws {
+        var accessible = false
+        for location in locations {
+            let status = backend.delete(query(for: location, serverID: serverID))
+            if status == errSecSuccess || status == errSecItemNotFound { accessible = true }
+            else if status != errSecMissingEntitlement { throw PendingNetPairingError.keychain(status) }
+        }
+        if !accessible { throw PendingNetPairingError.keychain(errSecMissingEntitlement) }
+    }
+
     // MARK: - 读（顺带迁移）
 
     public func load(serverID: String) throws -> String? {
@@ -314,6 +324,8 @@ public enum PendingNetCredentialStore {
         try core.save(accessToken: accessToken, serverID: serverID)
     }
 
+    public static func remove(serverID: String) throws { try core.remove(serverID: serverID) }
+
     public static func load(serverID: String) throws -> String? {
         try core.load(serverID: serverID)
     }
@@ -377,6 +389,8 @@ public enum PendingNetAdminCredentialStore {
     public static func save(accessToken: String, serverID: String) throws {
         try core.save(accessToken: accessToken, serverID: serverID)
     }
+
+    public static func remove(serverID: String) throws { try core.remove(serverID: serverID) }
 
     public static func load(serverID: String) throws -> String? {
         try core.load(serverID: serverID)

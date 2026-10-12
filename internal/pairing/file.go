@@ -92,6 +92,10 @@ func (f File) URL(now time.Time) (string, error) {
 	if err := f.Validate(now); err != nil {
 		return "", err
 	}
+	scheme := URLScheme
+	if f.Enrollment.Role == "admin" {
+		scheme = "pendingnetm"
+	}
 	payload, err := json.Marshal(f)
 	if err != nil {
 		return "", fmt.Errorf("encode pairing link: %w", err)
@@ -99,7 +103,7 @@ func (f File) URL(now time.Time) (string, error) {
 	// Built by hand rather than with url.Values.Encode: the base64url alphabet
 	// needs no escaping, and this keeps v before d as documented.
 	return fmt.Sprintf("%s://%s?v=%d&d=%s",
-		URLScheme, URLHost, Version, base64.RawURLEncoding.EncodeToString(payload)), nil
+		scheme, URLHost, Version, base64.RawURLEncoding.EncodeToString(payload)), nil
 }
 
 // ParseURL decodes a pendingnet:// pairing link and validates the document it
@@ -109,7 +113,7 @@ func ParseURL(raw string, now time.Time) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("parse pairing link: %w", err)
 	}
-	if !strings.EqualFold(u.Scheme, URLScheme) {
+	if !strings.EqualFold(u.Scheme, URLScheme) && !strings.EqualFold(u.Scheme, "pendingnetm") {
 		return File{}, fmt.Errorf("not a %s:// pairing link", URLScheme)
 	}
 	if !strings.EqualFold(u.Host, URLHost) || (u.Path != "" && u.Path != "/") {
@@ -136,7 +140,14 @@ func ParseURL(raw string, now time.Time) (File, error) {
 	if err != nil {
 		return File{}, fmt.Errorf("pairing link payload is not base64url: %w", err)
 	}
-	return Parse(payload, now)
+	f, err := Parse(payload, now)
+	if err != nil {
+		return File{}, err
+	}
+	if strings.EqualFold(u.Scheme, "pendingnetm") && f.Enrollment.Role != "admin" {
+		return File{}, errors.New("management link requires admin role")
+	}
+	return f, nil
 }
 
 // Validate enforces the v1 trust and expiry invariants.

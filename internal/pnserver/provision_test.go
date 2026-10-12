@@ -3,7 +3,9 @@ package pnserver
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"os"
@@ -121,5 +123,49 @@ func TestGeneratedHysteriaConfigStartsWithInstalledValidator(t *testing.T) {
 	output, runErr := exec.CommandContext(ctx, hy2, "server", "--config", filepath.Join(servicesDir, "hysteria.json")).CombinedOutput()
 	if ctx.Err() != context.DeadlineExceeded {
 		t.Fatalf("Hysteria exited before validation window: %v\n%s", runErr, output)
+	}
+}
+
+func TestNodeProfileStandardCertificatePinIsBoundToExistingSPKI(t *testing.T) {
+	store, _ := testStore(t)
+	artifacts, err := BuildProvisionArtifacts(ProvisionOptions{ServerIP: "203.0.113.10", RealitySNI: "www.cloudflare.com"}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveNodeProfile(artifacts.NodeProfile); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(store.Dir, "services")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	certPath := filepath.Join(dir, "hysteria.crt")
+	if err := os.WriteFile(certPath, artifacts.Hysteria2CertPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(store.nodePath())
+	profile, err := store.LoadNodeProfile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode(artifacts.Hysteria2CertPEM)
+	pin := sha256.Sum256(block.Bytes)
+	if got := profile.Protocols[1].Hysteria2.CertificateSHA256; got != hex.EncodeToString(pin[:]) {
+		t.Fatalf("certificate fingerprint mismatch: %s", got)
+	}
+	after, _ := os.ReadFile(store.nodePath())
+	if !bytes.Equal(before, after) {
+		t.Fatal("loading profile rewrote state")
+	}
+	other, err := BuildProvisionArtifacts(ProvisionOptions{ServerIP: "203.0.113.10", RealitySNI: "www.cloudflare.com"}, nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, other.Hysteria2CertPEM, 0600); err != nil {
+		t.Fatal(err)
+	}
+	profile, err = store.LoadNodeProfile()
+	if err != nil || profile.Protocols[1].Hysteria2.CertificateSHA256 != "" {
+		t.Fatal("unrelated certificate accepted")
 	}
 }

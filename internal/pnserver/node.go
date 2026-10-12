@@ -2,6 +2,11 @@ package pnserver
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -54,6 +59,7 @@ type Hysteria2Node struct {
 	ObfsPassword               string `json:"obfs_password"`
 	ServerName                 string `json:"server_name"`
 	CertificatePublicKeySHA256 string `json:"certificate_public_key_sha256"`
+	CertificateSHA256          string `json:"certificate_sha256,omitempty"`
 }
 
 func (s *Store) nodePath() string { return filepath.Join(s.Dir, "node.json") }
@@ -151,6 +157,21 @@ func (s *Store) LoadNodeProfile() (NodeProfile, error) {
 	}
 	if profile.Version != nodeProfileVersion || profile.ServerID == "" || len(profile.Protocols) == 0 {
 		return NodeProfile{}, errors.New("node profile is invalid or unsupported")
+	}
+	// Enrich the response from the existing managed certificate; never change
+	// state or rotate keys just to export a standard URI certificate pin.
+	certPEM, certErr := os.ReadFile(filepath.Join(s.Dir, "services", "hysteria.crt"))
+	block, _ := pem.Decode(certPEM)
+	if certErr == nil && block != nil && block.Type == "CERTIFICATE" {
+		if certificate, err := x509.ParseCertificate(block.Bytes); err == nil {
+			spki := sha256.Sum256(certificate.RawSubjectPublicKeyInfo)
+			fingerprint := sha256.Sum256(certificate.Raw)
+			for i := range profile.Protocols {
+				if node := profile.Protocols[i].Hysteria2; node != nil && node.CertificatePublicKeySHA256 == base64.StdEncoding.EncodeToString(spki[:]) {
+					node.CertificateSHA256 = hex.EncodeToString(fingerprint[:])
+				}
+			}
+		}
 	}
 	return profile, nil
 }

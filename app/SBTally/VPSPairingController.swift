@@ -87,7 +87,7 @@ final class VPSPairingController: ObservableObject {
                         accessToken: node.originalLink,
                         serverID: node.record.serverID
                     )
-                    upsert(node.record)
+                    store.upsert(node.record, restoringDeleted: true)
                     unpairedServerIDs.remove(node.record.serverID)
                     lastRuntime = try node.runtimeServer()
                 }
@@ -120,13 +120,14 @@ final class VPSPairingController: ObservableObject {
             nodeProtocols: nil,
             pairedAt: Date()
         )
-        upsert(record)
+        store.upsert(record, restoringDeleted: true)
 
         let nodeProfile = try await PendingNetServerClient(
             endpoint: file.control.endpoint,
             certificateSHA256: file.control.certificateSHA256,
             accessToken: result.accessToken
         ).nodeProfile()
+        guard servers.contains(where: { $0.serverID == record.serverID }) else { throw VPSPairingControllerError.missingCredential }
         record.nodeProtocols = nodeProfile.protocols.map(\.type)
         record.adoptProxyEntry(from: nodeProfile)
         upsert(record)
@@ -147,6 +148,7 @@ final class VPSPairingController: ObservableObject {
                 certificateSHA256: record.certificateSHA256,
                 accessToken: accessToken
             ).nodeProfile()
+            guard servers.contains(where: { $0.serverID == record.serverID }) else { throw VPSPairingControllerError.missingCredential }
             var updated = record
             updated.nodeProtocols = nodeProfile.protocols.map(\.type)
             updated.adoptProxyEntry(from: nodeProfile)

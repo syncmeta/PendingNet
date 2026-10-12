@@ -141,22 +141,14 @@ struct PendingRuleSetCard: View {
     /// 返回 nil 表示成功，否则是给用户看的人话。
     let refresh: () async -> String?
 
+    private var isReady: Bool { !items.isEmpty && items.allSatisfy(\.ready) }
+
     @State private var refreshing = false
     @EnvironmentObject private var toast: PendingToastCenter
-
-    private var isReady: Bool { !items.isEmpty && items.allSatisfy(\.ready) }
 
     var body: some View {
         PendingSectionCard("规则集") {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    PendingStatusPill(
-                        text: isReady ? "已就绪" : "未下载",
-                        kind: isReady ? .success : .neutral
-                    )
-                    Spacer(minLength: 0)
-                }
-
                 ForEach(items) { item in
                     HStack(alignment: .firstTextBaseline) {
                         Text(item.title)
@@ -180,8 +172,7 @@ struct PendingRuleSetCard: View {
                         refreshing = true
                         let failure = await refresh()
                         refreshing = false
-                        // 下好了不报喜：上面每一份的「已就绪 / 缺失」和那颗
-                        // 状态药丸自己会翻，只有失败才说话。
+                        // 下好了不报喜：上面每一份的「已就绪 / 缺失」会更新，只有失败才说话。
                         if let failure { toast.show(failure) }
                     }
                 } label: {
