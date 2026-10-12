@@ -12,6 +12,7 @@ public enum PendingNetRootConfig {
     public static let activeFilename = "master.json"
     public static let secretFilename = "control-secret"
     public static let cacheFilename = "cache.db"
+    public static let systemDNSTag = "pendingnet-system-dns"
 
     /// 生成一份还没有 VPS 的基线。`proxy` 暂时只含 `direct`；第一次应用配对资料时，
     /// `PendingNetLocalConfigComposer` 会把真实 VPS selector 放到最前面。
@@ -39,6 +40,7 @@ public enum PendingNetRootConfig {
             "listen": "127.0.0.1",
             "listen_port": mixedPort,
         ])
+        if enableTUN { inbounds.append(systemDNSInbound) }
 
         let root: [String: Any] = [
             "log": ["level": "warn", "timestamp": true],
@@ -103,7 +105,31 @@ public enum PendingNetRootConfig {
         inbounds.removeAll { $0["type"] as? String == "tun" }
         if enableTUN { inbounds.insert(tunInbound, at: 0) }
         root["inbounds"] = inbounds
-        return try encode(root)
+        return try migratingSystemDNS(in: encode(root))
+    }
+
+    /// Upgrade existing root configs without replacing custom TUN/policy fields.
+    public static func migratingSystemDNS(in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var inbounds = root["inbounds"] as? [[String: Any]] else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        var route = root["route"] as? [String: Any] ?? [:]
+        inbounds.removeAll { $0["tag"] as? String == systemDNSTag }
+        if inbounds.contains(where: { $0["type"] as? String == "tun" }) {
+            inbounds.append(systemDNSInbound)
+        }
+        var rules = route["rules"] as? [[String: Any]] ?? []
+        rules.removeAll { $0["inbound"] as? [String] == [systemDNSTag] }
+        rules.insert(systemDNSRule, at: 0)
+        route["rules"] = rules
+        root["route"] = route
+        root["inbounds"] = inbounds
+        let updated = try encode(root)
+        // Keep byte identity on the next preparation pass.
+        let old = try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: data), options: [.sortedKeys])
+        let new = try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+        return old == new ? data : updated
     }
 
     /// 升级旧 root 配置时，只替换 PendingNet 曾经生成的那一个裸 `dns-local`。
@@ -165,6 +191,7 @@ public enum PendingNetRootConfig {
     ]
 
     private static let routeRules: [[String: Any]] = [
+        systemDNSRule,
         ["action": "sniff"],
         [
             "rule_set": ["geosite-cn"],
@@ -193,6 +220,14 @@ public enum PendingNetRootConfig {
             "rule_set": ["geosite-noncn"],
             "outbound": "proxy",
         ],
+    ]
+
+    private static let systemDNSInbound: [String: Any] = [
+        "type": "direct", "tag": systemDNSTag,
+        "listen": "127.0.0.1", "listen_port": 53,
+    ]
+    private static let systemDNSRule: [String: Any] = [
+        "inbound": [systemDNSTag], "action": "hijack-dns",
     ]
 
     private static let remoteRuleSets: [[String: Any]] = [

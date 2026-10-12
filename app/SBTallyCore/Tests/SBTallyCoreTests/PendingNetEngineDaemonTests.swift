@@ -189,7 +189,11 @@ final class PendingNetEngineDaemonTests: XCTestCase {
             try Data(contentsOf: directory.appendingPathComponent("master-tun.json"))))
         XCTAssertFalse(Self.hasTUN(
             try Data(contentsOf: directory.appendingPathComponent("master-notun.json"))))
-        XCTAssertEqual(try Data(contentsOf: directory.appendingPathComponent("master.json")), legacy)
+        let migrated = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("master.json"))) as? [String: Any]
+        let original = try JSONSerialization.jsonObject(with: legacy) as? [String: Any]
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: migrated?["outbounds"] as Any, options: [.sortedKeys]),
+                       try JSONSerialization.data(withJSONObject: original?["outbounds"] as Any, options: [.sortedKeys]))
+        XCTAssertFalse(Self.hasTUN(try Data(contentsOf: directory.appendingPathComponent("master.json"))))
     }
 
     private static func hasTUN(_ data: Data) -> Bool {

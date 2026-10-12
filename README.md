@@ -13,7 +13,7 @@
   <img alt="Go" src="https://img.shields.io/badge/lang-Go%201.26-00ADD8?logo=go&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift%206-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20iOS%20%C2%B7%20Debian-lightgrey" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.28-informational" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.39-informational" />
 </p>
 苹果生态用 VPS 搭自建节点的一整套解决方案
 
@@ -33,6 +33,17 @@
   第一次选择 TUN / 系统代理时，按系统提示允许 PendingNet 后台项目即可。
 - **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
 - **VPS 部署**：`curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash `
+
+### 导入服务器管理权限
+
+安装脚本最后生成普通连接链接，在连接页导入。管理页需要单独的管理员链接；安装新版服务端后，在对应 VPS 上运行：
+
+```sh
+sudo pendingnet-server pair create --admin --ttl 10m --out /root/pendingnet-admin.txt
+sudo cat /root/pendingnet-admin.txt
+```
+
+复制完整链接到客户端「管理 → 导入管理链接」。链接十分钟有效、只能导入一次，每台管理设备单独签发；输出文件已有时不会覆盖，请改用新文件名。管理员凭据只保存在导入设备本机，不经 iCloud 同步。管理页支持用户查询、撤销、链接签发和配置导出；在线修改服务器配置尚未开放。
 
 ### 导出 Android / Windows sing-box 配置
 

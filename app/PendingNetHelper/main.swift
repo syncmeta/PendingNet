@@ -10,6 +10,95 @@ let LABEL = "system/" + PendingNetEngineDaemon.label
 let SYSTEM_PROXY_OWNER = "\(ETC)/pendingnet-system-proxy-owned"
 let ACTIVE_SELECTOR = "\(ETC)/pendingnet-active-selector"
 let ROUTE_MODE = "\(ETC)/route-mode"
+let SYSTEM_DNS_OWNER = "\(ETC)/pendingnet-system-dns-owned.json"
+
+/// Use persistent service IDs, not localized networksetup output or display names.
+/// Hold the preferences lock across compare/set/commit to preserve concurrent edits.
+func dnsPreferences() throws -> SCPreferences {
+    guard let preferences = SCPreferencesCreate(nil, "PendingNet DNS" as CFString, nil) else {
+        throw NSError(domain: "PendingNetDNS", code: 1)
+    }
+    return preferences
+}
+func dnsConfiguration(_ proto: SCNetworkProtocol) throws -> Data? {
+    guard let value = SCNetworkProtocolGetConfiguration(proto) else { return nil }
+    return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+}
+let systemDNS = PendingNetSystemDNS(backend: .init(services: {
+    let prefs = try dnsPreferences()
+    let services = SCNetworkServiceCopyAll(prefs) as? [SCNetworkService] ?? []
+    return services.filter {
+        guard SCNetworkServiceGetEnabled($0),
+              let dns = SCNetworkServiceCopyProtocol($0, kSCNetworkProtocolTypeDNS) else { return false }
+        // A service can be enabled while its DNS protocol is disabled (VPNs
+        // commonly have this shape). GetConfiguration then returns nil even
+        // after SetConfiguration, so acquiring it fails readback and rollback.
+        // Only take ownership of protocols that already participate in DNS.
+        return SCNetworkProtocolGetEnabled(dns)
+    }.compactMap { SCNetworkServiceGetServiceID($0).map { $0 as String } }.sorted()
+}, read: { id in
+    let prefs = try dnsPreferences()
+    guard let service = SCNetworkServiceCopy(prefs, id as CFString),
+          let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeDNS) else { return nil }
+    return try dnsConfiguration(proto)
+}, write: { id, expected, data in
+    let prefs = try dnsPreferences()
+    guard SCPreferencesLock(prefs, true) else { throw NSError(domain: "PendingNetDNS", code: 2) }
+    defer { SCPreferencesUnlock(prefs) }
+    SCPreferencesSynchronize(prefs)
+    guard let service = SCNetworkServiceCopy(prefs, id as CFString),
+          let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeDNS),
+          try dnsConfiguration(proto) == expected else {
+        throw PendingNetSystemDNS.Failure.changedService(id)
+    }
+    let value = try data.map { data -> CFDictionary in
+        guard let decoded = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw PendingNetSystemDNS.Failure.invalidJournal
+        }
+        return decoded as CFDictionary
+    }
+    guard SCNetworkProtocolSetConfiguration(proto, value),
+          SCPreferencesCommitChanges(prefs), SCPreferencesApplyChanges(prefs) else {
+        throw NSError(domain: "PendingNetDNS", code: 3)
+    }
+}, load: {
+    guard FileManager.default.fileExists(atPath: SYSTEM_DNS_OWNER) else { return nil }
+    return try Data(contentsOf: URL(fileURLWithPath: SYSTEM_DNS_OWNER))
+}, save: { data in
+    if let data { try writeConfig(data, path: SYSTEM_DNS_OWNER) }
+    else if FileManager.default.fileExists(atPath: SYSTEM_DNS_OWNER) {
+        try FileManager.default.removeItem(atPath: SYSTEM_DNS_OWNER)
+    }
+}))
+
+func releaseSystemDNS() -> String? {
+    do { try systemDNS.release(); return nil }
+    catch { return "恢复系统 DNS 失败：\(error.localizedDescription)" }
+}
+func acquireSystemDNS() -> String? {
+    guard currentMode() == "tun" else { return releaseSystemDNS() }
+    do {
+        try systemDNS.acquire {
+            guard let pid = enginePID() else { throw NSError(domain: "PendingNetDNS", code: 4) }
+            for transport in ["UDP", "TCP"] {
+                let (code, _) = sh(["/usr/sbin/lsof", "-nP", "-a", "-p", String(pid),
+                                    "-i\(transport)@127.0.0.1:53"])
+                guard code == 0 else { throw NSError(domain: "PendingNetDNS", code: 5,
+                    userInfo: [NSLocalizedDescriptionKey: "引擎未持有本地\(transport) DNS入口"] ) }
+                let (result, answer) = sh(["/usr/bin/dig", "@127.0.0.1", "example.com", "A",
+                    "+time=1", "+tries=1", "+noall", "+answer"] + (transport == "TCP" ? ["+tcp"] : []))
+                guard result == 0, answer.split(separator: "\n").contains(where: {
+                    $0.split(whereSeparator: { $0.isWhitespace }).contains("A")
+                }) else { throw NSError(domain: "PendingNetDNS", code: 6,
+                    userInfo: [NSLocalizedDescriptionKey: "本地\(transport) DNS入口未就绪"] ) }
+            }
+        }
+        return nil
+    } catch {
+        let recovery = releaseSystemDNS()
+        return "系统 DNS 接管失败：\(error.localizedDescription)" + (recovery.map { "；" + $0 } ?? "")
+    }
+}
 
 /// User actions and the link self-healer can all reach the engine at once.
 /// Keep every destructive launchd/config transition in one critical section;
@@ -321,6 +410,7 @@ func restartEngine(context: String) -> String? {
 }
 
 private func restartEngineLocked(context: String) -> String? {
+    if let error = releaseSystemDNS() { return error }
     var retries = 0
     while true {
         let before = fileSize(ENGINE_LOG)
@@ -540,11 +630,14 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         // proxied traffic fails with "Connection refused".
         func fail(_ message: String?) {
             disableOwnedSystemProxy()
-            reply(message)
+            let recovery = releaseSystemDNS()
+            reply([message, recovery].compactMap { $0 }.joined(separator: "；"))
         }
 
         switch PendingNetEngineLifecycle.startAction(engineRunning: engineRunning()) {
         case .reuseRunningEngine:
+            if let error = acquireSystemDNS() { return fail(error) }
+            if currentMode() == "tun" { flushSystemDNSCache(.engineStarted) }
             if currentMode() == "sysproxy" {
                 if !FileManager.default.fileExists(atPath: SYSTEM_PROXY_OWNER) {
                     enableOwnedSystemProxy()
@@ -558,6 +651,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         case .launchEngine:
             break
         }
+        if let error = releaseSystemDNS() { return fail(error) }
         _ = launchctl(["bootout", LABEL])   // idempotent
         if let error = prepareEngineConfigDirectory() { return fail(error) }
         // 先把作业对齐到包内那份引擎，再 bootstrap —— 顺序反过来的话这一次拉起来的
@@ -577,6 +671,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 return selectionError
             }
             if let configData { reapplyStoredRouteMode(configData: configData) }
+            if let error = acquireSystemDNS() { return error }
             if currentMode() == "sysproxy" { enableOwnedSystemProxy() }
             return nil
         }, flush: flushSystemDNSCache)
@@ -595,6 +690,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         // 一个还占着统计端口的进程挡住下一个 owner（切到「仅端口」时是 app）。
         stats.stop()
         disableOwnedSystemProxy()
+        if let error = releaseSystemDNS() { return reply(error) }
         let action = PendingNetEngineLifecycle.stopAction(enginePID: enginePID())
         guard case .stopEngine(let running) = action else {
             // A loaded-but-not-running launchd job is still worth forgetting,
@@ -626,6 +722,35 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         }
         let variant = mode == "tun" ? "master-tun.json" : "master-notun.json"
         let wasRunning = engineRunning()
+        let previousMode = currentMode()
+        let previousConfig: Data
+        do { previousConfig = try readData(path: "\(ETC)/master.json") }
+        catch { return reply("无法保存切换前配置：\(error.localizedDescription)") }
+        func rollback(_ failure: String) {
+            var recovery: String?
+            do {
+                if let error = releaseSystemDNS() { throw NSError(domain: "PendingNetDNS", code: 7,
+                    userInfo: [NSLocalizedDescriptionKey: error]) }
+                try writeConfig(previousConfig, path: "\(ETC)/master.json")
+                try previousMode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
+                if wasRunning {
+                    if let error = restartEngine(context: "恢复切换前模式") { recovery = error }
+                    else if let error = activatePendingSelector(configData: previousConfig) { recovery = error }
+                    else {
+                        reapplyStoredRouteMode(configData: previousConfig)
+                        recovery = acquireSystemDNS()
+                        if recovery == nil {
+                            flushSystemDNSCache(.takeoverSwitched)
+                            if previousMode == "sysproxy" { enableOwnedSystemProxy() }
+                            syncStatsCollector()
+                        }
+                    }
+                }
+            } catch { recovery = error.localizedDescription }
+            let outcome = failure + (recovery.map { "；恢复切换前模式失败：" + $0 } ?? "；已恢复切换前模式")
+            helperLog("切换接管模式失败：" + outcome)
+            reply(outcome)
+        }
         // 换接管方式一定要先把这一侧的采集器停掉：切到「仅端口」之后 owner 是
         // app，两个采集器抢同一个统计端口就谁都别想干活。切到另一种 root 模式时
         // 引擎会重启、控制端点可能变，也得重来一遍。
@@ -635,20 +760,25 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         // left the machine pointing at a proxy for a takeover mode it was no
         // longer in. Re-enabling below only happens once the engine is up.
         disableOwnedSystemProxy()
+        if let error = releaseSystemDNS() { return reply(error) }
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: "\(ETC)/\(variant)"))
             try data.write(to: URL(fileURLWithPath: "\(ETC)/master.json"))
             try mode.write(toFile: "\(ETC)/mode", atomically: true, encoding: .utf8)
-        } catch { return reply("\(error)") }
+        } catch { return rollback("\(error)") }
         guard wasRunning else { return reply(nil) }
         if let error = PendingNetDNSCacheFlush.afterEngineUp(
             .takeoverSwitched,
-            bringUp: { restartEngine(context: "切换接管模式") },
+            bringUp: {
+                if let error = restartEngine(context: "切换接管模式") { return error }
+                if let data = try? readData(path: "\(ETC)/master.json") {
+                    if let error = activatePendingSelector(configData: data) { return error }
+                    reapplyStoredRouteMode(configData: data)
+                }
+                return acquireSystemDNS()
+            },
             flush: flushSystemDNSCache
-        ) { return reply(error) }
-        if let configData = try? readData(path: "\(ETC)/master.json") {
-            reapplyStoredRouteMode(configData: configData)
-        }
+        ) { return rollback(error) }
         if mode == "sysproxy" { enableOwnedSystemProxy() }
         syncStatsCollector()
         reply(nil)
@@ -754,17 +884,17 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 if wasRunning {
                     if let error = PendingNetDNSCacheFlush.afterEngineUp(
                         .serverConfigurationApplied,
-                        bringUp: { restartEngine(context: "应用 VPS 配置") },
+                        bringUp: {
+                            if let error = restartEngine(context: "应用 VPS 配置") { return error }
+                            if let error = activatePendingSelector(configData: active) { return error }
+                            reapplyStoredRouteMode(configData: active)
+                            return acquireSystemDNS()
+                        },
                         flush: flushSystemDNSCache
                     ) {
                         throw NSError(domain: "PendingNetHelper", code: 2,
                                       userInfo: [NSLocalizedDescriptionKey: error])
                     }
-                    if let error = activatePendingSelector(configData: active) {
-                        throw NSError(domain: "PendingNetHelper", code: 4,
-                                      userInfo: [NSLocalizedDescriptionKey: error])
-                    }
-                    reapplyStoredRouteMode(configData: active)
                     // 新配置可能换了控制端点或密钥，采集器手上那份就作废了。
                     stats.restart(configData: active)
                 }
@@ -777,7 +907,19 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
                 } else {
                     try? FileManager.default.removeItem(atPath: ACTIVE_SELECTOR)
                 }
-                if wasRunning { _ = restartEngine(context: "回滚 VPS 配置") }
+                if wasRunning {
+                    if let recovery = restartEngine(context: "回滚 VPS 配置") {
+                        helperLog("配置回滚后启动失败：\(recovery)")
+                    } else if let old = backups[masterPath] {
+                        if let recovery = activatePendingSelector(configData: old) {
+                            helperLog("配置回滚后选择节点失败：\(recovery)")
+                        } else {
+                            reapplyStoredRouteMode(configData: old)
+                            if let recovery = acquireSystemDNS() { helperLog(recovery) }
+                            flushSystemDNSCache(.serverConfigurationApplied)
+                        }
+                    }
+                }
                 throw error
             }
             reply(nil)
@@ -1079,17 +1221,17 @@ final class LinkSelfHealer {
         helperLog("自愈：\(reason)")
         if let error = PendingNetDNSCacheFlush.afterEngineUp(
             .linkSelfHealed,
-            bringUp: { restartEngine(context: "换网卡自愈") },
+            bringUp: {
+                if let error = restartEngine(context: "换网卡自愈") { return error }
+                if let data = try? readData(path: "\(ETC)/master.json") {
+                    if let error = activatePendingSelector(configData: data) { return error }
+                    reapplyStoredRouteMode(configData: data)
+                }
+                return acquireSystemDNS()
+            },
             flush: flushSystemDNSCache
         ) {
             return helperLog("自愈失败：\(error)")
-        }
-        // 重启等于回到 default_mode，用户选的 VPS 和路由档位要照 startEngine 那样补回来。
-        if let configData = try? readData(path: "\(ETC)/master.json") {
-            if let error = activatePendingSelector(configData: configData) {
-                helperLog("自愈后重选 VPS 失败：\(error)")
-            }
-            reapplyStoredRouteMode(configData: configData)
         }
         // 新链路可能是这台机器上刚出现的网络服务，代理设置不会自己跟过去。
         if currentMode() == "sysproxy",
@@ -1135,6 +1277,28 @@ final class LinkSelfHealer {
 // 我们握着采集器 stdin 的写端。它先走一步的话，往那根管子写就会吃 SIGPIPE，
 // 默认动作是把这个 daemon 干掉 —— 一个统计采集器不该有能力放倒整机的代理。
 signal(SIGPIPE, SIG_IGN)
+// Recover durable DNS ownership after helper/engine crashes or a host restart.
+// Never start an engine or change mode here. A down engine must not leave
+// persistent network services pointing at an absent DNS listener.
+func recoverAbandonedSystemDNS() {
+    withSerializedEngineOperation {
+        guard FileManager.default.fileExists(atPath: SYSTEM_DNS_OWNER),
+              currentMode() != "tun" || !engineRunning() else { return }
+        if let error = releaseSystemDNS() { helperLog(error) }
+        else { flushSystemDNSCache(.engineStopped) }
+    }
+}
+withSerializedEngineOperation {
+    if FileManager.default.fileExists(atPath: SYSTEM_DNS_OWNER), currentMode() == "tun", engineRunning() {
+        // An interrupted acquisition may have changed only some services.
+        if let error = acquireSystemDNS() { helperLog(error) }
+        else { flushSystemDNSCache(.engineStarted) }
+    } else { recoverAbandonedSystemDNS() }
+}
+let dnsRecoveryTimer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "PendingNet.DNSRecovery"))
+dnsRecoveryTimer.schedule(deadline: .now() + 5, repeating: 5)
+dnsRecoveryTimer.setEventHandler(handler: recoverAbandonedSystemDNS)
+dnsRecoveryTimer.resume()
 let delegate = Helper()
 let linkSelfHealer = LinkSelfHealer()
 retireLegacyHelperJob()

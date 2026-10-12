@@ -2,6 +2,38 @@ import XCTest
 @testable import SBTallyCore
 
 final class PendingNetRootConfigTests: XCTestCase {
+    func testDNSMigrationPreservesCustomTUNAndRoutingAndIsIdempotent() throws {
+        let old = Data(#"{"inbounds":[{"type":"tun","tag":"custom","mtu":1400},{"type":"mixed","listen_port":2080}],"route":{"rules":[{"domain":["home.test"],"outbound":"direct"}],"final":"custom"},"outbounds":[{"type":"direct","tag":"custom"}]}"#.utf8)
+        let migrated = try PendingNetRootConfig.migratingSystemDNS(in: old)
+        XCTAssertEqual(try PendingNetRootConfig.migratingSystemDNS(in: migrated), migrated)
+        let root = try Self.root(migrated)
+        let entries = try XCTUnwrap(root["inbounds"] as? [[String: Any]])
+        XCTAssertEqual(entries.first?["mtu"] as? Int, 1400)
+        XCTAssertEqual(entries.first?["tag"] as? String, "custom")
+        let route = try XCTUnwrap(root["route"] as? [String: Any])
+        XCTAssertEqual(route["final"] as? String, "custom")
+        let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+        XCTAssertEqual(rules.count, 2)
+        XCTAssertEqual(rules[1]["domain"] as? [String], ["home.test"])
+    }
+    func testTUNSystemDNSHasLoopbackTCPAndUDPEntryBeforeResolve() throws {
+        for enabled in [true, false] {
+            let root = try Self.root(PendingNetRootConfig.make(enableTUN: enabled,
+                controlSecret: "test", cachePath: "/tmp/test-cache"))
+            let entries = try XCTUnwrap(root["inbounds"] as? [[String: Any]])
+            let dns = entries.first { $0["tag"] as? String == "pendingnet-system-dns" }
+            if enabled {
+                XCTAssertEqual(dns?["listen"] as? String, "127.0.0.1")
+                XCTAssertEqual(dns?["listen_port"] as? Int, 53)
+                XCTAssertEqual(dns?["type"] as? String, "direct")
+                XCTAssertNil(dns?["network"], "Both TCP and UDP must be accepted")
+            } else { XCTAssertNil(dns) }
+            let route = try XCTUnwrap(root["route"] as? [String: Any])
+            let rules = try XCTUnwrap(route["rules"] as? [[String: Any]])
+            XCTAssertEqual(rules.first?["inbound"] as? [String], ["pendingnet-system-dns"])
+            XCTAssertEqual(rules.first?["action"] as? String, "hijack-dns")
+        }
+    }
     func testRootVariantsOwnTheSamePolicyAndDifferOnlyByTUN() throws {
         let tun = try PendingNetRootConfig.make(
             enableTUN: true,

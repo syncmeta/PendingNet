@@ -3,6 +3,10 @@
 <plist version="1.0"><dict>
     <key>Label</key><string>com.pendingname.pendingnet.helper</string>
     <key>BundleProgram</key><string>Contents/MacOS/PendingNetHelper</string>
+    <!-- DNS ownership must be recoverable after reboot/helper termination.
+         This starts only the helper; it never starts the proxy engine. -->
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
     <key>MachServices</key><dict><key>com.pendingname.pendingnet.helper</key><true/></dict>
     <key>AssociatedBundleIdentifiers</key><array><string>com.pendingname.pendingnet</string></array>
 </dict></plist>

@@ -60,7 +60,8 @@ public enum PendingNetEngineDaemon {
         // 不用新基线覆盖用户已有的 VPS、路由和规则集。
         for url in [masterURL, tunURL, noTunURL] where fileManager.fileExists(atPath: url.path) {
             let existing = try Data(contentsOf: url)
-            let migrated = try PendingNetRootConfig.migratingLegacyLocalDNS(in: existing)
+            let legacy = try PendingNetRootConfig.migratingLegacyLocalDNS(in: existing)
+            let migrated = try PendingNetRootConfig.migratingSystemDNS(in: legacy)
             if migrated != existing {
                 try migrated.write(to: url, options: .atomic)
             }
