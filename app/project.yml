@@ -151,6 +151,8 @@ targets:
       - sdk: UIKit.framework
     postBuildScripts:
       - name: Verify bundled version
+        inputFiles:
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
         script: |
           INFO_PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
           actual_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
