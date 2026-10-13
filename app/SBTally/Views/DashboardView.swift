@@ -8,21 +8,7 @@ struct DashboardView: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(spacing: 0) {
-                List {
-                    sidebarRow(.connection)
-                    Section("统计") {
-                        sidebarRow(.live)
-                        sidebarRow(.apps)
-                        sidebarRow(.domains)
-                    }
-                    sidebarRow(.logs)
-                    sidebarRow(.management)
-                    sidebarRow(.settings)
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
-            }
+            PendingNetSidebar(selection: $navigation.section)
             .background(PendingNetTheme.Palette.canvas)
             .navigationSplitViewColumnWidth(min: 172, ideal: 196, max: 224)
         } detail: {
@@ -55,21 +41,6 @@ struct DashboardView: View {
         .onChange(of: state.since) {
             Task { await state.refresh() }
         }
-    }
-
-    private func sidebarRow(_ item: PendingNetSection) -> some View {
-        Button { navigation.section = item } label: {
-            HStack {
-                Label(item.title, systemImage: item.icon)
-                Spacer()
-            }
-            .font(PendingNetTheme.Fonts.chrome)
-            .padding(.horizontal, 8).padding(.vertical, 7)
-            .foregroundStyle(destination == item ? PendingNetTheme.Palette.accent : PendingNetTheme.Palette.ink)
-            .background(destination == item ? PendingNetTheme.Palette.accent.opacity(0.12) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder

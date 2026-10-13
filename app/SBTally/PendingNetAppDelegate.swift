@@ -1,4 +1,5 @@
 import AppKit
+import SBTallyCore
 
 @MainActor
 final class PendingNetAppDelegate: NSObject, NSApplicationDelegate {
@@ -9,19 +10,21 @@ final class PendingNetAppDelegate: NSObject, NSApplicationDelegate {
         guard !waitingForCleanup else { return .terminateLater }
         guard let engine else { return .terminateNow }
         waitingForCleanup = true
+        let gate = PendingNetTerminationGate()
+        let cleanup = Task { await engine.prepareForTermination() }
         Task {
-            let error = await engine.prepareForTermination()
-            if let error {
-                waitingForCleanup = false
-                let alert = NSAlert()
-                alert.messageText = String(localized: "退出前恢复网络失败")
-                alert.informativeText = error
-                alert.addButton(withTitle: String(localized: "确定"))
-                alert.runModal()
-                sender.reply(toApplicationShouldTerminate: false)
-            } else {
-                sender.reply(toApplicationShouldTerminate: true)
-            }
+            let error = await cleanup.value
+            guard gate.finish() else { return }
+            if let error { NSLog("PendingNet termination cleanup: %@", error) }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(12))
+            guard gate.finish() else { return }
+            cleanup.cancel()
+            engine.stopBeforeTermination()
+            NSLog("PendingNet termination cleanup timed out; allowing application exit")
+            sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }

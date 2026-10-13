@@ -191,6 +191,9 @@ final class EngineController: ObservableObject {
     /// A single, cached XPC connection — reused across calls instead of
     /// creating (and leaking) a new one per toggle/refresh.
     private var connection: NSXPCConnection?
+    private var connectionState = PendingNetHelperConnectionState()
+    private let helperRecovery = PendingNetHelperRecovery()
+    private var helperRetryAfter: ContinuousClock.Instant?
 
     /// Resumes a `CheckedContinuation` exactly once, whichever of the two
     /// competing paths (the XPC reply closure, or the proxy's error handler
@@ -226,11 +229,12 @@ final class EngineController: ObservableObject {
         // would talk to whatever claims the Mach service name.
         c.setCodeSigningRequirement(
             pendingNetCodeRequirement(identifier: PendingNetIdentifiers.helper))
+        let generation = connectionState.attach()
         c.interruptionHandler = { [weak self] in
-            Task { @MainActor in self?.dropConnection() }
+            Task { @MainActor in self?.dropConnection(ifCurrent: generation) }
         }
         c.invalidationHandler = { [weak self] in
-            Task { @MainActor in self?.dropConnection() }
+            Task { @MainActor in self?.dropConnection(ifCurrent: generation) }
         }
         c.resume()
         connection = c
@@ -239,7 +243,13 @@ final class EngineController: ObservableObject {
 
     /// Forgets the current connection along with everything only true of it —
     /// including which helper build was on the other end.
+    private func dropConnection(ifCurrent id: UUID) {
+        guard connectionState.invalidate(id) else { return }
+        dropConnection()
+    }
+
     private func dropConnection() {
+        connectionState.clear()
         connection = nil
         helperReady = false
         helperInterfaceOK = nil
@@ -262,13 +272,16 @@ final class EngineController: ObservableObject {
         _ body: @escaping (HelperProtocol, @escaping (T) -> Void) -> Void
     ) async -> T {
         let conn = xpcConnection()
+        let generation = connectionState.current
         return await withCheckedContinuation { (k: CheckedContinuation<T, Never>) in
             let once = ResumeOnce(k)
             let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] error in
                 if once.resume(fallback) {
                     Task { @MainActor in
-                        self?.lastError = error.localizedDescription
-                        self?.helperReady = false
+                        guard let self, let generation, self.connectionState.isCurrent(generation) else { return }
+                        self.dropConnection(ifCurrent: generation)
+                        conn.invalidate()
+                        self.lastError = error.localizedDescription
                     }
                 }
             } as? HelperProtocol
@@ -280,8 +293,10 @@ final class EngineController: ObservableObject {
                 try? await Task.sleep(for: timeout)
                 if once.resume(fallback) {
                     await MainActor.run {
-                        self?.lastError = String(localized: "特权助手没有响应，请重新授权")
-                        self?.helperReady = false
+                        guard let self, let generation, self.connectionState.isCurrent(generation) else { return }
+                        self.dropConnection(ifCurrent: generation)
+                        conn.invalidate()
+                        self.lastError = String(localized: "特权助手没有响应，请重新授权")
                     }
                 }
             }
@@ -323,12 +338,20 @@ final class EngineController: ObservableObject {
     /// a method that binary doesn't know, XPC drops the connection and the GUI
     /// falls back to 「等待授权」 forever.
     private func ensureHelperCompatible() async -> Bool {
-        if let known = helperInterfaceOK { return known }
+        if helperInterfaceOK == true { return true }
+        if let retry = helperRetryAfter, ContinuousClock.now < retry { helperReady = false; return false }
+        return await helperRecovery.run { [self] in await reconcileHelper() }
+    }
+
+    private func reconcileHelper() async -> Bool {
+        if helperInterfaceOK == true { return true }
+        guard service.status == .enabled else { return false }
         if !UserDefaults.standard.bool(forKey: Self.lifetimePolicyKey) {
             // Existing jobs retain their old unconditional KeepAlive definition.
             // Drain owned networking before replacing that launchd registration.
-            let error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.stopEngine(reply: reply) }
-            if let error { lastError = error; return false }
+            // A stale peer may no longer pass signature validation after the
+            // bundle was replaced. No reply must not prevent replacing its job.
+            _ = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.quickTimeout) { p, reply in p.stopEngine(reply: reply) }
             await reregisterHelperService()
             guard service.status == .enabled else {
                 helperNeedsApproval = service.status == .requiresApproval
@@ -353,7 +376,7 @@ final class EngineController: ObservableObject {
                 // re-registering the job, which boots the stale one out.
                 await reregisterHelperService()
             }
-            for attempt in 0..<8 {
+            for attempt in 0..<3 {
                 if attempt > 0 { try? await Task.sleep(for: .milliseconds(250)) }
                 version = await probeHelperInterfaceVersion()
                 stale = version != pendingNetHelperInterfaceVersion
@@ -361,13 +384,26 @@ final class EngineController: ObservableObject {
                 if !stale { break }
                 let old = connection; dropConnection(); old?.invalidate()
             }
+            if stale && service.status == .enabled {
+                // Quitting a process alone cannot repair a job tied to an old
+                // bundle location. Re-register and validate the actual new peer.
+                await reregisterHelperService()
+                if service.status == .enabled {
+                    version = await probeHelperInterfaceVersion()
+                    stale = version != pendingNetHelperInterfaceVersion
+                    if !stale { stale = await helperPredatesItsBinary() }
+                }
+            }
         }
         let ok = !stale
-        helperInterfaceOK = ok
+        helperInterfaceOK = ok ? true : nil
         if ok {
             didAttemptHelperRecovery = false
+            helperRetryAfter = nil
             lastError = nil
         } else {
+            didAttemptHelperRecovery = false
+            helperRetryAfter = ContinuousClock.now.advanced(by: .seconds(10))
             helperReady = false
             // Re-registering can land the daemon back in the approval queue —
             // that needs the user to flip a switch, not to retry.
@@ -402,11 +438,13 @@ final class EngineController: ObservableObject {
     private func requestHelperQuit() async {
         let conn = xpcConnection()
         (conn.remoteObjectProxyWithErrorHandler { _ in } as? HelperProtocol)?.quitForUpgrade()
-        dropConnection()
-        conn.invalidate()
+        // Keep the connection alive until the one-way request has had a
+        // chance to reach the old process; invalidating immediately can drop it.
         // Let launchd reap the exiting daemon before the next connect, or it
         // may hand back the process that is already on its way out.
         try? await Task.sleep(for: .milliseconds(600))
+        if let id = connectionState.current, connection === conn { dropConnection(ifCurrent: id) }
+        conn.invalidate()
     }
 
     private func reregisterHelperService() async {
@@ -415,7 +453,11 @@ final class EngineController: ObservableObject {
         let stale = connection
         dropConnection()
         stale?.invalidate()
-        try? await service.unregister()
+        do { try await service.unregister() }
+        catch {
+            lastError = error.localizedDescription
+            return
+        }
         // `unregister()` reports success as soon as the job is booted out, but
         // Background Task Management is still retiring the record behind it
         // ("remove succeeded (EINPROGRESS)"). Registering into that window
@@ -440,58 +482,39 @@ final class EngineController: ObservableObject {
             }
         }
         helperNeedsApproval = service.status == .requiresApproval
-        if service.status != .notRegistered { lastError = nil }
+        if service.status == .enabled { lastError = nil }
     }
 
     func registerHelper() {
         guard !terminating else { return }
+        helperRetryAfter = nil
         Task {
-            // A fresh authorization attempt starts from a clean slate — the
-            // previous attempt's error must not outlive it.
-            lastError = nil
-            // Pressing 授权 is the user's explicit retry, so let recovery run
-            // again even if an earlier attempt this session gave up.
-            didAttemptHelperRecovery = false
-            helperInterfaceOK = nil
-            do {
-                // An already-approved helper must be left alone: unregistering
-                // it here knocked it back to 「待批准」, so pressing 授权 made
-                // things strictly worse. It may still be a leftover build
-                // though, so it has to clear the version handshake.
-                if service.status == .enabled {
-                    helperNeedsApproval = false
-                    guard await ensureHelperCompatible() else { return }
-                    helperReady = true
-                    if let pending = pendingTakeover {
-                        pendingTakeover = nil
-                        await setTakeover(pending)
+            let ready = await helperRecovery.run { [self] in
+                lastError = nil
+                didAttemptHelperRecovery = false
+                helperInterfaceOK = nil
+                do {
+                    if service.status == .enabled { return await reconcileHelper() }
+                    if service.status == .requiresApproval { try await service.unregister() }
+                    try service.register()
+                    UserDefaults.standard.set(true, forKey: Self.lifetimePolicyKey)
+                    helperNeedsApproval = service.status == .requiresApproval
+                    guard service.status == .enabled else {
+                        lastError = String(localized: "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目，然后再选一次接管方式")
+                        return false
                     }
-                    return
+                    return await reconcileHelper()
+                } catch {
+                    helperReady = false
+                    lastError = String(format: NSLocalizedString("助手授权失败：%@", comment: "Helper authorization failure"), error.localizedDescription)
+                    return false
                 }
-                // Ad-hoc development builds created before 0.3.5 had a
-                // version-specific code identity. Remove that stale Service
-                // Management registration before registering the current app.
-                if service.status == .requiresApproval {
-                    try await service.unregister()
-                }
-                try service.register()
-                UserDefaults.standard.set(true, forKey: Self.lifetimePolicyKey)
-                helperReady = service.status == .enabled
-                helperNeedsApproval = service.status == .requiresApproval
-                if helperReady {
-                    lastError = nil
-                    if let pending = pendingTakeover {
-                        pendingTakeover = nil
-                        await setTakeover(pending)
-                    }
-                } else {
-                    pendingTakeover = nil
-                    lastError = String(localized: "请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet 后台项目，然后再选一次接管方式")
-                }
-            } catch {
+            }
+            guard ready, !terminating else { pendingTakeover = nil; return }
+            helperReady = true
+            if let pending = pendingTakeover {
                 pendingTakeover = nil
-                helperReady = false
-                lastError = String(format: NSLocalizedString("助手授权失败：%@", comment: "Helper authorization failure"), error.localizedDescription)
+                await setTakeover(pending)
             }
         }
     }
@@ -796,32 +819,53 @@ final class EngineController: ObservableObject {
         return true
     }
 
+    /// Sparkle calls this while the old signed bundle still exists. Removing
+    /// the old job before replacement avoids a stale registration after relaunch.
+    func prepareForUpdate() async -> String? {
+        let cleanupError = await prepareForTermination()
+        if service.status == .enabled {
+            do { try await service.unregister() }
+            catch { return error.localizedDescription }
+        }
+        return cleanupError
+    }
+
     func prepareForTermination() async -> String? {
         terminating = true
+        userEngine.beginTermination()
         let deadline = ContinuousClock.now.advanced(by: .seconds(60))
         while connectionBusy {
+            guard !Task.isCancelled else { return String(localized: "后台服务没有响应") }
             guard ContinuousClock.now < deadline else {
-                terminating = false
                 return String(localized: "正在切换，请稍后再退出")
             }
             try? await Task.sleep(for: .milliseconds(100))
         }
         await userEngine.stop()
         guard service.status == .enabled else { return nil }
+        helperRetryAfter = nil
+        _ = await ensureHelperCompatible()
         let version = await probeHelperInterfaceVersion()
         let error: String?
         if version >= 8 {
-            error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.shutdown(reply: reply) }
+            error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.quickTimeout) { p, reply in p.shutdown(reply: reply) }
         } else {
             error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.stopEngine(reply: reply) }
             if error == nil {
                 // Legacy unconditional KeepAlive requires removing the old job.
                 // restoreLostRegistrationIfNeeded restores the user's prior choice.
                 do { try await service.unregister() }
-                catch { terminating = false; return error.localizedDescription }
+                catch { return error.localizedDescription }
             }
         }
-        if error != nil { terminating = false; return error }
+        if let error {
+            // A broken XPC peer cannot veto quitting. Retire its registration
+            // so the next app launch can restore a fresh, approved job.
+            do { try await service.unregister() }
+            catch { return error.localizedDescription }
+            let old = connection; dropConnection(); old?.invalidate()
+            return error
+        }
         let old = connection; dropConnection(); old?.invalidate()
         return nil
     }

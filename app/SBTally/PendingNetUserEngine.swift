@@ -36,6 +36,8 @@ final class PendingNetUserEngine {
     private var logHandle: FileHandle?
 
     private let fileManager = FileManager.default
+    private var applicationTerminating = false
+    func beginTermination() { applicationTerminating = true }
     private let inboundStore: PendingNetLocalInboundStore
 
     /// 统计服务。刻意挂在引擎身上而不是挂在界面层：引擎的每一条启停路径
@@ -176,6 +178,7 @@ final class PendingNetUserEngine {
     }
 
     func start() async throws {
+        guard !applicationTerminating else { throw CancellationError() }
         if isRunning { return }
         guard fileManager.fileExists(atPath: configURL.path) else {
             throw PendingNetUserEngineError.noConfiguration
@@ -207,6 +210,7 @@ final class PendingNetUserEngine {
             try? handle.close()
         }
         do {
+            guard !applicationTerminating else { throw CancellationError() }
             try newProcess.run()
         } catch {
             try? handle.close()

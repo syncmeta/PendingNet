@@ -47,6 +47,8 @@ struct SBTallyApp: App {
                 .frame(minWidth: 640, minHeight: 440)
                 .background(PendingNetTheme.Palette.canvas)
                 .task {
+                    appDelegate.engine = engine
+                    updater.attachEngine(engine)
                     await state.refresh()
                     state.startLive()
                     await engine.refresh()

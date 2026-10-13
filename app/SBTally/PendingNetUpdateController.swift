@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Sparkle
+import SBTallyCore
 
 @MainActor
 final class PendingNetUpdateController: ObservableObject {
@@ -10,6 +11,9 @@ final class PendingNetUpdateController: ObservableObject {
     let isConfigured: Bool
 
     private var cancellable: AnyCancellable?
+    private let lifecycle = PendingNetUpdateLifecycle()
+
+    func attachEngine(_ engine: EngineController) { lifecycle.engine = engine }
 
     var currentVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
@@ -21,7 +25,7 @@ final class PendingNetUpdateController: ObservableObject {
         isConfigured = URL(string: feed)?.scheme == "https" && !publicKey.isEmpty
         updaterController = SPUStandardUpdaterController(
             startingUpdater: false,
-            updaterDelegate: nil,
+            updaterDelegate: lifecycle,
             userDriverDelegate: nil
         )
         cancellable = updaterController.updater.publisher(for: \.canCheckForUpdates)
@@ -53,5 +57,32 @@ final class PendingNetUpdateController: ObservableObject {
             objectWillChange.send()
             updaterController.updater.automaticallyDownloadsUpdates = newValue
         }
+    }
+}
+
+@MainActor
+private final class PendingNetUpdateLifecycle: NSObject, SPUUpdaterDelegate {
+    weak var engine: EngineController?
+
+    func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem,
+                 untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
+        guard let engine else { return false }
+        let gate = PendingNetTerminationGate()
+        let cleanup = Task { await engine.prepareForUpdate() }
+        Task {
+            let error = await cleanup.value
+            guard gate.finish() else { return }
+            if let error { NSLog("PendingNet pre-update helper cleanup: %@", error) }
+            installHandler()
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(12))
+            guard gate.finish() else { return }
+            cleanup.cancel()
+            engine.stopBeforeTermination()
+            NSLog("PendingNet pre-update helper cleanup timed out; continuing installation")
+            installHandler()
+        }
+        return true
     }
 }
