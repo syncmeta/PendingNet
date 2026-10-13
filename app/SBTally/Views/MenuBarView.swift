@@ -18,7 +18,7 @@ struct MenuBarView: View {
             Button("授权后台服务…") { engine.registerHelper() }
         } else {
             Toggle("连接", isOn: Binding(get: { engine.running }, set: { on in
-                Task { await PendingNetConnectionWorkflow.setConnected(on, engine: engine, state: state) }
+                Task { await PendingNetConnectionWorkflow.setConnected(on, pairing: vpsPairing, engine: engine, state: state) }
             }))
             .disabled(engine.connectionBusy || vpsPairing.pairing)
         }

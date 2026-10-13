@@ -11,6 +11,8 @@ struct PendingNetIOSApp: App {
     @State private var selectedTab = 0
     @Environment(\.scenePhase) private var scenePhase
 
+    @AppStorage(PendingNetLanguagePreferences.key) private var language = "system"
+
     var body: some Scene {
         WindowGroup {
             // 连接 / 设置两栏，对应 macOS 主窗口侧栏里的那两项。iOS 上底部
@@ -29,6 +31,7 @@ struct PendingNetIOSApp: App {
             }
             .environmentObject(controller)
             .environmentObject(toast)
+                .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
             .environmentObject(managementLinks)
             .tint(PendingNetTheme.Palette.accent)
             // 点一条 pendingnet:// 配对链接就直接导入。

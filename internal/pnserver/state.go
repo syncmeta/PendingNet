@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"sbtally/internal/pairing"
 )
@@ -132,12 +133,17 @@ func (s *Store) Initialize(name, endpoint string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return State{}, err
+	}
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return State{}, err
+	}
+	defer unlock()
 	if _, err := os.Stat(s.statePath()); err == nil {
 		return State{}, ErrAlreadyInitialized
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return State{}, err
-	}
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return State{}, err
 	}
 
@@ -202,6 +208,11 @@ func (s *Store) createPairing(ttl time.Duration, role string) (pairing.File, err
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return pairing.File{}, err
+	}
+	defer unlock()
 	state, err := s.loadState()
 	if err != nil {
 		return pairing.File{}, err
@@ -247,6 +258,11 @@ func (s *Store) Enroll(token, deviceName string) (DeviceCredential, error) {
 func (s *Store) EnrollFromIP(token, deviceName, peerIP string) (DeviceCredential, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return DeviceCredential{}, err
+	}
+	defer unlock()
 	state, err := s.loadState()
 	if err != nil {
 		return DeviceCredential{}, err
@@ -322,6 +338,11 @@ func (s *Store) AuthenticateFromIP(token, peerIP string) (Device, error) {
 func (s *Store) authenticate(token, peerIP string, recordIP bool) (Device, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return Device{}, err
+	}
+	defer unlock()
 	state, err := s.loadState()
 	if err != nil {
 		return Device{}, err
@@ -366,6 +387,11 @@ func (s *Store) authenticate(token, peerIP string, recordIP bool) (Device, error
 func (s *Store) RevokeUser(userID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	state, err := s.loadState()
 	if err != nil {
 		return err
@@ -379,6 +405,31 @@ func (s *Store) RevokeUser(userID string) error {
 	}
 	now := s.now()
 	state.Users[index].RevokedAt = &now
+	return s.writeState(state)
+}
+
+// RenameUser changes display metadata while retaining all grants and devices.
+func (s *Store) RenameUser(userID, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 128 || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return errors.New("user name must be 1-128 characters without control characters")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := s.loadState()
+	if err != nil {
+		return err
+	}
+	i := indexUser(state.Users, userID)
+	if i < 0 {
+		return ErrUserNotFound
+	}
+	state.Users[i].Name = name
 	return s.writeState(state)
 }
 

@@ -165,11 +165,12 @@ final class PendingNetUserEngine {
             baseConfig: base,
             runtimeServer: runtime
         )
-        try validate(config)
+        let preferredConfig = try PendingNetProtocolPreferences().applying(to: config)
+        try validate(preferredConfig)
 
         let wasRunning = isRunning
         if wasRunning { await stop() }
-        try config.write(to: configURL, options: .atomic)
+        try preferredConfig.write(to: configURL, options: .atomic)
         try fileManager.setAttributes(
             [.posixPermissions: 0o600],
             ofItemAtPath: configURL.path
@@ -180,6 +181,14 @@ final class PendingNetUserEngine {
     func start() async throws {
         guard !applicationTerminating else { throw CancellationError() }
         if isRunning { return }
+        if fileManager.fileExists(atPath: configURL.path) {
+            let old = try Data(contentsOf: configURL)
+            let preferred = try PendingNetProtocolPreferences().applying(to: old)
+            if old != preferred {
+                try preferred.write(to: configURL, options: .atomic)
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
+            }
+        }
         guard fileManager.fileExists(atPath: configURL.path) else {
             throw PendingNetUserEngineError.noConfiguration
         }

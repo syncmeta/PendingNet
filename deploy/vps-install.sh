@@ -3,11 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash
 #
-# 屏幕上只有进度行，最后给一条 pendingnet:// 配对链接，别的都不打。细节（下了
+# 屏幕上只有进度行，最后给节点、连接配对和管理链接，别的都不打。细节（下了
 # 什么、校验了什么、版本从哪一版换到哪一版）进 /tmp/pendingnet-install.log，
 # 出错时会指出来。链接怎么用、有什么规矩、要放行哪几个端口，看 --help。
 # 脚本做的事：装 pendingnet-server（优先下预编译的 Release 资产并校验 sha256，
-# 没有就现场装 Go 工具链从源码编译）、install、provision、pair create。
+# 没有就现场装 Go 工具链从源码编译）、install、provision、links。
 #
 # 管道执行下没法传命令行参数，所有可覆盖项都同时认环境变量：
 #
@@ -129,11 +129,14 @@ usage() {
 配对链接怎么用:
   在装了 PendingNet 的 Mac / iPhone 上点一下那条链接，App 会自己起来开始配对。
   被聊天软件吞掉的话整条复制，粘进 App 连接页的「粘贴链接导入」框。
+  pendingnetm:// 管理链接导入「管理」页；标准 vless:// / hysteria2:// 链接用于节点导入。
 
 配对链接的规矩:
   · 默认 10m 过期（--pair-ttl 可改，最长 24h）、只能用一次、一台设备一份。
   · 它跟密码等价——谁拿到谁就能连上这台 VPS，别往公开地方贴。
-  · 再要一条（换设备 / 过期了 / 用掉了）: sudo pendingnet-server pair create
+  · 再要一条连接链接: sudo pendingnet links --kind pair
+  · 再要一条管理链接: sudo pendingnet links --kind manage
+  · VPS 日常管理: sudo pendingnet
 
 要放行的入口（脚本一个字都不改防火墙，云厂商的安全组也得自己开）:
   TCP/443    Reality       （--xray-port 改）
@@ -569,7 +572,7 @@ server_service_settled() {
     return 0
 }
 
-# 每次跑都要保证服务路径上那份服务端是这次该用的版本。「只补一条链接」不能
+# 每次跑都要保证服务路径上那份服务端是这次该用的版本。「生成链接」不能
 # 建立在「旧二进制还能用」这个假设上——脚本吐 .pdn 原文那个 bug 就是这么来的。
 align_server_binary() {
     if [[ "$NO_UPGRADE" == "1" ]]; then
@@ -670,6 +673,33 @@ print_link() {
     printf '\n%s链接：%s\n%s\n' "$C_BOLD$C_GREEN" "$C_RESET" "$1"
 }
 
+install_manager_command() {
+    local features
+    features="$("$INSTALLED_BIN" version 2>/dev/null </dev/null || true)"
+    if [[ "$features" != *vps-manager* ]]; then
+        warn "这版服务端还没有 pendingnet 管理菜单；请更新到包含 vps-manager 的正式版本。"
+        return 0
+    fi
+    if [[ "$UPDATE_ONLY" == "1" ]]; then run_quiet "$INSTALLED_BIN" sync-users; fi
+    run_quiet "$INSTALLED_BIN" install-command
+    log "已安装管理命令：sudo pendingnet"
+}
+
+print_deployment_links() {
+    local features
+    features="$("$INSTALLED_BIN" version 2>/dev/null </dev/null || true)"
+    if [[ "$features" == *vps-manager* ]]; then
+        # Explicitly requested secrets go to the terminal, never the installer log.
+        "$INSTALLED_BIN" links --ttl "$PAIR_TTL" </dev/null
+        printf '以后管理这台 VPS：sudo pendingnet\n'
+    else
+        local link
+        link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
+        assert_pairing_link "$link" || return 1
+        print_link "$link"
+    fi
+}
+
 main() {
     parse_args "$@"
     # 每次跑重开一份细节日志，屏幕上只留进度和链接。
@@ -689,26 +719,24 @@ main() {
     # shellcheck disable=SC2064
     trap "rm -rf '$WORK_DIR'" EXIT
 
-    # 快路径：装过了就只补一条链接。第二次跑这个脚本的人多半只是想再要一条
+    # 快路径：装过了就生成链接。第二次跑这个脚本的人多半只是想再要一条
     # 配对链接，不该顺手把在用的服务重做一遍。但服务端二进制该升还是得升：
-    # 旧版吐的是 .pdn JSON 而不是链接，「只补一条链接」正是撞上这个的地方。
+    # 旧版吐的是 .pdn JSON 而不是链接，「生成链接」正是撞上这个的地方。
     if already_installed && already_provisioned && [[ "$FORCE_PROVISION" != "1" ]]; then
-        log "已部署过，只补一条配对链接"
+        log "已部署过，生成节点和管理链接"
         info "要重做部署（重新生成密钥、已配对的客户端立刻失效）加 --force-provision"
         if [[ -n "$SERVER_IP" ]]; then
             warn_endpoint_drift
         fi
         align_server_binary
         align_release_engines
+        install_manager_command
         if [[ "$UPDATE_ONLY" == "1" ]]; then log "更新完成（未生成配对链接）"; exit 0; fi
-        log "生成配对链接"
-        local quick_link
-        quick_link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
+        log "生成节点、连接配对和管理链接"
         if ! systemctl is-active --quiet pendingnet-server.service; then
             warn "pendingnet-server.service 没在跑，客户端会连不上：systemctl status pendingnet-server"
         fi
-        assert_pairing_link "$quick_link" || exit 1
-        print_link "$quick_link"
+        print_deployment_links
         exit 0
     fi
 
@@ -744,12 +772,9 @@ main() {
         do_provision
     fi
 
-    log "生成配对链接"
-    local link
-    link="$("$INSTALLED_BIN" pair create --ttl "$PAIR_TTL" </dev/null)"
-    assert_pairing_link "$link" || exit 1
-
-    print_link "$link"
+    install_manager_command
+    log "生成节点、连接配对和管理链接"
+    print_deployment_links
 }
 
 main "$@"

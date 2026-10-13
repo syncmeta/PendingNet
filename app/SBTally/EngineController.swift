@@ -51,6 +51,8 @@ final class EngineController: ObservableObject {
     /// afterwards the user's own choice wins.
     private var didAdoptHelperMode = false
     private let userEngine: PendingNetUserEngine
+    @Published private(set) var configuredProtocols: PendingNetProtocolSelection?
+    private let protocolPreferences: PendingNetProtocolPreferences
     private let startupPreferences: PendingNetStartupPreferences
     private var connectionOperationGate = PendingNetConnectionOperationGate()
 
@@ -72,6 +74,8 @@ final class EngineController: ObservableObject {
     }
 
     init(defaults: UserDefaults = .standard) {
+        protocolPreferences = PendingNetProtocolPreferences(defaults: defaults)
+        configuredProtocols = protocolPreferences.load()
         userEngine = PendingNetUserEngine(defaults: defaults)
         startupPreferences = PendingNetStartupPreferences(defaults: defaults)
         localProxyPort = userEngine.proxyPort
@@ -608,6 +612,7 @@ final class EngineController: ObservableObject {
         protocolProxy = nil
         if let tag = activeSelectorTag {
             protocolProxy = await helperProtocolProxy(tag)
+            if let members = protocolProxy?.all { configuredProtocols = protocolPreferences.capture(selector: tag, members: members, selected: protocolProxy?.now) }
         }
     }
 
@@ -644,13 +649,22 @@ final class EngineController: ObservableObject {
         return data.flatMap { try? JSONDecoder().decode(Proxy.self, from: $0) }
     }
 
+    func prepareProtocolChoices(_ runtime: PendingNetRuntimeServer) {
+        configuredProtocols = try? protocolPreferences.capture(runtime: runtime)
+    }
+
+    func rememberProtocol(_ name: String) {
+        guard let choice = configuredProtocols, let selected = protocolPreferences.select(name, in: choice) else { return }
+        configuredProtocols = selected
+    }
+
     func selectProtocol(selector: String, name: String) async {
         let error: String? = await withCompatibleHelper(
             String(localized: "后台服务未就绪"), timeout: Self.engineTimeout
         ) { p, reply in
             p.selectProtocol(selector, name: name, reply: reply)
         }
-        if let error { lastError = error }
+        if let error { lastError = error } else { rememberProtocol(name) }
         await refresh()
     }
 
@@ -699,6 +713,10 @@ final class EngineController: ObservableObject {
             return
         }
         await call { p, r in p.startEngine(reply: r) }
+        if running, let tag = activeSelectorTag, let preferred = PendingNetSelectorPreferences().selections[tag],
+           protocolProxy?.all?.contains(preferred) == true, protocolProxy?.now != preferred {
+            await selectProtocol(selector: tag, name: preferred)
+        }
         if running { startupPreferences.rememberConnected(true) }
         startFailed = !running
     }
@@ -784,6 +802,8 @@ final class EngineController: ObservableObject {
         }
         do { try await userEngine.forgetServer(serverID) }
         catch { return error.localizedDescription }
+        protocolPreferences.forget(serverID: serverID)
+        if configuredProtocols?.selectorTag == PendingNetRuntimeServer.selectorTag(forServerID: serverID) { configuredProtocols = nil }
         await refresh()
         return nil
     }
@@ -792,6 +812,7 @@ final class EngineController: ObservableObject {
         if takeover == "local" {
             do {
                 try await userEngine.apply(runtime)
+                configuredProtocols = try protocolPreferences.capture(runtime: runtime)
                 adoptLocalEngineState()
                 lastError = nil
                 return true
@@ -816,6 +837,8 @@ final class EngineController: ObservableObject {
         }
         lastError = nil
         await refresh()
+        configuredProtocols = try? protocolPreferences.capture(runtime: runtime)
+        if running, let choice = configuredProtocols, let preferred = PendingNetSelectorPreferences().selections[choice.selectorTag] { await selectProtocol(selector: choice.selectorTag, name: preferred) }
         return true
     }
 

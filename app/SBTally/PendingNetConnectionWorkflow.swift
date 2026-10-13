@@ -34,11 +34,19 @@ enum PendingNetConnectionWorkflow {
     /// 开关：起停引擎，起来之后按记住的路由模式生效。
     static func setConnected(
         _ on: Bool,
+        pairing: VPSPairingController,
         engine: EngineController,
         state: AppState
     ) async {
         _ = await engine.performConnectionChange {
             if on {
+                let selected = (engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag)
+                    ?? PendingNetSelectorPreferences().selections["proxy"]
+                    ?? PendingNetProtocolPreferences().load()?.selectorTag
+                if let server = pairing.servers.first(where: { PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == selected }) ?? pairing.servers.first {
+                    guard let runtime = await pairing.runtimeServer(for: server),
+                          await engine.applyServerConfiguration(runtime) else { return }
+                }
                 await engine.start()
                 guard engine.running else { return }
                 if engine.takeover == "local" {

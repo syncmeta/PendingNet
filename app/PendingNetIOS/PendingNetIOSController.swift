@@ -76,6 +76,7 @@ final class PendingNetIOSController: ObservableObject {
                 try await tunnel.stopAndForgetConfiguration()
                 nodeProfile = nil
             }
+            tunnel.forgetProtocol(serverID: serverID)
             try PendingNetCredentialStore.remove(serverID: serverID)
             store.delete(serverID: serverID)
             await refreshNodeProfile()
@@ -276,7 +277,21 @@ final class PendingNetIOSController: ObservableObject {
         }
     }
 
+    func connect() async throws {
+        guard !working else { throw CancellationError() }
+        working = true
+        defer { working = false }
+        errorMessage = nil
+        nodeProfile = nil
+        await refreshNodeProfile()
+        guard let server, let profile = nodeProfile else {
+            throw PendingNetPairingError.serverRejected(errorMessage ?? String(localized: "服务器返回了无效的管理数据"))
+        }
+        try await tunnel.start(profile: profile, serverName: server.name, serverID: profile.serverID)
+    }
+
     func refreshNodeProfile() async {
+        defer { if let profile = nodeProfile, let server { tunnel.bindSelector(profile: profile, serverName: server.name) } }
         guard let server else { return }
         do {
             guard let token = try PendingNetCredentialStore.load(serverID: server.serverID) else {

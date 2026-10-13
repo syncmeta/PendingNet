@@ -16,6 +16,8 @@ public enum PendingNetAdminAPIError: LocalizedError, Equatable {
 }
 
 public struct PendingNetAdminUser: Decodable, Equatable, Sendable, Identifiable {
+    public struct Traffic: Decodable, Equatable, Sendable { public let upload: Int64; public let download: Int64 }
+    public let traffic: Traffic?
     public struct LoginIP: Decodable, Equatable, Sendable {
         public let ip: String
         public let firstSeenAt: String
@@ -34,7 +36,7 @@ public struct PendingNetAdminUser: Decodable, Equatable, Sendable, Identifiable 
     public let loginIPs: [LoginIP]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, role
+        case id, name, role, traffic
         case createdAt = "created_at"
         case revokedAt = "revoked_at"
         case loginIPs = "login_ips"
@@ -93,6 +95,27 @@ public struct PendingNetAdminAPIClient: Sendable {
             throw PendingNetAdminAPIError.invalidResponse
         }
         return value.users
+    }
+
+    public func nodeProfile(userID: String? = nil) async throws -> PendingNetNodeProfile {
+        var path = "/v1/node"
+        if let userID {
+            guard !userID.isEmpty, userID.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else { throw PendingNetAdminAPIError.invalidResponse }
+            path = "/v1/admin/users/\(userID)/node"
+        }
+        let data = try await get(path: path)
+        guard data.count <= 1 << 20,
+              let profile = try? JSONDecoder().decode(PendingNetNodeProfile.self, from: data),
+              profile.serverID == server.serverID else { throw PendingNetAdminAPIError.invalidResponse }
+        _ = try profile.runtimeServer(name: server.name)
+        return profile
+    }
+
+    public func renameUser(id: String, name: String) async throws {
+        guard !id.isEmpty, id.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 95 }) else { throw PendingNetAdminAPIError.invalidResponse }
+        let body = try JSONSerialization.data(withJSONObject: ["name": name])
+        let data = try await request(path: "/v1/admin/users/\(id)/rename", method: "POST", body: body, expectedStatus: 204)
+        guard data.isEmpty else { throw PendingNetAdminAPIError.invalidResponse }
     }
 
     public func config() async throws -> PendingNetAdminConfigSnapshot {

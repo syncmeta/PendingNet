@@ -10,22 +10,24 @@ struct SettingsView: View {
 
     @State private var engineVersion: String?
     @EnvironmentObject private var state: AppState
+    @EnvironmentObject private var vpsPairing: VPSPairingController
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 startupCard
+                PendingLanguageRow()
                 PendingLatencyMethodRow()
-                if let selector = engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag,
-                   let proxy = engine.takeover == "local" ? state.proxies[selector] : engine.protocolProxy,
-                   let members = proxy.all {
-                    PendingProtocolPicker(members: members, selectorTag: selector, selected: proxy.now) { name in
+                if let choice = protocolChoice {
+                    PendingProtocolPicker(members: choice.members, selectorTag: choice.selectorTag, selected: choice.selected) { name in
                         Task {
-                            if engine.takeover == "local" { await state.select(selector: selector, name: name) }
-                            else { await engine.selectProtocol(selector: selector, name: name) }
+                            if engine.running {
+                                if engine.takeover == "local" {
+                                    if await state.select(selector: choice.selectorTag, name: name) { engine.rememberProtocol(name) }
+                                } else { await engine.selectProtocol(selector: choice.selectorTag, name: name) }
+                            } else { engine.rememberProtocol(name) }
                         }
-                    }
-                    .disabled(engine.connectionBusy)
+                    }.disabled(engine.connectionBusy)
                 }
                 PendingLocalInboundCard(
                     listenAddress: engine.localListenAddress,
@@ -53,7 +55,20 @@ struct SettingsView: View {
             engineVersion = await PendingNetEngineBinary.bundledVersion()
             startup.refresh()
             engine.refreshRuleSetPresence()
+            if engine.configuredProtocols == nil {
+                let selected = PendingNetSelectorPreferences().selections["proxy"]
+                if let server = vpsPairing.servers.first(where: { PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == selected }) ?? vpsPairing.servers.first,
+                   let runtime = await vpsPairing.runtimeServer(for: server) { engine.prepareProtocolChoices(runtime) }
+            }
         }
+    }
+
+    private var protocolChoice: PendingNetProtocolSelection? {
+        if engine.running, let selector = engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag,
+           let proxy = engine.takeover == "local" ? state.proxies[selector] : engine.protocolProxy, let members = proxy.all {
+            return PendingNetProtocolSelection(selectorTag: selector, members: members, selected: proxy.now)
+        }
+        return engine.configuredProtocols
     }
 
     private var startupCard: some View {

@@ -212,11 +212,12 @@ struct PendingPrimaryButtonStyle: ButtonStyle {
 
 struct PendingQuietButtonStyle: ButtonStyle {
     var fill = PendingNetTheme.Palette.surface
+    var foreground = PendingNetTheme.Palette.ink
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(PendingNetTheme.Fonts.chrome)
-            .foregroundStyle(PendingNetTheme.Palette.ink)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 14)
             .frame(minHeight: PendingNetTheme.Metrics.controlHeight)
             .background(Capsule().fill(fill))

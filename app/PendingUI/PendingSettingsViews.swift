@@ -236,3 +236,22 @@ struct PendingUpdateCard<Trailing: View, Extra: View>: View {
         }
     }
 }
+
+struct PendingLanguageRow: View {
+    @AppStorage(PendingNetLanguagePreferences.key) private var language = "system"
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("语言", selection: $language) {
+                Text("跟随系统").tag("system")
+                Text(verbatim: "简体中文").tag("zh-Hans")
+                Text(verbatim: "繁體中文").tag("zh-Hant")
+                Text(verbatim: "English").tag("en")
+            }
+            Text("更改语言后，重新打开应用可更新全部文字。")
+                .font(.caption).foregroundStyle(PendingNetTheme.Palette.inkMuted)
+        }
+        .onChange(of: language) { _, value in
+            PendingNetLanguagePreferences.save(PendingNetLanguage(rawValue: value) ?? .system)
+        }
+    }
+}

@@ -56,11 +56,11 @@ final class PendingNetStartupController: ObservableObject {
 
     /// Window 的 `.task` 可能因视图重建跑多次；一次进程生命周期只恢复一次，
     /// 否则一次前后台切换就可能把用户刚关掉的连接重新打开。
-    func restoreIfNeeded(engine: EngineController, state: AppState) async {
+    func restoreIfNeeded(engine: EngineController, state: AppState, pairing: VPSPairingController) async {
         guard !didAttemptRestore else { return }
         didAttemptRestore = true
         refresh()
         guard startsAtLogin, engine.shouldReconnectOnLaunch, !engine.running else { return }
-        await PendingNetConnectionWorkflow.setConnected(true, engine: engine, state: state)
+        await PendingNetConnectionWorkflow.setConnected(true, pairing: pairing, engine: engine, state: state)
     }
 }

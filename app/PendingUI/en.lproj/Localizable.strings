@@ -278,3 +278,27 @@
 "请先选择节点" = "Select a node first";
 
 "正在切换，请稍后再退出" = "A connection change is in progress. Try quitting again shortly.";
+
+"语言" = "Language";
+
+"跟随系统" = "System";
+
+"更改语言后，重新打开应用可更新全部文字。" = "Reopen the app to update all text after changing language.";
+
+"导出 sing-box 配置文件" = "Export sing-box configuration";
+
+"平台" = "Platform";
+
+"接管方式" = "Mode";
+
+"代理端口" = "Proxy port";
+
+"此端口提供 HTTP/SOCKS 代理；TUN 使用虚拟网卡，不占用这个监听端口。" = "This port provides HTTP/SOCKS proxy access. TUN uses a virtual network interface.";
+
+"Android 系统代理需要系统权限；普通 VPN 客户端请选择 TUN。" = "Android system proxy requires system privileges. Choose TUN for a regular VPN client.";
+
+"TUN 配置包含自动检测底层网络接口，避免节点连接被送回自身隧道。" = "TUN configuration automatically detects the underlying network interface to prevent routing loops.";
+
+"导出" = "Export";
+
+"当前管理用户" = "Current management user";

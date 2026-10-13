@@ -16,7 +16,7 @@ struct PendingNetSidebar: NSViewRepresentable {
         outline.style = .plain
         outline.selectionHighlightStyle = .none
         outline.rowSizeStyle = .custom
-        outline.rowHeight = 32
+        outline.rowHeight = 34
         outline.intercellSpacing = NSSize(width: 0, height: 0)
         outline.indentationPerLevel = 12
         outline.allowsEmptySelection = false
@@ -101,7 +101,7 @@ struct PendingNetSidebar: NSViewRepresentable {
         }
         func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
             let node = item as! Node
-            return node.isSpacer ? 12 : node.section == nil ? 24 : 32
+            return node.isSpacer ? 12 : node.section == nil ? 24 : 34
         }
         func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
             PendingNetSidebarRow()

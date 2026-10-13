@@ -31,6 +31,8 @@ struct SBTallyApp: App {
         appDelegate.engine = engine
     }
 
+    @AppStorage(PendingNetLanguagePreferences.key) private var language = "system"
+
     var body: some Scene {
         Window("PendingNet", id: "main") {
             DashboardView()
@@ -42,6 +44,7 @@ struct SBTallyApp: App {
                 .environmentObject(navigation)
                 .environmentObject(managementLinks)
                 .environmentObject(toast)
+                .environment(\.locale, language == "system" ? Locale.autoupdatingCurrent : Locale(identifier: language))
                 // 内容并成一张卡之后不需要那么宽；最小值仍留足侧栏 + 一排药丸
                 // 不被截断的余量。
                 .frame(minWidth: 640, minHeight: 440)
@@ -58,7 +61,7 @@ struct SBTallyApp: App {
                     // 走白名单」，比切不动更糟。`refresh()` 刚认过接管方式，所以
                     // 顺序不能反。
                     await PendingNetRoutingWorkflow.applyRemembered(engine: engine, state: state)
-                    await startup.restoreIfNeeded(engine: engine, state: state)
+                    await startup.restoreIfNeeded(engine: engine, state: state, pairing: vpsPairing)
                     vpsPairing.refreshFromCloud()
                 }
                 // 回到前台顺手拉一次 iCloud —— 在 iPhone 上配好的 VPS 不用重开

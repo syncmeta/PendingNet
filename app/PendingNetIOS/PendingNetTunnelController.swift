@@ -26,6 +26,8 @@ final class PendingNetTunnelController: ObservableObject {
 
     /// 当前 VPS 的 selector tag。由 `runtimeServer(name:)` 确定性生成，
     /// App 侧自己算得出来，不需要向扩展查询。
+    @Published private(set) var configuredProtocols: PendingNetProtocolSelection?
+    private let protocolPreferences = PendingNetProtocolPreferences()
     @Published private(set) var selectorTag: String?
     /// selector 的可选成员，顺序由内核给出。
     @Published private(set) var outboundMembers: [String] = []
@@ -56,6 +58,7 @@ final class PendingNetTunnelController: ObservableObject {
 
     init(ruleSetStore: PendingNetRuleSetStore) {
         self.ruleSetStore = ruleSetStore
+        configuredProtocols = protocolPreferences.load()
         localInbound = inboundStore.load()
         // 经 `stored(rawValue:)` 读，而不是直接 `init(rawValue:)`：档位改名之后
         // 老用户存的还是 `bypassCN` / `direct`，直接解会读成 nil 并被悄悄打回
@@ -202,8 +205,15 @@ final class PendingNetTunnelController: ObservableObject {
 
     /// 记下当前 VPS 的 selector tag。tag 只取决于 serverID，两侧算出来的
     /// 结果一致，所以 App 不必向扩展查询「隧道里那个 selector 叫什么」。
+    func forgetProtocol(serverID: String) {
+        protocolPreferences.forget(serverID: serverID)
+        if configuredProtocols?.selectorTag == PendingNetRuntimeServer.selectorTag(forServerID: serverID) { configuredProtocols = nil }
+    }
+
     func bindSelector(profile: PendingNetNodeProfile, serverName: String) {
-        let tag = (try? profile.runtimeServer(name: serverName))?.selectorTag
+        let runtime = try? profile.runtimeServer(name: serverName)
+        if let runtime { configuredProtocols = try? protocolPreferences.capture(runtime: runtime) }
+        let tag = runtime?.selectorTag
         guard tag != selectorTag else { return }
         selectorTag = tag
         syncCommandChannel()
@@ -219,13 +229,11 @@ final class PendingNetTunnelController: ObservableObject {
 
     /// 切换 selector 的当前出站。走 command client，隧道不重启、已有连接不断。
     func selectOutbound(_ tag: String) async throws {
-        guard isTunnelLive, let selectorTag else {
-            throw PendingNetCommandError.notConnected
+        guard let choice = configuredProtocols, choice.members.contains(tag) else { throw PendingNetCommandError.notConnected }
+        if isTunnelLive {
+            try await PendingNetCommandClient.selectOutbound(groupTag: choice.selectorTag, outboundTag: tag)
         }
-        try await PendingNetCommandClient.selectOutbound(
-            groupTag: selectorTag,
-            outboundTag: tag
-        )
+        configuredProtocols = protocolPreferences.select(tag, in: choice)
         // 乐观更新：分组推送最快也要等下一个推送间隔才到，下一帧就会被
         // 内核的真实状态覆盖（或纠正）。
         currentOutbound = tag
@@ -449,8 +457,9 @@ final class PendingNetTunnelController: ObservableObject {
         // 不是配置传递给扩展的机制——扩展永远只认 startTunnel 的
         // options（或它自己落的快照），不读这个文件。就算这次写入
         // 失败也不影响隧道启动，因此这里不检查返回值、不抛错。
-        try? data.write(to: PendingNetTunnelPaths.configURL(in: base), options: .atomic)
-        return String(decoding: data, as: UTF8.self)
+        let preferred = try protocolPreferences.applying(to: data)
+        try? preferred.write(to: PendingNetTunnelPaths.configURL(in: base), options: .atomic)
+        return String(decoding: preferred, as: UTF8.self)
     }
 
     private func installedManager() async throws -> NETunnelProviderManager {

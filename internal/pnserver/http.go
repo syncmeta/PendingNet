@@ -16,6 +16,7 @@ type API struct {
 	Store       *Store
 	ServicesDir string
 	ConfigHooks ManagedConfigHooks
+	UserSync    func() error
 }
 
 type ServerInfo struct {
@@ -34,7 +35,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", a.status)
 	mux.HandleFunc("GET /v1/node", a.node)
 	mux.HandleFunc("GET /v1/admin/users", a.adminUsers)
+	mux.HandleFunc("GET /v1/admin/users/{id}/node", a.adminUserNode)
 	mux.HandleFunc("POST /v1/admin/users/{id}/revoke", a.adminRevokeUser)
+	mux.HandleFunc("POST /v1/admin/users/{id}/rename", a.adminRenameUser)
 	mux.HandleFunc("POST /v1/admin/pairings", a.adminCreatePairing)
 	mux.HandleFunc("GET /v1/admin/client-config", a.adminClientConfig)
 	mux.HandleFunc("GET /v1/admin/config", a.adminConfig)
@@ -99,11 +102,18 @@ func (a *API) status(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) node(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	if _, err := a.authorizedDevice(r); err != nil {
-		writeAuthError(w, err)
+	device, authErr := a.authorizedDevice(r)
+	if authErr != nil {
+		writeAuthError(w, authErr)
+		return
+	}
+	if !a.syncUserPlane(w) {
 		return
 	}
 	profile, err := a.Store.LoadNodeProfile()
+	if a.Store.UserTrafficEnabled() {
+		profile, err = a.Store.UserNodeProfile(device.UserID)
+	}
 	if errors.Is(err, ErrNodeProfileNotFound) {
 		writeError(w, http.StatusNotFound, "node_not_configured", err.Error())
 		return
@@ -113,6 +123,34 @@ func (a *API) node(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, profile)
+}
+
+func (a *API) syncUserPlane(w http.ResponseWriter) bool {
+	if !a.Store.UserTrafficEnabled() {
+		return true
+	}
+	if a.UserSync == nil || a.UserSync() != nil {
+		writeError(w, http.StatusServiceUnavailable, "user_proxy_unavailable", "user proxy services have not synchronized")
+		return false
+	}
+	return true
+}
+
+func (a *API) adminUserNode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !a.authorizedAdmin(w, r) || !a.syncUserPlane(w) {
+		return
+	}
+	if !a.Store.UserTrafficEnabled() {
+		writeError(w, 503, "user_proxy_unavailable", "individual user proxies are not enabled")
+		return
+	}
+	profile, err := a.Store.UserNodeProfile(r.PathValue("id"))
+	if err != nil {
+		writeError(w, 404, "user_not_found", "active user not found")
+		return
+	}
+	writeJSON(w, 200, profile)
 }
 
 func (a *API) authorizedDevice(r *http.Request) (Device, error) {
@@ -147,7 +185,50 @@ func (a *API) adminUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// User records contain names, roles and first-seen IPs, but no token hashes.
-	writeJSON(w, http.StatusOK, map[string]any{"users": state.Users})
+	traffic, err := a.Store.UserTraffic()
+	if err != nil {
+		writeError(w, 500, "traffic_state", "cannot read user traffic")
+		return
+	}
+	users := make([]map[string]any, 0, len(state.Users))
+	for _, user := range state.Users {
+		value := map[string]any{"id": user.ID, "name": user.Name, "role": user.Role, "created_at": user.CreatedAt, "revoked_at": user.RevokedAt, "login_ips": user.LoginIPs}
+		if a.Store.UserTrafficEnabled() {
+			value["traffic"] = traffic[user.ID]
+		}
+		users = append(users, value)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+func (a *API) adminRenameUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !a.authorizedAdmin(w, r) {
+		return
+	}
+	var input struct {
+		Name string `json:"name"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&input); err != nil {
+		writeError(w, 400, "invalid_request", "name required")
+		return
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		writeError(w, 400, "invalid_request", "one JSON object required")
+		return
+	}
+	if err := a.Store.RenameUser(r.PathValue("id"), input.Name); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeError(w, 404, "not_found", "user not found")
+		} else {
+			writeError(w, 400, "invalid_request", "cannot rename user")
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) adminRevokeUser(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +243,9 @@ func (a *API) adminRevokeUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_state", "cannot revoke user")
+		return
+	}
+	if !a.syncUserPlane(w) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -203,6 +287,9 @@ func (a *API) adminCreatePairing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "server_state", "cannot issue pairing")
 		return
 	}
+	if !a.syncUserPlane(w) {
+		return
+	}
 	link, err := file.URL(a.Store.now())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_state", "cannot encode pairing")
@@ -223,7 +310,18 @@ func (a *API) adminClientConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "android or windows platform required")
 		return
 	}
+	if !a.syncUserPlane(w) {
+		return
+	}
 	profile, err := a.Store.LoadNodeProfile()
+	if a.Store.UserTrafficEnabled() {
+		device, authErr := a.authorizedDevice(r)
+		if authErr != nil {
+			writeAuthError(w, authErr)
+			return
+		}
+		profile, err = a.Store.UserNodeProfile(device.UserID)
+	}
 	if errors.Is(err, ErrNodeProfileNotFound) {
 		writeError(w, http.StatusNotFound, "not_provisioned", "node profile is not provisioned")
 		return

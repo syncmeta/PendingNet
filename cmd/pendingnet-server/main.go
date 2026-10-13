@@ -37,7 +37,14 @@ var version = "dev"
 const featurePairingLink = "pairing-link"
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	args := os.Args[1:]
+	var err error
+	if len(args) == 0 && filepath.Base(os.Args[0]) == "pendingnet" {
+		err = runMenu(os.Stdin, os.Stdout, os.Stderr, defaultStateDir)
+	} else {
+		err = run(args, os.Stdout, os.Stderr)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -48,6 +55,25 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return errors.New("usage: pendingnet-server <init|install|provision|import-singb|pair create|client export|status|serve|version|engine-lock|update-engines> [flags]")
 	}
 	switch args[0] {
+	case "help", "--help", "-h":
+		_, err := fmt.Fprint(stdout, managerHelp)
+		return err
+	case "sync-users":
+		return runSyncUsers(args[1:], stdout, stderr)
+	case "traffic":
+		return runUserTraffic(args[1:], stdout, stderr)
+	case "links":
+		return runLinks(args[1:], stdout, stderr)
+	case "users":
+		return runUsers(args[1:], stdout, stderr)
+	case "service":
+		return runServices(args[1:], stdout, stderr, false)
+	case "logs":
+		return runServices(args[1:], stdout, stderr, true)
+	case "update":
+		return runUpdate(args[1:], stdout, stderr)
+	case "install-command":
+		return runInstallCommand(args[1:], stdout, stderr)
 	case "init":
 		return runInit(args[1:], stdout, stderr)
 	case "install":
@@ -111,7 +137,7 @@ func runVersion(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintf(stdout, "  features  %s\n", featurePairingLink)
+	fmt.Fprintf(stdout, "  features  %s vps-manager user-traffic\n", featurePairingLink)
 	return nil
 }
 
@@ -401,6 +427,7 @@ func runImportSingb(args []string, stdout, stderr io.Writer) error {
 func runClientExport(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("client export", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	userID := fs.String("user", "", "existing user ID for individual credentials")
 	stateDir := fs.String("state-dir", defaultStateDir, "private PendingNet Server state directory")
 	platform := fs.String("platform", "", "target platform: android or windows")
 	out := fs.String("out", "", "new private JSON file (required; never print credentials to stdout)")
@@ -410,7 +437,26 @@ func runClientExport(args []string, stdout, stderr io.Writer) error {
 	if fs.NArg() != 0 || *platform == "" || *out == "" {
 		return errors.New("--platform and --out are required; no positional arguments are accepted")
 	}
-	profile, err := pnserver.NewStore(*stateDir).LoadNodeProfile()
+	store := pnserver.NewStore(*stateDir)
+	profile, err := store.LoadNodeProfile()
+	if store.UserTrafficEnabled() {
+		if *userID == "" {
+			state, e := store.Load()
+			if e != nil {
+				return e
+			}
+			for _, u := range state.Users {
+				if u.Role != "admin" && u.RevokedAt == nil {
+					*userID = u.ID
+					break
+				}
+			}
+		}
+		if *userID == "" {
+			return errors.New("--user is required when no active connection user exists")
+		}
+		profile, err = store.UserNodeProfile(*userID)
+	}
 	if err != nil {
 		return err
 	}
@@ -501,6 +547,11 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	}
 	if err != nil {
 		return err
+	}
+	if store.UserTrafficEnabled() {
+		if err := syncUserServicesForCLI(store); err != nil {
+			return err
+		}
 	}
 	// 令牌是一次性的：走到这里它已经发出去了，两种形态装的是同一份凭据，
 	// 只是包装不同。默认给链接——点一下就唤起导入，粘贴也认。
@@ -605,9 +656,15 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		addr = ":" + port
 	}
 
+	if store.UserTrafficEnabled() {
+		if err := syncUserServices(store); err != nil {
+			return err
+		}
+	}
+	handler := (&pnserver.API{Store: store, UserSync: func() error { return syncUserServices(store) }}).Handler()
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           productionServeHandler(store),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -615,6 +672,26 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if store.UserTrafficEnabled() {
+					if err := syncUserServices(store); err != nil {
+						fmt.Fprintln(stderr, "user proxy reconciliation failed:", err)
+					}
+					if err := collectUserTraffic(store); err != nil {
+						fmt.Fprintln(stderr, "user traffic sample failed:", err)
+					}
+				}
+			}
+		}
+	}()
+
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

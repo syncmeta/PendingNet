@@ -112,3 +112,33 @@ func WriteSystemdUnit(path, content string) error {
 	}
 	return os.Rename(tmpPath, path)
 }
+
+// InstallCommandAlias follows future atomic replacement of the server binary.
+// An unrelated command at the requested path is never overwritten.
+func InstallCommandAlias(target, destination string) error {
+	if !filepath.IsAbs(target) || !filepath.IsAbs(destination) || filepath.Clean(target) == filepath.Clean(destination) {
+		return errors.New("alias and target must be distinct absolute paths")
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return errors.New("alias target is not an executable file")
+	}
+	if old, err := os.Readlink(destination); err == nil {
+		if old == target {
+			return nil
+		}
+		return fmt.Errorf("command already points elsewhere: %s", destination)
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return fmt.Errorf("command already exists: %s", destination)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
+		return err
+	}
+	return os.Symlink(target, destination)
+}

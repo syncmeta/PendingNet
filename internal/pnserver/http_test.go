@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,5 +464,63 @@ func TestNodeProfileRequiresDeviceToken(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"vless-reality"`)) {
 		t.Fatalf("node status %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminUserTrafficRenameAndPrivateNode(t *testing.T) {
+	store, _ := testStore(t)
+	if err := store.SaveNodeProfile(testRealityProfile()); err != nil {
+		t.Fatal(err)
+	}
+	clientLink, _ := store.CreatePairing(time.Hour)
+	adminLink, _ := store.CreateAdminPairing(time.Hour)
+	client, _ := store.Enroll(clientLink.Enrollment.Token, "client")
+	admin, _ := store.Enroll(adminLink.Enrollment.Token, "admin")
+	device, _ := store.Authenticate(client.Token)
+	accounts, err := store.EnsureUserProxyAccounts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordUserTraffic("xray", "epoch", map[string]TrafficCounters{device.UserID: {Upload: 123, Download: 456}}); err != nil {
+		t.Fatal(err)
+	}
+	syncs := 0
+	handler := (&API{Store: store, UserSync: func() error { syncs++; return nil }}).Handler()
+	request := func(method, path, token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+	users := request("GET", "/v1/admin/users", admin.Token, "")
+	if users.Code != 200 || !bytes.Contains(users.Body.Bytes(), []byte(`"upload":123`)) {
+		t.Fatalf("missing stats: %d %s", users.Code, users.Body.String())
+	}
+	for _, credential := range []string{client.Token, admin.Token, accounts.Users[device.UserID].UUID, accounts.Users[device.UserID].Password, accounts.StatsSecret} {
+		if strings.Contains(users.Body.String(), credential) {
+			t.Fatal("private credential leaked")
+		}
+	}
+	path := "/v1/admin/users/" + device.UserID
+	if rec := request("POST", path+"/rename", client.Token, `{"name":"renamed"}`); rec.Code != 403 {
+		t.Fatal(rec.Code)
+	}
+	if rec := request("POST", path+"/rename", admin.Token, `{"name":"renamed"}`); rec.Code != 204 {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	node := request("GET", path+"/node", admin.Token, "")
+	if node.Code != 200 || !strings.Contains(node.Body.String(), accounts.Users[device.UserID].UUID) {
+		t.Fatalf("private node: %d %s", node.Code, node.Body.String())
+	}
+	if rec := request("POST", path+"/revoke", admin.Token, ""); rec.Code != 204 {
+		t.Fatal(rec.Code)
+	}
+	if rec := request("GET", path+"/node", admin.Token, ""); rec.Code != 404 {
+		t.Fatal(rec.Code)
+	}
+	stats, _ := store.UserTraffic()
+	if stats[device.UserID].Upload != 123 || syncs < 2 {
+		t.Fatal("revocation lost history or skipped sync")
 	}
 }

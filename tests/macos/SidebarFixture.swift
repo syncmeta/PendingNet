@@ -50,7 +50,7 @@ struct Fixture: View {
             app.postEvent(up, atStart: true)
             outline.mouseDown(with: down)
             guard selection.current == .management else { fatalError("Click in empty right side failed to select Manage") }
-            guard rect.height == 32 else { fatalError("Unexpected sidebar row height: \(rect.height)") }
+            guard rect.height == 34 else { fatalError("Unexpected sidebar row height: \(rect.height)") }
             host.display()
             let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -72,7 +72,7 @@ struct Fixture: View {
             fflush(stdout)
             guard matchingPixels >= 20 else { fatalError("Selection background does not match the pill accent color") }
             try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ProcessInfo.processInfo.environment["PENDINGNET_SIDEBAR_SCREENSHOT"] ?? "/private/tmp/pn-sidebar-fixture.png"))
-            print("PASS: native NSOutlineView; 32pt rows \(rect.height)pt; empty right side click selected Manage")
+            print("PASS: native NSOutlineView; 34pt rows \(rect.height)pt; empty right side click selected Manage")
             fflush(stdout)
             app.terminate(nil)
         }

@@ -19,15 +19,18 @@ struct PendingNetIOSSettingsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    PendingLanguageRow()
                     PendingLatencyMethodRow()
-                    if controller.tunnel.isTunnelLive {
-                        PendingProtocolPicker(members: controller.tunnel.outboundMembers,
-                            selectorTag: controller.tunnel.selectorTag, selected: controller.tunnel.currentOutbound,
+                    if let server = controller.server, let choice = controller.tunnel.configuredProtocols, choice.selectorTag == PendingNetRuntimeServer.selectorTag(forServerID: server.serverID) {
+                        PendingProtocolPicker(members: controller.tunnel.outboundMembers.isEmpty ? choice.members : controller.tunnel.outboundMembers,
+                            selectorTag: choice.selectorTag, selected: controller.tunnel.currentOutbound ?? choice.selected,
                             switchingTag: switchingOutbound) { tag in
                             Task {
                                 switchingOutbound = tag
                                 defer { switchingOutbound = nil }
-                                do { try await controller.tunnel.selectOutbound(tag) }
+                                do { try await controller.tunnel.selectOutbound(tag)
+                                    if !controller.tunnel.isTunnelLive, let profile = controller.nodeProfile, let server = controller.server { controller.tunnel.setRouteMode(controller.tunnel.routeMode, profile: profile, serverName: server.name) }
+                                }
                                 catch { controller.errorMessage = error.localizedDescription }
                             }
                         }

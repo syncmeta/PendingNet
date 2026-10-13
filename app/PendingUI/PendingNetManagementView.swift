@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Secret-bearing export data stays in memory until the system file exporter
 /// writes to a destination explicitly chosen by the user.
-private struct PendingNetClientConfigDocument: FileDocument {
+struct PendingNetClientConfigDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     let data: Data
 
@@ -188,6 +188,22 @@ final class PendingNetManagementController: ObservableObject {
         }
     }
 
+    func renameUser(id: String, name: String) async -> Bool {
+        guard !working, let server = servers.first(where: { $0.serverID == selectedServerID }) else { return false }
+        let generation = refreshGeneration
+        working = true
+        defer { if refreshGeneration == generation { working = false } }
+        errorMessage = nil
+        do {
+            let client = PendingNetAdminAPIClient(server: server)
+            try await client.renameUser(id: id, name: name)
+            let latest = try await client.users()
+            guard refreshGeneration == generation, selectedServerID == server.serverID else { return false }
+            users = latest
+            return true
+        } catch { if refreshGeneration == generation { errorMessage = error.localizedDescription }; return false }
+    }
+
     func clientConfig(platform: PendingNetClientConfigPlatform) async -> Data? {
         guard !working, let server = servers.first(where: { $0.serverID == selectedServerID }) else { return nil }
         let generation = refreshGeneration
@@ -231,6 +247,9 @@ struct PendingNetManagementView: View {
     @State private var exportFilename = ""
     @State private var showExporter = false
     @State private var exportServerID: String?
+    @State private var exportServer: PendingNetManagedServer?
+    @State private var editingUserID: String?
+    @State private var userName = ""
     @State private var deletingManagedServerID: String?
     @State private var managedRowHeights: [String: CGFloat] = [:]
 
@@ -259,14 +278,9 @@ struct PendingNetManagementView: View {
                     }
                     .disabled(controller.working)
 
-                    HStack {
-                        Button("导出 Android 配置") { exportConfig(.android) }
-                        Button("导出 Windows 配置") { exportConfig(.windows) }
-                    }
-                    .disabled(controller.working)
-                    Text("导出的文件包含连接凭据，请妥善保管。")
-                        .font(.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                    Button("导出 sing-box 配置文件") {
+                        exportServer = controller.servers.first { $0.serverID == controller.selectedServerID }
+                    }.disabled(controller.working)
 
                     if let issued = controller.issuedLink {
                         Text("一次性链接（十分钟内有效，仅在此页临时显示）")
@@ -289,17 +303,38 @@ struct PendingNetManagementView: View {
                             .font(.headline)
                         ForEach(controller.users) { user in
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(user.name)
-                                Text(user.revokedAt == nil ? LocalizedStringKey("有效") : LocalizedStringKey("已撤销"))
-                                    .font(.caption)
-                                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                                if user.revokedAt == nil {
-                                    Button("撤销用户") {
-                                        revokeServerID = controller.selectedServerID
-                                        revokeUserID = user.id
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        if editingUserID == user.id {
+                                            TextField("名称", text: $userName)
+                                        } else { Text(user.name) }
+                                        Text(user.revokedAt == nil ? LocalizedStringKey("有效") : LocalizedStringKey("已撤销"))
+                                            .font(.caption)
+                                            .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                                     }
+                                    Spacer()
+                                    Button(editingUserID == user.id ? LocalizedStringKey("保存") : LocalizedStringKey("改名")) {
+                                        if editingUserID == user.id {
+                                            Task {
+                                                if await controller.renameUser(id: user.id, name: userName) { editingUserID = nil }
+                                            }
+                                        } else { editingUserID = user.id; userName = user.name }
+                                    }.disabled(controller.working)
+                                    if user.revokedAt == nil {
+                                        Button("撤销用户") {
+                                            revokeServerID = controller.selectedServerID
+                                            revokeUserID = user.id
+                                        }
+                                        .buttonStyle(PendingQuietButtonStyle(fill: PendingNetTheme.Palette.danger, foreground: .white))
                                         .disabled(controller.working)
+                                    }
                                 }
+                                    if let traffic = user.traffic {
+                                        HStack(alignment: .center, spacing: 3) {
+                                            Text("上传") + Text(verbatim: " " + ByteCountFormatter.string(fromByteCount: traffic.upload, countStyle: .binary))
+                                            Text("下载") + Text(verbatim: " " + ByteCountFormatter.string(fromByteCount: traffic.download, countStyle: .binary))
+                                        }.font(.caption).foregroundStyle(PendingNetTheme.Palette.inkMuted)
+                                    }
                                 ForEach(user.loginIPs ?? [], id: \.ip) { login in
                                     Text(String(format: NSLocalizedString("%@ · 首次登录 %@", comment: ""), login.ip, login.firstSeenAt))
                                         .font(.caption.monospaced())
@@ -324,6 +359,7 @@ struct PendingNetManagementView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
+        .sheet(item: $exportServer) { server in PendingNetExportView(server: server) }
         .sheet(isPresented: $showingImport) {
             PendingPasteImportSheet(busy: controller.working, isManagement: true, initialText: link) { pasted in
                 link = ""

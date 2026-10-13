@@ -9,7 +9,6 @@ import AppKit
 struct PendingNodeSharePanel: View {
     let server: PairedVPSRecord
     @State private var links: [PendingNetSharedLink] = []
-    @State private var pairingLink: String?
     @State private var busy = false
     @State private var shareTask: Task<Void, Never>?
     @State private var error: String?
@@ -17,26 +16,18 @@ struct PendingNodeSharePanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("分享节点").font(PendingNetTheme.Fonts.bodyEmphasized)
-            VStack(alignment: .leading, spacing: 8) {
-                Button("标准节点链接") { shareTask = Task { await standardLinks() } }
-                Button("PendingNet 配对链接") { shareTask = Task { await issuePairing() } }
-            }
+            Button("分享") { shareTask = Task { await standardLinks() } }
             .buttonStyle(PendingQuietButtonStyle())
             .disabled(busy)
             if busy { ProgressView().controlSize(.small) }
             if let error { Text(error).font(PendingNetTheme.Fonts.caption).foregroundStyle(PendingNetTheme.Palette.danger) }
             ForEach(links) { item in shareRow(item.label, link: item.link) }
-            if let pairingLink {
-                shareRow("PendingNet", link: pairingLink)
-                Text("配对链接 10 分钟内有效，只能使用一次。")
-                    .font(PendingNetTheme.Fonts.caption)
-            }
-            if !links.isEmpty || pairingLink != nil {
+            if !links.isEmpty {
                 Text("链接包含访问凭据，请只分享给信任的人。")
                     .font(PendingNetTheme.Fonts.caption).foregroundStyle(PendingNetTheme.Palette.inkMuted)
             }
         }
-        .onDisappear { shareTask?.cancel(); links = []; pairingLink = nil }
+        .onDisappear { shareTask?.cancel(); links = [] }
     }
 
     private func shareRow(_ label: String, link: String) -> some View {
@@ -78,17 +69,4 @@ struct PendingNodeSharePanel: View {
         } catch { self.error = error.localizedDescription }
     }
 
-    private func issuePairing() async {
-        busy = true; error = nil
-        defer { busy = false }
-        do {
-            guard !server.isSharedNode,
-                  let managed = PendingNetManagedServerStore().servers.first(where: {
-                      $0.serverID == server.serverID && $0.endpoint == server.endpoint && $0.certificateSHA256 == server.certificateSHA256
-                  }) else { throw PendingNetAdminAPIError.missingCredential }
-            let grant = try await PendingNetAdminAPIClient(server: managed).issuePairing(role: .client, ttlSeconds: 600)
-            guard !Task.isCancelled else { return }
-            pairingLink = grant.link
-        } catch { self.error = error.localizedDescription }
-    }
 }

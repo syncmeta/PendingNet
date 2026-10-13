@@ -165,7 +165,7 @@ struct ControlView: View {
             } else {
                 Task {
                     await PendingNetConnectionWorkflow.setConnected(
-                        on, engine: engine, state: state
+                        on, pairing: vpsPairing, engine: engine, state: state
                     )
                 }
             }

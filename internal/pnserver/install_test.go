@@ -48,3 +48,36 @@ func TestInstallExecutableCopiesAtomically(t *testing.T) {
 		t.Fatalf("permissions %o", info.Mode().Perm())
 	}
 }
+
+func TestManagementAliasPreservesOtherCommandsAndFollowsUpdates(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "pendingnet-server")
+	alias := filepath.Join(dir, "pendingnet")
+	if err := os.WriteFile(target, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallCommandAlias(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallCommandAlias(target, alias); err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "new")
+	_ = os.WriteFile(replacement, []byte("new"), 0755)
+	if err := os.Rename(replacement, target); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(alias)
+	if string(data) != "new" {
+		t.Fatal("alias retained old executable")
+	}
+	other := filepath.Join(dir, "other-command")
+	_ = os.WriteFile(other, []byte("keep"), 0755)
+	if err := InstallCommandAlias(target, other); err == nil {
+		t.Fatal("overwrote unrelated command")
+	}
+	data, _ = os.ReadFile(other)
+	if string(data) != "keep" {
+		t.Fatal("changed existing command")
+	}
+}

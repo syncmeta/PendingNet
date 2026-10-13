@@ -127,18 +127,13 @@ struct PendingNetIOSHomeView: View {
     }
 
     private func setConnected(_ on: Bool) async {
-        guard let server = controller.server, let profile = controller.nodeProfile else { return }
         if !on {
             await controller.tunnel.stop()
             return
         }
         do {
             controller.errorMessage = nil
-            try await controller.tunnel.start(
-                profile: profile,
-                serverName: server.name,
-                serverID: profile.serverID
-            )
+            try await controller.connect()
             // 规则集不可用时 start 会降级到全局而不是失败；降级必须让
             // 用户看见，否则界面上的「白名单」会悄悄变成「全局」。
             if let notice = controller.tunnel.degradeNotice {
