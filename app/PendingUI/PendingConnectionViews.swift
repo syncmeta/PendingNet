@@ -103,10 +103,6 @@ struct PendingProtocolPicker: View {
         // 间距写在共用件里，两端才会一样：标题和药丸之间松一档，整块再和
         // 上面那块拉开——它是卡里唯一带标题的一段，挨太近会读成上一块的尾巴。
         VStack(alignment: .leading, spacing: 14) {
-            Text("协议")
-                .font(PendingNetTheme.Fonts.bodyEmphasized)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-
             PendingWrapLayout {
                 ForEach(members, id: \.self) { tag in
                     PendingPill(
@@ -147,6 +143,8 @@ struct PendingVPSList: View {
     /// 每台 VPS 一个延迟数（`serverID -> 结果`）。语义只有一种：本机到这台
     /// VPS 代理入口的 TCP 握手往返时间，见 `PendingNetLatencyTarget`。
     var latencies: [String: PendingNetLatencyOutcome] = [:]
+    var showsDetails = true
+    var isEditing = false
     var detailID: Binding<String?>? = nil
     var onDelete: ((String) -> Void)? = nil
     let onSelect: (String) -> Void
@@ -203,11 +201,18 @@ struct PendingVPSList: View {
         let switching = item.id == switchingID
         let unpaired = unpairedIDs.contains(item.id)
         return HStack(spacing: 10) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(PendingNetTheme.Palette.accent)
-                .opacity(selected && !unpaired ? 1 : 0)
-                .frame(width: 14)
+            if isEditing, let onDelete {
+                Button { onDelete(item.id) } label: {
+                    Image(systemName: "minus.circle.fill").font(.system(size: 20))
+                        .foregroundStyle(PendingNetTheme.Palette.danger)
+                }
+                .buttonStyle(.plain).accessibilityLabel("删除")
+            } else {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(PendingNetTheme.Palette.accent)
+                    .opacity(selected && !unpaired ? 1 : 0).frame(width: 14)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 // verbatim: 地址是标识符，不能被本地化
                 Text(verbatim: item.name.isEmpty ? item.address : item.name)
@@ -226,12 +231,6 @@ struct PendingVPSList: View {
                     Text("这台设备还没有访问凭据，请重新导入这台 VPS 的链接")
                         .font(PendingNetTheme.Fonts.caption)
                         .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                } else if let reason = latencies[item.id]?.failureText {
-                    // 「不通」两个字说不清是被拒还是解析不了，原因就摆在这行下面。
-                    Text(reason)
-                        .font(PendingNetTheme.Fonts.caption)
-                        .foregroundStyle(PendingNetTheme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()
@@ -251,7 +250,7 @@ struct PendingVPSList: View {
             } else {
                 HStack(spacing: 10) {
                     latencyLabel(item)
-                    detailButton(item)
+                    if showsDetails { detailButton(item) }
                 }
             }
         }
@@ -262,8 +261,13 @@ struct PendingVPSList: View {
         // 没凭据的行点了也只会失败，不给点——「未配对」那个标记已经把该做的事
         // 说清楚了，让它可点只会换来一条红字。
         .onTapGesture {
-            guard !selected, !unpaired else { return }
+            guard !isEditing, !selected, !unpaired else { return }
             onSelect(item.id)
+        }
+        .contextMenu {
+            #if os(macOS)
+            if let onDelete { Button("删除", role: .destructive) { onDelete(item.id) } }
+            #endif
         }
     }
 
@@ -315,6 +319,7 @@ struct PendingVPSList: View {
 struct PendingVPSDetails: View {
     enum NameStyle {
         case heading
+        case hidden
         case labeledRow
     }
 
@@ -327,6 +332,7 @@ struct PendingVPSDetails: View {
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
             switch nameStyle {
+            case .hidden: EmptyView()
             case .heading:
                 Text(server.name)
                     .font(PendingNetTheme.Fonts.bodyEmphasized)
@@ -336,10 +342,8 @@ struct PendingVPSDetails: View {
             }
 
             detailRow("地址", server.address, monospaced: true)
-            if let port = server.controlPort {
-                // verbatim: 端口是标识符不是数量（否则 7443 会被显示成 "7,443"）
-                detailRow("端口", port, monospaced: true)
-            }
+            if let port = server.proxyTCPPort { detailRow("Reality（TCP）", String(port), monospaced: true) }
+            if let port = server.proxyUDPPort { detailRow("Hysteria2（UDP）", String(port), monospaced: true) }
             latencyBlock
         }
     }
@@ -359,14 +363,9 @@ struct PendingVPSDetails: View {
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        case .failed(let reason):
-            VStack(alignment: .leading, spacing: 4) {
-                detailRow("延迟", "不通")
-                Text(reason)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.danger)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        case .failed:
+            detailRow("延迟", "不通")
+
         case .none:
             EmptyView()
         }
@@ -397,5 +396,43 @@ struct PendingVPSRowHeight: PreferenceKey {
     static let defaultValue: [String: CGFloat] = [:]
     static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
         value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+/// Name stays in place while editing on either platform.
+struct PendingServerNameEditor: View {
+    let name: String
+    let onSave: (String) -> Void
+    @State private var editing = false
+    @State private var draft = ""
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            if editing {
+                TextField("名称（留空则用 IP）", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { save() }
+            } else {
+                Text(verbatim: name).font(.system(size: 20, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Button(LocalizedStringKey(editing ? "保存" : "改名")) {
+                if editing { save() } else { draft = name; editing = true }
+            }
+            .buttonStyle(PendingQuietButtonStyle())
+        }
+    }
+    private func save() { onSave(draft); editing = false }
+}
+
+struct PendingLatencyMethodRow: View {
+    @AppStorage(PendingNetLatencyMethod.preferenceKey) private var method = "tcp"
+    var body: some View {
+        HStack {
+            Text("测延迟")
+            Spacer()
+            PendingPillPicker(options: [.init("tcp", "TCP"), .init("icmp", "ICMP")], selection: method) {
+                method = $0
+            }
+        }
     }
 }

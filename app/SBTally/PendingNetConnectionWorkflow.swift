@@ -97,6 +97,23 @@ enum PendingNetConnectionWorkflow {
         }
     }
 
+    static func deleteServer(_ serverID: String, pairing: VPSPairingController, engine: EngineController, state: AppState) async {
+        guard pairing.beginConnectionChange() else { return }
+        defer { pairing.endConnectionChange() }
+        _ = await engine.performConnectionChange {
+            let selector = PendingNetRuntimeServer.selectorTag(forServerID: serverID)
+            let selected = engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag
+            if selected == selector {
+                await engine.stop()
+                guard !engine.running else { pairing.reportApplyError(engine.friendlyErrorText() ?? String(localized: "后台引擎尚未停止")); return }
+                state.clearLocalControl()
+            }
+            if let error = await engine.forgetServerConfiguration(serverID) { pairing.reportApplyError(error); return }
+            do { try pairing.deleteServer(serverID) }
+            catch { pairing.reportApplyError(error.localizedDescription) }
+        }
+    }
+
     private static func applyAndConnect(
         _ runtime: PendingNetRuntimeServer,
         pairing: VPSPairingController,

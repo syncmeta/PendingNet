@@ -175,6 +175,11 @@ final class VPSPairingController: ObservableObject {
         lastError = message
     }
 
+    func deleteServer(_ serverID: String) throws {
+        try PendingNetCredentialStore.remove(serverID: serverID)
+        store.delete(serverID: serverID)
+    }
+
     /// 名称只属于客户端存档；不会改写服务器的节点身份或配置。
     func renameServer(_ serverID: String, to requestedName: String) {
         store.rename(serverID: serverID, to: requestedName)

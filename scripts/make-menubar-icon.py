@@ -141,7 +141,17 @@ def main() -> None:
         "properties": {"template-rendering-intent": "template"},
     }
     (OUT / "Contents.json").write_text(json.dumps(contents, indent=2) + "\n")
-    print(f"生成 {OUT}")
+    idle_dir = CATALOG / "PendingNetMenuBarIconIdle.imageset"
+    idle_dir.mkdir(parents=True, exist_ok=True)
+    idle_mask = re.sub(r"<circle\b[^>]*/>", "", mask)
+    idle_names = render_variants(idle_mask, idle_dir, "menubar")
+    idle_contents = dict(contents)
+    idle_contents["images"] = [
+        {"filename": name, "idiom": "universal", "scale": f"{scale}x"}
+        for scale, name in zip(SCALES, idle_names)
+    ]
+    (idle_dir / "Contents.json").write_text(json.dumps(idle_contents, indent=2) + "\n")
+    print(f"生成 {OUT} 与 {idle_dir}")
 
 
 if __name__ == "__main__":

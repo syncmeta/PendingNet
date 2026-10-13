@@ -4,6 +4,7 @@ import SBTallyCore
 
 @main
 struct SBTallyApp: App {
+    @NSApplicationDelegateAdaptor(PendingNetAppDelegate.self) private var appDelegate
     @StateObject private var state: AppState
     @StateObject private var engine: EngineController
     @StateObject private var vpsPairing: VPSPairingController
@@ -23,9 +24,11 @@ struct SBTallyApp: App {
     init() {
         let legacyServers = PendingNetLegacyDefaultsMigration.run()
         _state = StateObject(wrappedValue: AppState(provider: PendingNetLocalAPIProvider()))
-        _engine = StateObject(wrappedValue: EngineController())
+        let engine = EngineController()
+        _engine = StateObject(wrappedValue: engine)
         _vpsPairing = StateObject(
             wrappedValue: VPSPairingController(legacyServers: legacyServers))
+        appDelegate.engine = engine
     }
 
     var body: some Scene {
@@ -110,8 +113,12 @@ struct SBTallyApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 PendingNet") {
-                    let credits = NSAttributedString(string: "GitHub", attributes: [.link: PendingNetProjectLink.url])
-                    NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+                    Task {
+                        let core = await PendingNetEngineBinary.bundledVersion() ?? "—"
+                        let credits = NSMutableAttributedString(string: "sing-box \(core)\n\n")
+                        credits.append(NSAttributedString(string: "GitHub", attributes: [.link: PendingNetProjectLink.url]))
+                        NSApplication.shared.orderFrontStandardAboutPanel(options: [.credits: credits])
+                    }
                 }
             }
         }
@@ -146,11 +153,11 @@ struct SBTallyApp: App {
             // （见 scripts/make-menubar-icon.py）。改图标时别再退回单张大图。
             //
             // `.opacity` 同理可能被丢掉，留着是因为它生效时更好、失效也不比现状差。
-            Image("PendingNetMenuBarIcon")
+            Image(engine.running ? "PendingNetMenuBarIcon" : "PendingNetMenuBarIconIdle")
                 .renderingMode(.template)
                 .opacity(engine.running ? 1.0 : 0.5)
         }
-        .menuBarExtraStyle(.window)
+        .menuBarExtraStyle(.menu)
         .commands {
             CommandGroup(after: .appInfo) {
                 Button("检查更新…") { updater.checkForUpdates() }

@@ -9,6 +9,8 @@ import AppKit
 /// 唯一的导入入口：粘贴分享链接，一行一个节点。
 struct PendingPasteImportSheet: View {
     let busy: Bool
+    var isManagement = false
+    var initialText = ""
     let onImport: (String) -> Void
     let onCancel: () -> Void
 
@@ -17,10 +19,10 @@ struct PendingPasteImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("导入")
+                Text(isManagement ? LocalizedStringKey("导入管理链接") : LocalizedStringKey("导入"))
                     .font(PendingNetTheme.Fonts.sectionTitle("导入"))
                     .foregroundStyle(PendingNetTheme.Palette.ink)
-                Text("支持 pendingnet://、vless:// 和 hysteria2:// 链接，一行一个节点。")
+                Text(isManagement ? LocalizedStringKey("支持 pendingnetm:// 管理链接，只能导入一次。") : LocalizedStringKey("支持 pendingnet://、vless:// 和 hysteria2:// 链接，一行一个节点。"))
                     .font(PendingNetTheme.Fonts.caption)
                     .foregroundStyle(PendingNetTheme.Palette.inkMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -75,6 +77,9 @@ struct PendingPasteImportSheet: View {
         .padding(PendingNetTheme.Metrics.gutter)
         .frame(minWidth: 360)
         .background(PendingNetTheme.Palette.canvas)
+        .onAppear { text = initialText }
+        .onChange(of: initialText) { _, value in text = value }
+        .onDisappear { text = "" }
     }
 
     private static func clipboardText() -> String? {

@@ -5,189 +5,60 @@ import SBTallyCore
 struct MenuBarView: View {
     @EnvironmentObject private var state: AppState
     @EnvironmentObject private var engine: EngineController
-    @EnvironmentObject private var updater: PendingNetUpdateController
     @EnvironmentObject private var vpsPairing: VPSPairingController
     @EnvironmentObject private var navigation: PendingNetNavigation
     @Environment(\.openWindow) private var openWindow
 
-    private var totalUp: Int64 { state.live.reduce(0) { $0 + $1.upRate } }
-    private var totalDown: Int64 { state.live.reduce(0) { $0 + $1.downRate } }
-
-    private var appliedSelectorTag: String? {
+    private var selector: String? {
         engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag
     }
 
-    private var appliedServer: PairedVPSServer? {
-        guard let tag = appliedSelectorTag else { return nil }
-        return vpsPairing.servers.first {
-            PendingNetRuntimeServer.selectorTag(forServerID: $0.serverID) == tag
-        }
-    }
-
-    private var protoProxy: Proxy? {
-        guard appliedServer != nil, let tag = appliedSelectorTag else { return nil }
-        return engine.takeover == "local" ? state.proxies[tag] : engine.protocolProxy
-    }
-
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if engine.takeover != "local" && !engine.helperReady {
-                Button("授权后台服务…") { engine.registerHelper() }
-                    .buttonStyle(PendingPrimaryButtonStyle())
-                    .disabled(engine.connectionBusy || vpsPairing.pairing)
-            } else {
-                Toggle("连接", isOn: Binding(
-                    get: { engine.running },
-                    set: { on in
-                        Task {
-                            await PendingNetConnectionWorkflow.setConnected(
-                                on, engine: engine, state: state
-                            )
-                        }
-                    }
-                ))
-                .toggleStyle(.switch)
-                .disabled(engine.connectionBusy || vpsPairing.pairing)
-            }
-
-            PendingPillPicker(
-                options: [
-                    .init("local", "仅端口"),
-                    .init("sysproxy", "系统代理"),
-                    .init("tun", "TUN"),
-                ],
-                selection: engine.takeover
-            ) { mode in
-                Task {
-                    await PendingNetConnectionWorkflow.setTakeover(
-                        mode, engine: engine, state: state
-                    )
-                }
-            }
+        if engine.takeover != "local" && !engine.helperReady {
+            Button("授权后台服务…") { engine.registerHelper() }
+        } else {
+            Toggle("连接", isOn: Binding(get: { engine.running }, set: { on in
+                Task { await PendingNetConnectionWorkflow.setConnected(on, engine: engine, state: state) }
+            }))
             .disabled(engine.connectionBusy || vpsPairing.pairing)
-
-            // 档位名不在这里另写一遍：三个中文名跟主窗口共用同一个选择器，
-            // Clash 那边的写法只由 `clashName` / `clashNamed` 翻译。
-            PendingRouteModePicker(
-                selection: PendingNetRouteMode.clashNamed(state.mode)
-            ) { mode in
-                Task {
-                    await PendingNetConnectionWorkflow.setRouteMode(
-                        mode, engine: engine, state: state
-                    )
-                }
-            }
-            .disabled(engine.connectionBusy || vpsPairing.pairing)
-            if let note = state.modeNote {
-                Text(note)
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            // VPS 和主窗口一致：竖排列表，选中的那行前面打勾。
+        }
+        Picker("模式", selection: Binding(get: { engine.takeover }, set: { mode in
+            Task { await PendingNetConnectionWorkflow.setTakeover(mode, engine: engine, state: state) }
+        })) {
+            Text("仅端口").tag("local")
+            Text("系统代理").tag("sysproxy")
+            Text("TUN").tag("tun")
+        }
+        .pickerStyle(.inline)
+        .disabled(engine.connectionBusy || vpsPairing.pairing)
+        Divider()
+        Picker("路由", selection: Binding(get: { state.mode }, set: { mode in
+            guard let selected = PendingNetRouteMode.clashNamed(mode) else { return }
+            Task { await PendingNetConnectionWorkflow.setRouteMode(selected, engine: engine, state: state) }
+        })) {
+            Text("全局").tag(PendingNetRouteMode.global.clashName)
+            Text("白名单").tag(PendingNetRouteMode.whitelist.clashName)
+            Text("黑名单").tag(PendingNetRouteMode.blacklist.clashName)
+        }
+        .pickerStyle(.inline)
+        .disabled(engine.connectionBusy || vpsPairing.pairing)
+        Menu("节点") {
             ForEach(vpsPairing.servers) { server in
-                let selected = server.serverID == appliedServer?.serverID
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(PendingNetTheme.Palette.accent)
-                        .opacity(selected ? 1 : 0)
-                        .frame(width: 12)
-                    // verbatim: 地址是标识符，不能被本地化
-                    Text(verbatim: server.name.isEmpty ? server.address : server.name)
-                        .font(selected
-                            ? PendingNetTheme.Fonts.bodyEmphasized.monospaced()
-                            : PendingNetTheme.Fonts.body.monospaced())
-                        .foregroundStyle(PendingNetTheme.Palette.ink)
-                    Spacer()
+                Button {
+                    Task { await PendingNetConnectionWorkflow.refreshAndConnect(server: server, pairing: vpsPairing, engine: engine, state: state) }
+                } label: {
+                    if selector == PendingNetRuntimeServer.selectorTag(forServerID: server.serverID) {
+                        Label(server.name.isEmpty ? server.address : server.name, systemImage: "checkmark")
+                    } else { Text(verbatim: server.name.isEmpty ? server.address : server.name) }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard !selected, !vpsPairing.pairing, !engine.connectionBusy else { return }
-                    Task {
-                        await PendingNetConnectionWorkflow.refreshAndConnect(
-                            server: server,
-                            pairing: vpsPairing,
-                            engine: engine,
-                            state: state
-                        )
-                    }
-                }
-            }
-            // 菜单栏这一版不带小标题（这里每一排都没有），但名字和主窗口
-            // 走的是同一份 `PendingNetOutboundNaming`。
-            if let all = protoProxy?.all, let selector = appliedSelectorTag {
-                PendingPillPicker(
-                    options: all.map {
-                        .init($0, PendingNetOutboundNaming.title(
-                            forMemberTag: $0,
-                            selectorTag: selector
-                        ))
-                    },
-                    selection: protoProxy?.now
-                ) { name in
-                    Task {
-                        if engine.takeover == "local" {
-                            await state.select(selector: selector, name: name)
-                        } else {
-                            await engine.selectProtocol(selector: selector, name: name)
-                        }
-                    }
-                }
-                .disabled(engine.connectionBusy || vpsPairing.pairing)
-            }
-            // 引擎错误不再写在这里常驻：菜单栏根上挂了 toast（见 SBTallyApp），
-            // 失败时弹一下自动消失。下面只留失败时的运行日志（折叠态），它是
-            // 诊断用的，不是要用户一直盯着读的报错。
-            if engine.startFailed && !engine.logTail.isEmpty {
-                ScrollView {
-                    Text(engine.logTail)
-                        .font(PendingNetTheme.Fonts.caption.monospaced())
-                        .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 100)
-            }
-
-            Divider().overlay(PendingNetTheme.Palette.hairline)
-
-            Text("↑ \(humanBytes(totalUp))/秒   ↓ \(humanBytes(totalDown))/秒")
-                .monospacedDigit()
-                .font(PendingNetTheme.Fonts.bodyEmphasized)
-                .foregroundStyle(PendingNetTheme.Palette.ink)
-            if state.live.isEmpty {
-                Text("暂无实时流量")
-                    .font(PendingNetTheme.Fonts.caption)
-                    .foregroundStyle(PendingNetTheme.Palette.inkMuted)
-            } else {
-                ForEach(state.live.prefix(5)) { g in
-                    Text("\(g.app) · ↓\(humanBytes(g.downRate))/秒 ↑\(humanBytes(g.upRate))/秒")
-                        .monospacedDigit()
-                        .font(PendingNetTheme.Fonts.caption)
-                }
-            }
-
-            Divider().overlay(PendingNetTheme.Palette.hairline)
-            HStack {
-                Button("打开主窗口") {
-                    navigation.section = .connection
-                    openWindow(id: "main")
-                }
-                .buttonStyle(PendingQuietButtonStyle())
             }
         }
-        .padding(14)
-        .frame(width: 320)
-        .background(PendingNetTheme.Palette.canvas)
-        .task {
-            await engine.refresh()
-            if engine.running && engine.takeover == "local" {
-                await state.loadControl()
-            } else {
-                state.clearLocalControl()
-            }
-        }
+        .disabled(engine.connectionBusy || vpsPairing.pairing || vpsPairing.servers.isEmpty)
+        Divider()
+        Button("打开主窗口") { navigation.section = .connection; openWindow(id: "main") }
+        Button("设置") { navigation.section = .settings; openWindow(id: "main") }
+            .keyboardShortcut(",")
+        Button("退出 PendingNet") { NSApplication.shared.terminate(nil) }
+            .keyboardShortcut("q")
     }
 }

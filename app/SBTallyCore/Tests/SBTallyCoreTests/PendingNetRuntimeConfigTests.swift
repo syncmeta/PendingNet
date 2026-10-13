@@ -2,6 +2,28 @@ import XCTest
 @testable import SBTallyCore
 
 final class PendingNetRuntimeConfigTests: XCTestCase {
+    func testDeletionRemovesCredentialsAndSelectorReferencesWhilePreservingOtherNode() throws {
+        let removed = PendingNetRuntimeServer.selectorTag(forServerID: "deleted")
+        let retained = PendingNetRuntimeServer.selectorTag(forServerID: "retained")
+        let fixture: [String: Any] = ["inbounds": [["type": "mixed", "listen_port": 2080]],
+            "outbounds": [
+                ["type": "direct", "tag": "direct"],
+                ["type": "selector", "tag": "proxy", "outbounds": [removed, retained, "direct"], "default": removed],
+                ["type": "vless", "tag": removed + "-reality", "uuid": "deleted-private-key"],
+                ["type": "selector", "tag": removed, "outbounds": [removed + "-reality"]],
+                ["type": "hysteria2", "tag": retained + "-hy2", "password": "keep-this-key"],
+                ["type": "selector", "tag": retained, "outbounds": [retained + "-hy2"]]
+            ]]
+        let data = try JSONSerialization.data(withJSONObject: fixture)
+        let result = try PendingNetLocalConfigComposer.removingServer("deleted", from: data)
+        XCTAssertFalse(String(decoding: result, as: UTF8.self).contains("deleted-private-key"))
+        XCTAssertFalse(String(decoding: result, as: UTF8.self).contains(removed))
+        XCTAssertTrue(String(decoding: result, as: UTF8.self).contains("keep-this-key"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result) as? [String: Any])
+        XCTAssertNotNil(root["inbounds"])
+        XCTAssertEqual(try PendingNetLocalConfigComposer.removingServer("deleted", from: result), result)
+    }
+
     func testRuntimeConfigErrorsKeepProtocolIdentifiersWhenLocalized() {
         XCTAssertTrue(PendingNetRuntimeConfigError.unsupportedProtocol("future-protocol")
             .localizedDescription.contains("future-protocol"))
@@ -28,6 +50,30 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         XCTAssertEqual(clash["external_controller"] as? String, "127.0.0.1:29090")
         XCTAssertEqual(clash["default_mode"] as? String, "Global")
         XCTAssertEqual(clash["secret"] as? String, "test-secret")
+    }
+
+    func testDeletedLastNodePassesEmbeddedSingBoxValidation() throws {
+        let binary = try XCTUnwrap(pendingNetSingBoxForTests())
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = try PendingNetProxyOnlyConfig.make(controlSecret: "test", cachePath: directory.appendingPathComponent("cache.db").path)
+        let selector = PendingNetRuntimeServer.selectorTag(forServerID: "removed")
+        let proxy: [[String: Any]] = [["type": "vless", "tag": selector + "-reality", "server": "192.0.2.1", "server_port": 443, "uuid": "00000000-0000-4000-8000-000000000001"]]
+        let runtime = PendingNetRuntimeServer(serverID: "removed", name: "Test", selectorTag: selector,
+            proxyOutbounds: try JSONSerialization.data(withJSONObject: proxy))
+        let merged = try PendingNetLocalConfigComposer.merge(baseConfig: base, runtimeServer: runtime)
+        let cleared = try PendingNetLocalConfigComposer.removingServer("removed", from: merged)
+        let file = directory.appendingPathComponent("config.json")
+        try cleared.write(to: file)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["check", "-c", file.path]
+        let pipe = Pipe(); process.standardOutput = pipe; process.standardError = pipe
+        try process.run()
+        let output = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0, String(decoding: output, as: UTF8.self))
     }
 
     func testProxyOnlyBasePassesInstalledSingBoxCheck() throws {

@@ -6,7 +6,9 @@
     <!-- DNS ownership must be recoverable after reboot/helper termination.
          This starts only the helper; it never starts the proxy engine. -->
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
+    <!-- Crash recovery remains enabled; an intentional successful quit stays
+         stopped until the next Mach-service request. -->
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
     <key>MachServices</key><dict><key>com.pendingname.pendingnet.helper</key><true/></dict>
     <key>AssociatedBundleIdentifiers</key><array><string>com.pendingname.pendingnet</string></array>
 </dict></plist>

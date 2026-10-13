@@ -150,6 +150,29 @@ public extension PendingNetNodeProfile {
 /// verbatim. Only the matching managed VPS outbounds and the top-level proxy
 /// selector membership are changed.
 public enum PendingNetLocalConfigComposer {
+    /// Removes only this VPS's credential-bearing outbounds and references.
+    public static func removingServer(_ serverID: String, from data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var outbounds = root["outbounds"] as? [[String: Any]] else {
+            throw PendingNetRuntimeConfigError.invalidLocalConfiguration
+        }
+        let selector = PendingNetRuntimeServer.selectorTag(forServerID: serverID)
+        let belongs: (String) -> Bool = { $0 == selector || $0.hasPrefix(selector + "-") }
+        guard outbounds.contains(where: { ($0["tag"] as? String).map(belongs) ?? false }) else { return data }
+        outbounds.removeAll { ($0["tag"] as? String).map(belongs) ?? false }
+        for index in outbounds.indices {
+            if let members = outbounds[index]["outbounds"] as? [String] {
+                let remaining = members.filter { !belongs($0) }
+                outbounds[index]["outbounds"] = remaining
+                if let selected = outbounds[index]["default"] as? String, belongs(selected) {
+                    outbounds[index].removeValue(forKey: "default")
+                }
+            }
+        }
+        root["outbounds"] = outbounds
+        return try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
+    }
+
     public static func merge(
         baseConfig: Data,
         runtimeServer: PendingNetRuntimeServer

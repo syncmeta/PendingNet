@@ -77,6 +77,27 @@ final class PendingNetLatencyTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testICMPSelectionBypassesTCPAndHasNoPort() async {
+        let tester = PendingNetLatencyTester(probe: { _, _, _ in
+            XCTFail("ICMP mode must not invoke TCP"); return 0
+        }, icmpProbe: { host, port, _ in
+            XCTAssertEqual(host, "203.0.113.10"); XCTAssertEqual(port, 0); return 12
+        })
+        await tester.measure(record(), method: .icmp)
+        XCTAssertEqual(tester.outcome(for: "s1"), .ok(milliseconds: 12,
+            target: .init(host: "203.0.113.10", port: 0, kind: .icmpEcho)))
+    }
+
+    @MainActor
+    func testTCPWithoutProxyEntryDoesNotOpenManagementSocket() async {
+        let tester = PendingNetLatencyTester(probe: { _, _, _ in
+            XCTFail("No proxy entry means no TCP probe"); return 0
+        })
+        await tester.measure(record())
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "不通")
+    }
+
     // MARK: - 测哪个端点
 
     func testPrefersProxyEntryOverControlPort() {
@@ -88,27 +109,20 @@ final class PendingNetLatencyTests: XCTestCase {
         XCTAssertEqual(target?.kind, .proxyEntry)
     }
 
-    func testFallsBackToControlPortBeforeNodeProfileArrives() {
-        let target = PendingNetLatencyTarget.forVPS(record())
-        XCTAssertEqual(target?.host, "203.0.113.10")
-        XCTAssertEqual(target?.port, 7443)
-        XCTAssertEqual(target?.kind, .controlPort)
-    }
-
-    func testControlEndpointWithoutPortUsesHTTPSDefault() {
-        let target = PendingNetLatencyTarget.forVPS(record(endpoint: "https://vps.example.com"))
-        XCTAssertEqual(target?.port, 443)
+    func testMissingProxyEntryNeverMeasuresManagementPort() {
+        XCTAssertNil(PendingNetLatencyTarget.forVPS(record()))
+        XCTAssertNil(PendingNetLatencyTarget.forVPS(record(endpoint: "https://vps.example.com")))
     }
 
     func testUnparsableEndpointHasNoTarget() {
         XCTAssertNil(PendingNetLatencyTarget.forVPS(record(endpoint: "这不是地址")))
     }
 
-    func testOutOfRangeProxyPortFallsBackInsteadOfProbingIt() {
+    func testOutOfRangeProxyPortDoesNotMeasureControlPort() {
         let target = PendingNetLatencyTarget.forVPS(
             record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 70000)
         )
-        XCTAssertEqual(target?.kind, .controlPort)
+        XCTAssertNil(target)
     }
 
     func testExplanationNamesTheEndpointItMeasured() {
@@ -134,19 +148,22 @@ final class PendingNetLatencyTests: XCTestCase {
         stored.adoptProxyEntry(from: profile(hysteria2: hysteria2()))
         XCTAssertNil(stored.proxyTCPHost)
         XCTAssertNil(stored.proxyTCPPort)
-        // 于是延迟退回控制端口，而不是继续测一个已经不存在的服务。
-        XCTAssertEqual(PendingNetLatencyTarget.forVPS(stored)?.kind, .controlPort)
+        XCTAssertNil(PendingNetLatencyTarget.forVPS(stored))
+        XCTAssertEqual(stored.proxyUDPHost, "203.0.113.10")
+        XCTAssertEqual(stored.proxyUDPPort, 443)
     }
 
     func testProxyEntrySurvivesEncodingRoundTrip() throws {
         var stored = record()
-        stored.adoptProxyEntry(from: profile(reality: reality(port: 443)))
+        stored.adoptProxyEntry(from: profile(reality: reality(port: 443), hysteria2: hysteria2(port: 8443)))
         let decoded = try JSONDecoder().decode(
             PairedVPSRecord.self,
             from: JSONEncoder().encode(stored)
         )
         XCTAssertEqual(decoded.proxyTCPHost, "203.0.113.10")
         XCTAssertEqual(decoded.proxyTCPPort, 443)
+        XCTAssertEqual(decoded.proxyUDPPort, 8443)
+        XCTAssertEqual(decoded.proxyUDPHost, "203.0.113.10")
     }
 
     func testOldArchiveWithoutProxyEntryStillDecodes() throws {
@@ -211,7 +228,7 @@ final class PendingNetLatencyTests: XCTestCase {
                 target: PendingNetLatencyTarget(host: "203.0.113.10", port: 443, kind: .proxyEntry)
             )
         )
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "42 ms · 端口")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "42 ms · TCP")
         XCTAssertFalse(tester.busy)
     }
 
@@ -241,8 +258,8 @@ final class PendingNetLatencyTests: XCTestCase {
         var second = record(proxyTCPHost: "198.51.100.7", proxyTCPPort: 8443)
         second.serverID = "s2"
         await tester.measureAll([record(proxyTCPHost: "203.0.113.10", proxyTCPPort: 443), second])
-        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "443 ms · 端口")
-        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · 端口")
+        XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "443 ms · TCP")
+        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · TCP")
     }
 
     @MainActor
@@ -256,7 +273,7 @@ final class PendingNetLatencyTests: XCTestCase {
             proxyProbe: { 87 }
         )
         XCTAssertEqual(tester.outcome(for: "s1")?.rowText, "87 ms · 代理")
-        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · 端口")
+        XCTAssertEqual(tester.outcome(for: "s2")?.rowText, "8443 ms · TCP")
     }
 
     @MainActor

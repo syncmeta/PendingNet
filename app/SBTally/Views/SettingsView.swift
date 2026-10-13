@@ -8,10 +8,25 @@ struct SettingsView: View {
     @EnvironmentObject private var engine: EngineController
     @EnvironmentObject private var startup: PendingNetStartupController
 
+    @State private var engineVersion: String?
+    @EnvironmentObject private var state: AppState
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 startupCard
+                PendingLatencyMethodRow()
+                if let selector = engine.takeover == "local" ? state.proxies["proxy"]?.now : engine.activeSelectorTag,
+                   let proxy = engine.takeover == "local" ? state.proxies[selector] : engine.protocolProxy,
+                   let members = proxy.all {
+                    PendingProtocolPicker(members: members, selectorTag: selector, selected: proxy.now) { name in
+                        Task {
+                            if engine.takeover == "local" { await state.select(selector: selector, name: name) }
+                            else { await engine.selectProtocol(selector: selector, name: name) }
+                        }
+                    }
+                    .disabled(engine.connectionBusy)
+                }
                 PendingLocalInboundCard(
                     listenAddress: engine.localListenAddress,
                     port: engine.localProxyPort,
@@ -35,6 +50,7 @@ struct SettingsView: View {
         }
         .background(PendingNetTheme.Palette.canvas)
         .task {
+            engineVersion = await PendingNetEngineBinary.bundledVersion()
             startup.refresh()
             engine.refreshRuleSetPresence()
         }
@@ -68,7 +84,7 @@ struct SettingsView: View {
     }
 
     private var updateCard: some View {
-        PendingUpdateCard(version: updater.currentVersion) {
+        PendingUpdateCard(version: updater.currentVersion, engineVersion: engineVersion) {
             Button("检查更新…") { updater.checkForUpdates() }
                 .buttonStyle(.borderless)
                 .disabled(!updater.canCheckForUpdates)

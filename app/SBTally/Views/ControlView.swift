@@ -10,8 +10,10 @@ struct ControlView: View {
     @StateObject private var latency = PendingNetLatencyTester()
 
     @State private var showingPasteImport = false
+    @State private var editingNodes = false
+    @AppStorage(PendingNetLatencyMethod.preferenceKey) private var latencyMethod = "tcp"
     @State private var detailServerID: String?
-    @State private var serverNameDraft = ""
+    @State private var deletingServerID: String?
 
     /// The sing-box selector tag the engine currently routes through, if it is
     /// one of our managed VPS tags (`direct` and friends are engine outbounds,
@@ -54,6 +56,16 @@ struct ControlView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(PendingNetTheme.Palette.canvas)
+        .alert("删除 VPS？", isPresented: Binding(get: { deletingServerID != nil }, set: { if !$0 { deletingServerID = nil } })) {
+            Button("取消", role: .cancel) { deletingServerID = nil }
+            Button("删除", role: .destructive) {
+                guard let id = deletingServerID else { return }
+                deletingServerID = nil
+                Task { await PendingNetConnectionWorkflow.deleteServer(id, pairing: vpsPairing, engine: engine, state: state) }
+            }
+        } message: {
+            Text("删除同步的节点记录和访问凭据。若正在连接这台 VPS，将先断开连接；不会卸载服务器。")
+        }
         .task {
             await engine.refresh()
             if engine.running && engine.takeover == "local" {
@@ -119,22 +131,6 @@ struct ControlView: View {
             vpsList
                 .padding(.top, 10)
 
-            if let all = protoProxy?.all, let selector = appliedSelectorTag {
-                PendingProtocolPicker(
-                    members: all,
-                    selectorTag: selector,
-                    selected: protoProxy?.now
-                ) { name in
-                    Task {
-                        if engine.takeover == "local" {
-                            await state.select(selector: selector, name: name)
-                        } else {
-                            await engine.selectProtocol(selector: selector, name: name)
-                        }
-                    }
-                }
-            }
-
             if engine.startFailed && !engine.logTail.isEmpty {
                 DisclosureGroup("查看运行日志") {
                     ScrollView {
@@ -183,6 +179,8 @@ struct ControlView: View {
             HStack {
                 Spacer()
                 if !vpsPairing.servers.isEmpty {
+                    Button(LocalizedStringKey(editingNodes ? "完成" : "编辑")) { editingNodes.toggle() }
+                        .buttonStyle(PendingQuietButtonStyle(fill: PendingNetTheme.Palette.surface))
                     Button("测延迟") { testAll() }
                         .buttonStyle(PendingQuietButtonStyle(
                             fill: PendingNetTheme.Palette.surface
@@ -201,7 +199,9 @@ struct ControlView: View {
                 selectedID: appliedServer?.serverID,
                 unpairedIDs: vpsPairing.unpairedServerIDs,
                 latencies: latency.results,
-                detailID: $detailServerID
+                isEditing: editingNodes,
+                detailID: $detailServerID,
+                onDelete: { deletingServerID = $0 }
             ) { serverID in
                 guard !vpsPairing.pairing,
                       let server = vpsPairing.servers.first(where: { $0.serverID == serverID })
@@ -215,7 +215,6 @@ struct ControlView: View {
                     )
                 }
             } onShowDetails: { serverID in
-                serverNameDraft = vpsPairing.servers.first(where: { $0.serverID == serverID })?.name ?? ""
                 detailServerID = serverID
             } detailPopover: { server in
                 AnyView(serverDetail(server))
@@ -226,24 +225,15 @@ struct ControlView: View {
     /// 端口、支持的协议、延迟 —— 主界面只放 IP，细节都在这里。
     private func serverDetail(_ server: PairedVPSServer) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            PendingServerNameEditor(name: server.name) { vpsPairing.renameServer(server.serverID, to: $0) }
             PendingVPSDetails(
                 server: server,
-                nameStyle: .heading,
+                nameStyle: .hidden,
                 spacing: 10,
                 latency: latency.outcome(for: server.serverID)
             )
 
             PendingNodeSharePanel(server: server)
-
-            HStack {
-                TextField("名称（留空则用 IP）", text: $serverNameDraft)
-                    .textFieldStyle(.roundedBorder)
-                Button("保存") {
-                    vpsPairing.renameServer(server.serverID, to: serverNameDraft)
-                    detailServerID = nil
-                }
-                .buttonStyle(PendingQuietButtonStyle())
-            }
 
             Button {
                 Task { await measure(server) }
@@ -259,35 +249,18 @@ struct ControlView: View {
             }
             .buttonStyle(PendingQuietButtonStyle())
             .disabled(latency.isMeasuring(server.serverID))
+            Button("删除", role: .destructive) { detailServerID = nil; deletingServerID = server.serverID }
+                .buttonStyle(.plain).foregroundStyle(PendingNetTheme.Palette.danger)
         }
         .padding(16)
-        .frame(width: 280, alignment: .leading)
+        .frame(width: 320, alignment: .leading)
     }
 
     /// 逐台测一遍。每台都是同一个测点、同一种算法，测完可以直接横向比较。
     private func testAll() {
-        let active = engine.running ? appliedServer?.serverID : nil
-        let selector = active == nil ? nil : appliedSelectorTag
-        Task {
-            await latency.measureAll(
-                vpsPairing.servers,
-                activeServerID: active,
-                proxyProbe: selector.map { tag in
-                    { try await engine.measureProxyDelay(selector: tag) }
-                }
-            )
-        }
+        Task { await latency.measureAll(vpsPairing.servers, method: PendingNetLatencyMethod(rawValue: latencyMethod) ?? .tcp) }
     }
-
     private func measure(_ server: PairedVPSServer) async {
-        if engine.running, appliedServer?.serverID == server.serverID,
-           let selector = appliedSelectorTag {
-            await latency.measureProxy(server) {
-                try await engine.measureProxyDelay(selector: selector)
-            }
-        } else {
-            await latency.measure(server)
-        }
+        await latency.measure(server, method: PendingNetLatencyMethod(rawValue: latencyMethod) ?? .tcp)
     }
-
 }

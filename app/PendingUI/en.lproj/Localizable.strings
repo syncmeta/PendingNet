@@ -257,3 +257,24 @@
 "删除管理 VPS？" = "Delete Management VPS?";
 "仅删除本机管理记录和管理员凭据，保留连接节点和服务器。" = "Delete only local management records and administrator credentials. Keep the connection node and server.";
 "关于 PendingNet" = "About PendingNet";
+"统计" = "Statistics";
+"按应用" = "By App";
+"按域名" = "By Domain";
+"退出前恢复网络失败" = "Could not restore networking before quitting";
+"后台服务正在退出" = "The background service is quitting";
+"后台引擎尚未停止" = "The background engine has not stopped";
+"支持 pendingnetm:// 管理链接，只能导入一次。" = "Supports pendingnetm:// management links. Each link can be imported once.";
+
+"编辑" = "Edit";
+
+"改名" = "Rename";
+
+"节点" = "Nodes";
+
+"模式" = "Mode";
+
+"路由" = "Routing";
+
+"请先选择节点" = "Select a node first";
+
+"正在切换，请稍后再退出" = "A connection change is in progress. Try quitting again shortly.";

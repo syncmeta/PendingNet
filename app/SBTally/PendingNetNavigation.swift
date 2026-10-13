@@ -17,8 +17,8 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
         switch self {
         case .connection: String(localized: "连接")
         case .live: String(localized: "实时流量")
-        case .apps: String(localized: "应用")
-        case .domains: String(localized: "域名")
+        case .apps: String(localized: "按应用")
+        case .domains: String(localized: "按域名")
         case .logs: String(localized: "日志")
         case .management: String(localized: "管理")
         case .settings: String(localized: "设置")
@@ -39,8 +39,8 @@ enum PendingNetSection: String, CaseIterable, Identifiable {
 
     var showsTimeRange: Bool {
         switch self {
-        case .live, .apps, .domains: true
-        case .connection, .logs, .management, .settings: false
+        case .apps, .domains: true
+        case .connection, .live, .logs, .management, .settings: false
         }
     }
 }

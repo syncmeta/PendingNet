@@ -83,7 +83,7 @@ final class EngineController: ObservableObject {
     /// synchronously when they reach the main actor.
     @discardableResult
     func performConnectionChange(_ operation: () async -> Void) async -> Bool {
-        guard connectionOperationGate.begin() else { return false }
+        guard !terminating, connectionOperationGate.begin() else { return false }
         connectionBusy = true
         defer {
             connectionOperationGate.end()
@@ -293,6 +293,8 @@ final class EngineController: ObservableObject {
     /// this app's `HelperProtocol`. Nil until probed; reset whenever the
     /// connection is dropped, since a new one may reach a different build.
     private var helperInterfaceOK: Bool?
+    private var terminating = false
+    private static let lifetimePolicyKey = "pendingnet.helper.lifetime-policy.v1"
     /// Guards against re-registering the daemon on every refresh when recovery
     /// doesn't take: one attempt per connect-and-fail cycle, not a loop.
     private var didAttemptHelperRecovery = false
@@ -308,7 +310,7 @@ final class EngineController: ObservableObject {
         timeout: Duration,
         _ body: @escaping (HelperProtocol, @escaping (T) -> Void) -> Void
     ) async -> T {
-        guard await ensureHelperCompatible() else { return fallback }
+        guard !terminating, await ensureHelperCompatible() else { return fallback }
         return await withHelper(fallback, timeout: timeout, body)
     }
 
@@ -322,6 +324,18 @@ final class EngineController: ObservableObject {
     /// falls back to 「等待授权」 forever.
     private func ensureHelperCompatible() async -> Bool {
         if let known = helperInterfaceOK { return known }
+        if !UserDefaults.standard.bool(forKey: Self.lifetimePolicyKey) {
+            // Existing jobs retain their old unconditional KeepAlive definition.
+            // Drain owned networking before replacing that launchd registration.
+            let error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.stopEngine(reply: reply) }
+            if let error { lastError = error; return false }
+            await reregisterHelperService()
+            guard service.status == .enabled else {
+                helperNeedsApproval = service.status == .requiresApproval
+                lastError = String(localized: "后台服务已更新，请在系统设置 → 通用 → 登录项与扩展中允许 PendingNet")
+                return false
+            }
+        }
         var version = await probeHelperInterfaceVersion()
         // Same protocol but older code — a release that only fixed helper
         // behaviour — is stale too, or those fixes never take effect.
@@ -339,9 +353,14 @@ final class EngineController: ObservableObject {
                 // re-registering the job, which boots the stale one out.
                 await reregisterHelperService()
             }
-            version = await probeHelperInterfaceVersion()
-            stale = version != pendingNetHelperInterfaceVersion
-            if !stale { stale = await helperPredatesItsBinary() }
+            for attempt in 0..<8 {
+                if attempt > 0 { try? await Task.sleep(for: .milliseconds(250)) }
+                version = await probeHelperInterfaceVersion()
+                stale = version != pendingNetHelperInterfaceVersion
+                if !stale { stale = await helperPredatesItsBinary() }
+                if !stale { break }
+                let old = connection; dropConnection(); old?.invalidate()
+            }
         }
         let ok = !stale
         helperInterfaceOK = ok
@@ -369,25 +388,15 @@ final class EngineController: ObservableObject {
         }
     }
 
-    /// Whether the running helper started before the helper binary now sitting
-    /// in this app bundle was written — i.e. it cannot be running that binary.
-    ///
-    /// `ditto` preserves mtimes, so the installed binary carries its build time
-    /// and a daemon that predates it is by definition a leftover. Returns false
-    /// when either timestamp is unavailable, so an unreadable bundle can never
-    /// send the app into a pointless replacement loop.
+    /// Compare mapped code identity with every slice of the installed helper.
+    /// Build timestamps cannot identify a helper launched after a new release
+    /// was built but before that release was installed.
     private func helperPredatesItsBinary() async -> Bool {
-        let binary = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/PendingNetHelper")
-        guard let attributes = try? FileManager.default
-            .attributesOfItem(atPath: binary.path),
-              let built = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970
-        else { return false }
-        let started = await withHelper(0.0, timeout: Self.quickTimeout) { p, reply in
-            p.startedAt { reply($0) }
-        }
-        guard started > 0 else { return false }
-        return started < built
+        let binary = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/PendingNetHelper")
+        guard let data = try? Data(contentsOf: binary) else { return true }
+        let expected = PendingNetMachOIdentity.identifiers(in: data)
+        let running = await withHelper("", timeout: Self.quickTimeout) { p, reply in p.binaryIdentity(reply: reply) }
+        return running.isEmpty || !expected.contains(running)
     }
 
     private func requestHelperQuit() async {
@@ -421,6 +430,7 @@ final class EngineController: ObservableObject {
             if attempt > 0 { try? await Task.sleep(for: .milliseconds(500)) }
             do {
                 try service.register()
+                UserDefaults.standard.set(true, forKey: Self.lifetimePolicyKey)
                 break
             } catch {
                 // Surfaced rather than swallowed: this is the one step that can
@@ -434,6 +444,7 @@ final class EngineController: ObservableObject {
     }
 
     func registerHelper() {
+        guard !terminating else { return }
         Task {
             // A fresh authorization attempt starts from a clean slate — the
             // previous attempt's error must not outlive it.
@@ -464,6 +475,7 @@ final class EngineController: ObservableObject {
                     try await service.unregister()
                 }
                 try service.register()
+                UserDefaults.standard.set(true, forKey: Self.lifetimePolicyKey)
                 helperReady = service.status == .enabled
                 helperNeedsApproval = service.status == .requiresApproval
                 if helperReady {
@@ -499,10 +511,14 @@ final class EngineController: ObservableObject {
               service.status == .notRegistered,
               UserDefaults.standard.bool(forKey: Self.everEnabledKey) else { return }
         didRestoreRegistration = true
-        try? service.register()
+        do {
+            try service.register()
+            UserDefaults.standard.set(true, forKey: Self.lifetimePolicyKey)
+        } catch { lastError = error.localizedDescription }
     }
 
     func refresh() async {
+        guard !terminating else { return }
         await restoreLostRegistrationIfNeeded()
         let wasReady = helperReady
         helperReady = service.status == .enabled
@@ -642,6 +658,7 @@ final class EngineController: ObservableObject {
     }
 
     func start() async {
+        guard !terminating else { return }
         if takeover == "local" {
             do {
                 try await userEngine.start()
@@ -676,6 +693,7 @@ final class EngineController: ObservableObject {
         if !running { startupPreferences.rememberConnected(false) }
     }
     func setTakeover(_ mode: String) async {
+        guard !terminating else { return }
         guard ["local", "sysproxy", "tun"].contains(mode), mode != takeover else { return }
         if mode == "local" {
             // Switching away from a helper-owned mode has to go through the
@@ -734,6 +752,19 @@ final class EngineController: ObservableObject {
         return outcome
     }
 
+    func forgetServerConfiguration(_ serverID: String) async -> String? {
+        if helperReady {
+            let error: String? = await withCompatibleHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in
+                p.forgetServerConfiguration(serverID, reply: reply)
+            }
+            if let error { return error }
+        }
+        do { try await userEngine.forgetServer(serverID) }
+        catch { return error.localizedDescription }
+        await refresh()
+        return nil
+    }
+
     func applyServerConfiguration(_ runtime: PendingNetRuntimeServer) async -> Bool {
         if takeover == "local" {
             do {
@@ -763,6 +794,36 @@ final class EngineController: ObservableObject {
         lastError = nil
         await refresh()
         return true
+    }
+
+    func prepareForTermination() async -> String? {
+        terminating = true
+        let deadline = ContinuousClock.now.advanced(by: .seconds(60))
+        while connectionBusy {
+            guard ContinuousClock.now < deadline else {
+                terminating = false
+                return String(localized: "正在切换，请稍后再退出")
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        await userEngine.stop()
+        guard service.status == .enabled else { return nil }
+        let version = await probeHelperInterfaceVersion()
+        let error: String?
+        if version >= 8 {
+            error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.shutdown(reply: reply) }
+        } else {
+            error = await withHelper(Optional(String(localized: "后台服务没有响应")), timeout: Self.engineTimeout) { p, reply in p.stopEngine(reply: reply) }
+            if error == nil {
+                // Legacy unconditional KeepAlive requires removing the old job.
+                // restoreLostRegistrationIfNeeded restores the user's prior choice.
+                do { try await service.unregister() }
+                catch { terminating = false; return error.localizedDescription }
+            }
+        }
+        if error != nil { terminating = false; return error }
+        let old = connection; dropConnection(); old?.invalidate()
+        return nil
     }
 
     func stopBeforeTermination() {

@@ -222,6 +222,7 @@ struct PendingNetManagementView: View {
     @EnvironmentObject private var linkInbox: PendingNetManagementLinkInbox
     @StateObject private var controller = PendingNetManagementController()
     @State private var link = ""
+    @State private var showingImport = false
     @State private var revokeUserID: String?
     @State private var revokeServerID: String?
     @State private var confirmAdminIssue = false
@@ -235,30 +236,17 @@ struct PendingNetManagementView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("管理")
-                    .font(PendingNetTheme.Fonts.sectionTitle("管理"))
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("导入管理链接")
-                        .font(.headline)
-                    SecureField("粘贴 pendingnetm:// 管理链接", text: $link)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                    Button("导入") {
-                        let pasted = link
-                        link = ""
-                        Task {
-                            if await controller.importLink(pasted) { await controller.refresh() }
-                        }
-                    }
-                    .disabled(controller.working || controller.enrollmentInFlight || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            PendingConnectionCard {
+                HStack {
+                    Button("导入") { showingImport = true }
+                        .disabled(controller.working || controller.enrollmentInFlight)
+                    Spacer()
+                    Button("刷新") { Task { await controller.refresh() } }
+                        .disabled(controller.working || controller.servers.isEmpty)
                 }
 
                 if !controller.servers.isEmpty {
                     managedServers
-                    Button("刷新") { Task { await controller.refresh() } }
-                        .disabled(controller.working)
 
                     HStack {
                         Button("签发普通链接") {
@@ -329,10 +317,26 @@ struct PendingNetManagementView: View {
                     Text(error).foregroundStyle(PendingNetTheme.Palette.danger)
                 }
             }
-            .frame(maxWidth: 640, alignment: .leading)
+            .buttonStyle(PendingQuietButtonStyle(fill: PendingNetTheme.Palette.surface))
+            .font(PendingNetTheme.Fonts.body)
             .padding(PendingNetTheme.Metrics.gutter)
+            .frame(maxWidth: PendingNetTheme.Metrics.readableWidth)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(PendingNetTheme.Palette.canvas.ignoresSafeArea())
+        .sheet(isPresented: $showingImport) {
+            PendingPasteImportSheet(busy: controller.working, isManagement: true, initialText: link) { pasted in
+                link = ""
+                showingImport = false
+                Task { if await controller.importLink(pasted) { await controller.refresh() } }
+            } onCancel: {
+                link = ""
+                showingImport = false
+            }
+            #if os(iOS)
+            .presentationDetents([.medium])
+            #endif
+        }
         .alert("删除管理 VPS？", isPresented: Binding(get: { deletingManagedServerID != nil }, set: { if !$0 { deletingManagedServerID = nil } })) {
             Button("取消", role: .cancel) { deletingManagedServerID = nil }
             Button("删除", role: .destructive) {
@@ -419,39 +423,24 @@ struct PendingNetManagementView: View {
         confirmAdminIssue = false; adminIssueServerID = nil
     }
 
-    @ViewBuilder private var managedServers: some View {
-        #if os(iOS)
-        List(controller.servers) { server in
-            Button { selectManagedServer(server.serverID) } label: {
-                HStack {
-                    Text(verbatim: server.name).foregroundStyle(PendingNetTheme.Palette.ink)
-                    Spacer()
-                    if controller.selectedServerID == server.serverID { Image(systemName: "checkmark") }
-                }.padding(.vertical, 14)
-            }
-            .background(GeometryReader { proxy in Color.clear.preference(key: PendingVPSRowHeight.self, value: [server.serverID: proxy.size.height]) })
-            .listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button("删除", role: .destructive) { deletingManagedServerID = server.serverID }
-                    .disabled(controller.working || controller.enrollmentInFlight)
-            }
-        }
-        .listStyle(.plain).scrollDisabled(true)
-        .frame(height: controller.servers.reduce(CGFloat(0)) { $0 + (managedRowHeights[$1.serverID] ?? 70) })
-        .onPreferenceChange(PendingVPSRowHeight.self) { managedRowHeights = $0 }
-        #else
-        HStack {
-            Picker("服务器", selection: Binding(get: { controller.selectedServerID }, set: { selectManagedServer($0) })) {
-                ForEach(controller.servers) { server in Text(server.name).tag(Optional(server.serverID)) }
-            }
-            Button("删除", role: .destructive) { deletingManagedServerID = controller.selectedServerID }
-                .disabled(controller.working || controller.enrollmentInFlight)
-        }
-        #endif
+    private var managedServers: some View {
+        PendingVPSList(
+            items: controller.servers.map { server in
+                PairedVPSRecord(serverID: server.serverID, name: server.name,
+                    endpoint: server.endpoint, certificateSHA256: server.certificateSHA256,
+                    deviceID: server.deviceID, capabilities: [])
+            },
+            selectedID: controller.selectedServerID,
+            showsDetails: false,
+            onDelete: { deletingManagedServerID = $0 }
+        ) { id in
+            guard !controller.working, !controller.enrollmentInFlight else { return }
+            selectManagedServer(id)
+        } onShowDetails: { _ in }
     }
 
     private func acceptOpenedLink() {
-        if let incoming = linkInbox.take() { link = incoming }
+        if let incoming = linkInbox.take() { link = incoming; showingImport = true }
     }
 
     private func exportConfig(_ platform: PendingNetClientConfigPlatform) {

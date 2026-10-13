@@ -21,8 +21,12 @@ if ! rg -Uq '\.onDisappear \{[^}]*showExporter = false[^}]*exportDocument = nil[
     echo "Management tab retains an export after leaving" >&2
     exit 1
 fi
-if ! rg -Uq 'set: \{ id in[^}]*controller\.selectServer\(id\)[^}]*showExporter = false[^}]*exportDocument = nil[^}]*exportServerID = nil' "$view"; then
+if ! rg -Uq 'func selectManagedServer\(_ id: String\?\) \{[^}]*controller\.selectServer\(id\)[^}]*showExporter = false[^}]*exportDocument = nil[^}]*exportServerID = nil' "$view"; then
     echo "Management tab retains an export after switching servers" >&2
+    exit 1
+fi
+if ! rg -Uq 'selectManagedServer\(id\)' "$view"; then
+    echo "Management list does not route server changes through transient cleanup" >&2
     exit 1
 fi
 if ! rg -Uq 'func selectServer\(_ id: String\?\) \{\n\s*guard[^\n]*\n\s*clearTransientLink\(\)\n\s*selectedServerID = id' "$view"; then
@@ -45,7 +49,7 @@ if ! rg -Uq 'try store\.upsert\(server\)\n\s*servers = store\.servers\n\s*guard 
     echo "Late enrollment overwrites the currently selected server" >&2
     exit 1
 fi
-if ! rg -q '\.disabled\(controller\.working \|\| controller\.enrollmentInFlight \|\|' "$view"; then
+if ! rg -q '\.disabled\(controller\.working \|\| controller\.enrollmentInFlight( \|\||\))' "$view"; then
     echo "Management import may discard another pasted link during enrollment" >&2
     exit 1
 fi

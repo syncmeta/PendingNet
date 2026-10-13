@@ -1,3 +1,4 @@
+import Libbox
 import SBTallyCore
 import SwiftUI
 
@@ -12,10 +13,25 @@ import SwiftUI
 struct PendingNetIOSSettingsView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
 
+    @State private var switchingOutbound: String?
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    PendingLatencyMethodRow()
+                    if controller.tunnel.isTunnelLive {
+                        PendingProtocolPicker(members: controller.tunnel.outboundMembers,
+                            selectorTag: controller.tunnel.selectorTag, selected: controller.tunnel.currentOutbound,
+                            switchingTag: switchingOutbound) { tag in
+                            Task {
+                                switchingOutbound = tag
+                                defer { switchingOutbound = nil }
+                                do { try await controller.tunnel.selectOutbound(tag) }
+                                catch { controller.errorMessage = error.localizedDescription }
+                            }
+                        }
+                    }
                     PendingLocalInboundCard(
                         listenAddress: controller.tunnel.localInbound.listenAddress,
                         port: controller.tunnel.localInbound.port,
@@ -43,7 +59,7 @@ struct PendingNetIOSSettingsView: View {
                             }
                         }
                     )
-                    PendingUpdateCard(version: Self.versionText)
+                    PendingUpdateCard(version: Self.versionText, engineVersion: LibboxVersion())
                     Link("GitHub", destination: PendingNetProjectLink.url)
                 }
                 .padding(PendingNetTheme.Metrics.gutter)
@@ -52,6 +68,9 @@ struct PendingNetIOSSettingsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .toolbarBackground(PendingNetTheme.Palette.canvas, for: .navigationBar)
             .tint(PendingNetTheme.Palette.accent)
+            .onChange(of: controller.tunnel.isTunnelLive) { _, live in
+                if !live { switchingOutbound = nil }
+            }
         }
     }
 

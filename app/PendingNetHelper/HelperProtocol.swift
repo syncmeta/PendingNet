@@ -15,9 +15,17 @@ import Security
 /// Version 2 added `repairSystemProxy`, which is precisely how that was
 /// discovered. Anything past version 1 must therefore stay behind the
 /// handshake in `EngineController`.
-public let pendingNetHelperInterfaceVersion = 7
+public let pendingNetHelperInterfaceVersion = 8
 
 @objc public protocol HelperProtocol {
+    // MARK: - Interface version 8
+    /// UUID from the running process's mapped main image, not the disk file.
+    func binaryIdentity(reply: @escaping (String) -> Void)
+    /// Restore owned networking, stop the engine/collector, then exit normally.
+    func shutdown(reply: @escaping (String?) -> Void)
+
+    func forgetServerConfiguration(_ serverID: String, reply: @escaping (String?) -> Void)
+
     // MARK: - Interface version 1
     // Present in every helper ever shipped, so these stay safe to send without
     // knowing which build is on the other end.

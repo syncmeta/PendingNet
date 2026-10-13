@@ -1,16 +1,9 @@
 import Foundation
 import Network
 
-/// 「一台 VPS 一个延迟数」。两端共用这一份，语义必须完全一样：
-/// **本机到这台 VPS 代理入口的一次 TCP 握手往返时间**。
-///
-/// 几条刻意的规矩：
-/// - 不是 ICMP ping。ping 走的端口和用户的流量不是一回事，很多 VPS 还直接
-///   把 ICMP 丢掉，测出来的「不通」是假的。
-/// - 不按协议出数。Reality 和 Hysteria2 各测一次得到的两个数字，差别多半是
-///   偶然波动，摆在用户面前只会让人以为要在两者之间做选择。
-/// - 连接时当前 VPS 可做真实代理访问测试；其他节点仍测端口。两种结果在行里
-///   明确标成「代理」/「端口」，不能把它们当同一种延迟横向比较。
+/// One comparable value per VPS: TCP handshake to its proxy entry, or ICMP
+/// echo to its host. ICMP does not validate the proxy service. Management ports
+/// are never used as a substitute for a missing TCP proxy.
 public struct PendingNetLatencyTarget: Equatable, Sendable {
     public enum Kind: Equatable, Sendable {
         /// 代理入口：Reality 的 TCP 端口，用户的 TCP 流量真的落在这里。
@@ -19,6 +12,7 @@ public struct PendingNetLatencyTarget: Equatable, Sendable {
         case controlPort
         /// 通过选中出站真实访问 HTTPS 测试站。
         case proxyAccess
+        case icmpEcho
     }
 
     public let host: String
@@ -40,6 +34,8 @@ public struct PendingNetLatencyTarget: Equatable, Sendable {
             String(format: localizedLatency("控制端口 %@:%lld"), host, Int64(port))
         case .proxyAccess:
             String(format: localizedLatency("经所选代理访问 %@"), host)
+        case .icmpEcho:
+            "ICMP \(host)"
         }
     }
 
@@ -47,18 +43,13 @@ public struct PendingNetLatencyTarget: Equatable, Sendable {
     ///
     /// 优先代理入口：那是用户实际连接会走的通道，端口被封或服务没起来时这里
     /// 就是不通的，而控制端口照样会答应——只测控制端口等于报喜不报忧。
-    /// 拉到节点资料之前退回控制端口，总比一个数字都没有强，但要在详情里讲明白。
+    /// 没有 TCP 代理入口时不测管理口；UDP-only 节点可使用 ICMP。
     public static func forVPS(_ record: PairedVPSRecord) -> PendingNetLatencyTarget? {
         if let host = record.proxyTCPHost, !host.isEmpty,
            let port = record.proxyTCPPort, isValidPort(port) {
             return PendingNetLatencyTarget(host: host, port: port, kind: .proxyEntry)
         }
-        guard let components = URLComponents(string: record.endpoint),
-              let host = components.host, !host.isEmpty else { return nil }
-        // 控制端点一直是带端口的；万一没有，按 https 的默认端口算。
-        let port = components.port ?? 443
-        guard isValidPort(port) else { return nil }
-        return PendingNetLatencyTarget(host: host, port: port, kind: .controlPort)
+        return nil
     }
 
     private static func isValidPort(_ port: Int) -> Bool { (1...65535).contains(port) }
@@ -76,6 +67,9 @@ public extension PairedVPSRecord {
         }
         proxyTCPHost = reality?.server
         proxyTCPPort = reality?.serverPort
+        let hy = profile.protocols.compactMap(\.hysteria2).first
+        proxyUDPHost = hy?.server
+        proxyUDPPort = hy?.serverPort
     }
 }
 
@@ -91,7 +85,7 @@ public enum PendingNetLatencyOutcome: Equatable, Sendable {
         switch self {
         case .measuring: nil
         case .ok(let milliseconds, let target):
-            "\(milliseconds) ms · \(localizedLatency(target.kind == .proxyAccess ? "代理" : "端口"))"
+            "\(milliseconds) ms · \((target.kind == .proxyAccess ? localizedLatency("代理") : target.kind == .icmpEcho ? "ICMP" : "TCP"))"
         case .failed: localizedLatency("不通")
         }
     }
@@ -174,13 +168,16 @@ public final class PendingNetLatencyTester: ObservableObject {
 
     private let timeout: TimeInterval
     private let probe: Probe
+    private let icmpProbe: Probe
 
     public init(
         timeout: TimeInterval = 5,
-        probe: @escaping Probe = PendingNetTCPProbe.handshake
+        probe: @escaping Probe = PendingNetTCPProbe.handshake,
+        icmpProbe: @escaping Probe = PendingNetICMPProbe.echo
     ) {
         self.timeout = timeout
         self.probe = probe
+        self.icmpProbe = icmpProbe
     }
 
     public func outcome(for serverID: String) -> PendingNetLatencyOutcome? { results[serverID] }
@@ -189,8 +186,15 @@ public final class PendingNetLatencyTester: ObservableObject {
 
     public var busy: Bool { results.values.contains(.measuring) }
 
-    public func measure(_ record: PairedVPSRecord) async {
-        guard let target = PendingNetLatencyTarget.forVPS(record) else {
+    public func measure(_ record: PairedVPSRecord, method: PendingNetLatencyMethod = .tcp) async {
+        let selectedTarget: PendingNetLatencyTarget?
+        if method == .icmp {
+            let host = record.proxyTCPHost ?? record.proxyUDPHost ?? record.address
+            selectedTarget = host.isEmpty ? nil : .init(host: host, port: 0, kind: .icmpEcho)
+        } else {
+            selectedTarget = PendingNetLatencyTarget.forVPS(record)
+        }
+        guard let target = selectedTarget else {
             results[record.serverID] = .failed(
                 PendingNetLatencyFailure.message(
                     for: PendingNetLatencyError.unresolvableAddress,
@@ -201,7 +205,7 @@ public final class PendingNetLatencyTester: ObservableObject {
         }
         results[record.serverID] = .measuring
         do {
-            let milliseconds = try await probe(target.host, target.port, timeout)
+            let milliseconds = try await (method == .icmp ? icmpProbe : probe)(target.host, target.port, timeout)
             results[record.serverID] = .ok(milliseconds: milliseconds, target: target)
         } catch {
             results[record.serverID] = .failed(
@@ -231,6 +235,7 @@ public final class PendingNetLatencyTester: ObservableObject {
     /// 逐台测一遍。并发跑：一台不通要等到超时，串行会让后面的一起陪等。
     public func measureAll(
         _ records: [PairedVPSRecord],
+        method: PendingNetLatencyMethod = .tcp,
         activeServerID: String? = nil,
         proxyProbe: (@Sendable () async throws -> Int)? = nil
     ) async {
@@ -240,7 +245,7 @@ public final class PendingNetLatencyTester: ObservableObject {
                     if record.serverID == activeServerID, let proxyProbe {
                         await self.measureProxy(record, probe: proxyProbe)
                     } else {
-                        await self.measure(record)
+                        await self.measure(record, method: method)
                     }
                 }
             }

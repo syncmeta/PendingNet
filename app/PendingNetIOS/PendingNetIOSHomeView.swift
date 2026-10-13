@@ -12,8 +12,9 @@ struct PendingNetIOSHomeView: View {
     @EnvironmentObject private var controller: PendingNetIOSController
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingPasteImport = false
+    @State private var editingNodes = false
+    @AppStorage(PendingNetLatencyMethod.preferenceKey) private var latencyMethod = "tcp"
     @State private var showingLog = false
-    @State private var switchingOutbound: String?
     @State private var switchingRouteMode = false
     @State private var detailServerID: String?
     @State private var deletingServerID: String?
@@ -64,7 +65,8 @@ struct PendingNetIOSHomeView: View {
                 latency: latency.outcome(for: server.serverID),
                 isMeasuring: latency.isMeasuring(server.serverID),
                 onMeasure: { Task { await measure(server) } },
-                onRename: { controller.renameServer(server.serverID, to: $0) }
+                onRename: { controller.renameServer(server.serverID, to: $0) },
+                onDelete: { detailServerID = nil; deletingServerID = server.serverID }
             )
         }
         .alert("删除 VPS？", isPresented: Binding(get: { deletingServerID != nil }, set: { if !$0 { deletingServerID = nil } })) {
@@ -90,14 +92,7 @@ struct PendingNetIOSHomeView: View {
         .onChange(of: scenePhase) { _, phase in
             controller.tunnel.setForeground(phase == .active)
         }
-        // 隧道一旦不在位，「切换中」标志必须无条件归位。它是 @State，活得比
-        // 选择器的显示条件长：靠 RPC 自己返回来清是不够的（挂住的调用可能
-        // 永远不返回），那样重连之后每一行都会是灰的、且没有任何用户可见的
-        // 恢复路径。
-        .onChange(of: controller.tunnel.isTunnelLive) { _, live in
-            guard !live else { return }
-            switchingOutbound = nil
-        }
+
     }
 
     // MARK: - 一张卡，一种控件
@@ -111,9 +106,6 @@ struct PendingNetIOSHomeView: View {
             vpsList
                 .padding(.top, 10)
 
-            if controller.tunnel.isTunnelLive, !controller.tunnel.outboundMembers.isEmpty {
-                outboundPills
-            }
         }
     }
 
@@ -255,6 +247,8 @@ struct PendingNetIOSHomeView: View {
             HStack {
                 Spacer()
                 if !controller.servers.isEmpty {
+                    Button(LocalizedStringKey(editingNodes ? "完成" : "编辑")) { editingNodes.toggle() }
+                        .buttonStyle(PendingQuietButtonStyle(fill: PendingNetTheme.Palette.surface))
                     Button("测延迟") { testAll() }
                     .buttonStyle(PendingQuietButtonStyle(
                         fill: PendingNetTheme.Palette.surface
@@ -274,6 +268,7 @@ struct PendingNetIOSHomeView: View {
                 switchingID: controller.switchingServerID,
                 unpairedIDs: controller.unpairedServerIDs,
                 latencies: latency.results,
+                isEditing: editingNodes,
                 onDelete: { deletingServerID = $0 }
             ) { serverID in
                 guard controller.switchingServerID == nil,
@@ -290,63 +285,10 @@ struct PendingNetIOSHomeView: View {
     }
 
     private func measure(_ server: IOSPairedServer) async {
-        if controller.tunnel.isTunnelLive,
-           controller.selectedServerID == server.serverID {
-            await latency.measureProxy(server) {
-                try await controller.tunnel.measureSelectedProxyDelay()
-            }
-        } else {
-            await latency.measure(server)
-        }
+        await latency.measure(server, method: PendingNetLatencyMethod(rawValue: latencyMethod) ?? .tcp)
     }
-
     private func testAll() {
-        let active = controller.tunnel.isTunnelLive ? controller.selectedServerID : nil
-        let tunnel = controller.tunnel
-        let servers = controller.servers
-        let tester = latency
-        if let active {
-            Task<Void, Never> {
-                await tester.measureAll(
-                    servers, activeServerID: active,
-                    proxyProbe: { try await tunnel.measureSelectedProxyDelay() }
-                )
-            }
-        } else {
-            Task<Void, Never> { await tester.measureAll(servers) }
-        }
-    }
-
-    // MARK: - 协议
-
-    /// 协议手选。只在隧道在位、且控制通道已经推回分组成员时出现——切换要经
-    /// command client 连扩展里的 command server，隧道没起来时无从谈起。
-    /// 切换不重启隧道。
-    ///
-    /// 这里以前还有一个「测速」按钮，按协议给出各自的 urltest 延迟。撤掉了：
-    /// 同一台 VPS 的两个协议差出来的多半是偶然波动，摆成两个数字只会让人
-    /// 以为要照着它挑协议。延迟现在是「一台 VPS 一个数」，在上面的 VPS
-    /// 列表里。内核自己的 urltest 照旧跑，「混合」还是它在选。
-    ///
-    /// 选项名不在这里拼——两端共用 `PendingProtocolPicker`，名字统一走
-    /// `PendingNetOutboundNaming`，Mac 和 iPhone 上才会一字不差。
-    private var outboundPills: some View {
-        PendingProtocolPicker(
-            members: controller.tunnel.outboundMembers,
-            selectorTag: controller.tunnel.selectorTag,
-            selected: controller.tunnel.currentOutbound,
-            switchingTag: switchingOutbound
-        ) { tag in
-            Task {
-                switchingOutbound = tag
-                defer { switchingOutbound = nil }
-                do {
-                    try await controller.tunnel.selectOutbound(tag)
-                } catch {
-                    controller.errorMessage = error.localizedDescription
-                }
-            }
-        }
+        Task { await latency.measureAll(controller.servers, method: PendingNetLatencyMethod(rawValue: latencyMethod) ?? .tcp) }
     }
 
     // MARK: - 状态
@@ -393,28 +335,22 @@ struct PendingNetServerDetailSheet: View {
     let isMeasuring: Bool
     let onMeasure: () -> Void
     let onRename: (String) -> Void
+    let onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var nameDraft = ""
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    PendingServerNameEditor(name: server.name, onSave: onRename)
                     PendingVPSDetails(
                         server: server,
-                        nameStyle: .labeledRow,
+                        nameStyle: .hidden,
                         spacing: 12,
                         latency: latency
                     )
 
                     PendingNodeSharePanel(server: server)
-
-                    HStack {
-                        TextField("名称（留空则用 IP）", text: $nameDraft)
-                            .textFieldStyle(.roundedBorder)
-                        Button("保存") { onRename(nameDraft) }
-                            .buttonStyle(PendingQuietButtonStyle())
-                    }
 
                     Button {
                         onMeasure()
@@ -432,6 +368,8 @@ struct PendingNetServerDetailSheet: View {
                         fill: PendingNetTheme.Palette.surface
                     ))
                     .disabled(isMeasuring)
+                    Button("删除", role: .destructive) { dismiss(); onDelete() }
+                        .buttonStyle(.plain).foregroundStyle(PendingNetTheme.Palette.danger)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(PendingNetTheme.Metrics.gutter)
@@ -447,6 +385,5 @@ struct PendingNetServerDetailSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .onAppear { nameDraft = server.name }
     }
 }

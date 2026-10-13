@@ -78,3 +78,31 @@ public enum PendingNetEngineBinary {
         return URL(fileURLWithPath: path)
     }
 }
+
+#if os(macOS)
+public extension PendingNetEngineBinary {
+    /// Query the embedded executable, rather than showing a hard-coded label.
+    static func bundledVersion() async -> String? {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/sing-box")
+        return await Task.detached {
+            let process = Process()
+            process.executableURL = url
+            process.arguments = ["version"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                let deadline = Date().addingTimeInterval(3)
+                while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+                if process.isRunning { process.terminate(); return nil }
+                let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                guard process.terminationStatus == 0,
+                      let line = output.split(separator: "\n").first,
+                      line.hasPrefix("sing-box version ") else { return nil }
+                return String(line.dropFirst("sing-box version ".count))
+            } catch { return nil }
+        }.value
+    }
+}
+#endif

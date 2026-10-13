@@ -188,6 +188,7 @@ struct PendingRuleSetCard: View {
                 .buttonStyle(.borderless)
                 .disabled(refreshing)
             }
+            .padding(.vertical, 14)
         }
     }
 }
@@ -199,15 +200,18 @@ struct PendingRuleSetCard: View {
 /// iOS 上**不给**一个点了没反应的检查按钮：那种假控件比没有更糟。
 struct PendingUpdateCard<Trailing: View, Extra: View>: View {
     let version: String
+    let engineVersion: String?
     @ViewBuilder let trailing: Trailing
     @ViewBuilder let extra: Extra
 
     init(
         version: String,
+        engineVersion: String? = nil,
         @ViewBuilder trailing: () -> Trailing = { EmptyView() },
         @ViewBuilder extra: () -> Extra = { EmptyView() }
     ) {
         self.version = version
+        self.engineVersion = engineVersion
         self.trailing = trailing()
         self.extra = extra()
     }
@@ -223,6 +227,8 @@ struct PendingUpdateCard<Trailing: View, Extra: View>: View {
                     Spacer()
                     trailing
                 }
+                Text(verbatim: "sing-box \(engineVersion ?? "—")")
+                    .font(PendingNetTheme.Fonts.body.monospaced())
                 extra
             }
             .font(PendingNetTheme.Fonts.body)

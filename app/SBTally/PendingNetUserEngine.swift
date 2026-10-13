@@ -138,6 +138,18 @@ final class PendingNetUserEngine {
         }
     }
 
+    func forgetServer(_ serverID: String) async throws {
+        guard fileManager.fileExists(atPath: configURL.path) else { return }
+        let old = try Data(contentsOf: configURL)
+        let updated = try PendingNetLocalConfigComposer.removingServer(serverID, from: old)
+        guard old != updated else { return }
+        try validate(updated)
+        let wasRunning = isRunning
+        if wasRunning { await stop() }
+        try updated.write(to: configURL, options: .atomic)
+        if wasRunning { try await start() }
+    }
+
     func apply(_ runtime: PendingNetRuntimeServer) async throws {
         try prepareDirectory()
         let base = try PendingNetProxyOnlyConfig.make(
@@ -166,6 +178,12 @@ final class PendingNetUserEngine {
     func start() async throws {
         if isRunning { return }
         guard fileManager.fileExists(atPath: configURL.path) else {
+            throw PendingNetUserEngineError.noConfiguration
+        }
+        let data = try Data(contentsOf: configURL)
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let outbounds = root?["outbounds"] as? [[String: Any]] ?? []
+        guard outbounds.contains(where: { ($0["type"] as? String) == "selector" && ($0["tag"] as? String)?.hasPrefix("pendingnet-") == true }) else {
             throw PendingNetUserEngineError.noConfiguration
         }
         let binary = try singBoxBinary()

@@ -1,9 +1,33 @@
 import Foundation
+import MachO
 import SBTallyCore
 import SystemConfiguration
 
 /// Captured at launch so the app can tell whether this process predates the
 /// helper binary currently sitting in the app bundle.
+// Capture the UUID from mapped memory so replacing the bundle cannot make an
+// old process report the new binary's identity.
+let helperBinaryIdentity: String = {
+    guard let header = _dyld_get_image_header(0), header.pointee.magic == MH_MAGIC_64 else { return "" }
+    let base = UnsafeRawPointer(header)
+    var offset = MemoryLayout<mach_header_64>.size
+    let end = offset + Int(header.pointee.sizeofcmds)
+    for _ in 0..<header.pointee.ncmds {
+        guard offset + 8 <= end else { return "" }
+        let command = base.advanced(by: offset).load(as: load_command.self)
+        guard command.cmdsize >= 8, Int(command.cmdsize) <= end - offset else { return "" }
+        if command.cmd == LC_UUID && command.cmdsize == 24 {
+            return UnsafeRawBufferPointer(start: base.advanced(by: offset + 8), count: 16)
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        offset += Int(command.cmdsize)
+    }
+    return ""
+}()
+if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--print-binary-identity" {
+    print(helperBinaryIdentity)
+    exit(helperBinaryIdentity.isEmpty ? 1 : 0)
+}
 let helperStartTime = Date().timeIntervalSince1970
 let ETC = "/usr/local/etc/sbtally"
 let LABEL = "system/" + PendingNetEngineDaemon.label
@@ -599,6 +623,56 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     /// TUN / 系统代理下的统计采集器。它和引擎同生命周期 —— 引擎起来它就起，
     /// 引擎停掉它就停，配置换了就重来一遍。
     let stats = StatsCollector()
+    private let clientsLock = NSLock()
+    private var clients = Set<pid_t>()
+    private var retiring = false
+    private var acceptsMutations: Bool {
+        clientsLock.lock(); defer { clientsLock.unlock() }
+        return !retiring
+    }
+
+    private var lifetimeTimer: DispatchSourceTimer?
+
+    private func activeApplications() -> Set<pid_t> {
+        clientsLock.lock()
+        let known = clients
+        clientsLock.unlock()
+        let requirement = pendingNetCodeRequirement(identifier: PendingNetIdentifiers.app)
+        return Set(known.filter { pendingNetProcessSatisfies(pid: $0, requirement: requirement) })
+    }
+
+    func monitorApplicationLifetime() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue(label: "PendingNet.HelperLifetime"))
+        timer.schedule(deadline: .now() + 10, repeating: 5)
+        timer.setEventHandler { [weak self] in
+            guard let self, self.activeApplications().isEmpty else { return }
+            self.shutdown { error in if let error { helperLog("退出前恢复网络失败：" + error) } }
+        }
+        lifetimeTimer = timer
+        timer.resume()
+    }
+
+    func binaryIdentity(reply: @escaping (String) -> Void) { reply(helperBinaryIdentity) }
+
+    func shutdown(reply: @escaping (String?) -> Void) {
+        // One user quitting must not stop another signed PendingNet instance.
+        guard activeApplications().count <= 1 else { return reply(nil) }
+        clientsLock.lock()
+        guard !retiring else { clientsLock.unlock(); return reply("后台服务正在退出") }
+        retiring = true
+        clientsLock.unlock()
+        var failure: String?
+        withSerializedEngineOperation {
+            stopEngineLocked { failure = $0 }
+            if failure == nil && engineRunning() { failure = "后台引擎尚未停止" }
+        }
+        if let failure {
+            clientsLock.lock(); retiring = false; clientsLock.unlock()
+            return reply(failure)
+        }
+        reply(nil)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { exit(0) }
+    }
 
     /// 现在该不该由这一侧跑采集器。判断用 SBTallyCore 里那份（有单测，App 侧
     /// 用的是同一个）—— 「同一时刻只有一个 owner」这条不能两边各写一遍。
@@ -619,6 +693,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
 
     func startEngine(reply: @escaping (String?) -> Void) {
         withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
             startEngineLocked(reply: reply)
         }
     }
@@ -634,6 +709,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             reply([message, recovery].compactMap { $0 }.joined(separator: "；"))
         }
 
+        guard activeSelector() != nil else { return fail("请先选择节点") }
         switch PendingNetEngineLifecycle.startAction(engineRunning: engineRunning()) {
         case .reuseRunningEngine:
             if let error = acquireSystemDNS() { return fail(error) }
@@ -711,6 +787,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     }
     func setTakeover(_ mode: String, reply: @escaping (String?) -> Void) {
         withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
             setTakeoverLocked(mode, reply: reply)
         }
     }
@@ -790,6 +867,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     /// preference, and `reapplyStoredRouteMode` lands it at the next start.
     func setRouteMode(_ mode: String, reply: @escaping (String?) -> Void) {
         withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
             setRouteModeLocked(mode, reply: reply)
         }
     }
@@ -821,6 +899,47 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
             reply(true)
         }
     }
+    func forgetServerConfiguration(_ serverID: String, reply: @escaping (String?) -> Void) {
+        withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
+            let selector = PendingNetRuntimeServer.selectorTag(forServerID: serverID)
+            let wasRunning = engineRunning()
+            let removingActive = activeSelector() == selector
+            if removingActive {
+                var failure: String?
+                stopEngineLocked { failure = $0 }
+                if let failure { return reply(failure) }
+                guard !engineRunning() else { return reply("后台引擎尚未停止") }
+            }
+            do {
+                var updates: [(String, Data)] = []
+                for name in ["master-tun.json", "master-notun.json", "master.json"] {
+                    let path = "\(ETC)/\(name)"
+                    guard FileManager.default.fileExists(atPath: path) else { continue }
+                    let data = try readData(path: path)
+                    let updated = try PendingNetLocalConfigComposer.removingServer(serverID, from: data)
+                    guard updated != data else { continue }
+                    try validateConfig(updated, name: name)
+                    updates.append((path, updated))
+                }
+                if updates.isEmpty && !removingActive { return reply(nil) }
+                if wasRunning && !removingActive {
+                    var failure: String?
+                    stopEngineLocked { failure = $0 }
+                    if let failure { return reply(failure) }
+                }
+                for (path, data) in updates { try writeConfig(data, path: path) }
+                if removingActive { try FileManager.default.removeItem(atPath: ACTIVE_SELECTOR) }
+                if wasRunning && !removingActive {
+                    var failure: String?
+                    startEngineLocked { failure = $0 }
+                    if let failure { return reply(failure) }
+                }
+                reply(nil)
+            } catch { reply(error.localizedDescription) }
+        }
+    }
+
     func applyServerConfiguration(
         _ serverID: String,
         name: String,
@@ -829,6 +948,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         reply: @escaping (String?) -> Void
     ) {
         withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
             applyServerConfigurationLocked(
                 serverID,
                 name: name,
@@ -972,6 +1092,7 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     func selectProtocol(_ selectorTag: String, name: String,
                         reply: @escaping (String?) -> Void) {
         withSerializedEngineOperation {
+            guard acceptsMutations else { return reply("后台服务正在退出") }
             guard engineRunning(), activeSelector() == selectorTag,
                   let data = try? readData(path: "\(ETC)/master.json") else {
                 return reply("当前 VPS 尚未连接")
@@ -1052,7 +1173,13 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
     /// The reply is the caller's own connection tearing down, so drain briefly
     /// first and let the exit happen off the incoming message's thread.
     func quitForUpgrade() {
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { exit(0) }
+        clientsLock.lock(); retiring = true; clientsLock.unlock()
+        DispatchQueue.global().async {
+            withSerializedEngineOperation {
+                // Drain any configuration write already in progress.
+                exit(0)
+            }
+        }
     }
 
     func listener(_ l: NSXPCListener, shouldAcceptNewConnection c: NSXPCConnection) -> Bool {
@@ -1065,6 +1192,10 @@ final class Helper: NSObject, HelperProtocol, NSXPCListenerDelegate {
         }
         // 采集器要降到「现在在用这台机器的人」身上跑（统计库在他的目录里）。
         // 连过来的这一头就是那个人，比控制台用户更准。
+        clientsLock.lock()
+        guard !retiring else { clientsLock.unlock(); return false }
+        clients.insert(c.processIdentifier)
+        clientsLock.unlock()
         stats.noteCaller(uid: c.effectiveUserIdentifier)
         c.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         c.exportedObject = self
@@ -1306,4 +1437,5 @@ linkSelfHealer.start()
 let listener = NSXPCListener(machServiceName: PendingNetIdentifiers.helper)
 listener.delegate = delegate
 listener.resume()
+delegate.monitorApplicationLifetime()
 RunLoop.main.run()
