@@ -31,7 +31,6 @@ struct PendingNetSidebar: NSViewRepresentable {
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         outline.reloadData()
-        outline.expandItem(context.coordinator.statistics)
         context.coordinator.outline = outline
         context.coordinator.select(selection ?? .connection)
         return scroll
@@ -43,9 +42,10 @@ struct PendingNetSidebar: NSViewRepresentable {
 
     final class Node: NSObject {
         let section: PendingNetSection?
-        let children: [Node]
-        init(_ section: PendingNetSection? = nil, children: [Node] = []) {
-            self.section = section; self.children = children
+        let children: [Node] = []
+        let isSpacer: Bool
+        init(_ section: PendingNetSection? = nil, isSpacer: Bool = false) {
+            self.section = section; self.isSpacer = isSpacer
         }
     }
     @MainActor
@@ -53,8 +53,8 @@ struct PendingNetSidebar: NSViewRepresentable {
         var parent: PendingNetSidebar
         private var syncingSelection = false
         weak var outline: NSOutlineView?
-        let statistics = Node(children: [.init(.live), .init(.apps), .init(.domains)])
-        lazy var roots: [Node] = [.init(.connection), statistics, .init(.logs), .init(.management), .init(.settings)]
+        let statistics = Node()
+        lazy var roots: [Node] = [.init(.connection), statistics, .init(.live), .init(.apps), .init(.domains), .init(isSpacer: true), .init(.logs), .init(.management), .init(.settings)]
         init(_ parent: PendingNetSidebar) { self.parent = parent }
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
             (item as? Node)?.children.count ?? roots.count
@@ -74,6 +74,7 @@ struct PendingNetSidebar: NSViewRepresentable {
         func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
             let node = item as! Node
             let cell = NSTableCellView()
+            if node.isSpacer { return cell }
             let text = NSTextField(labelWithString: node.section?.title ?? String(localized: "统计"))
             text.font = node.section == nil ? .systemFont(ofSize: 11, weight: .semibold) : .systemFont(ofSize: 13)
             text.lineBreakMode = .byTruncatingTail
@@ -97,6 +98,10 @@ struct PendingNetSidebar: NSViewRepresentable {
                 text.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4)
             ])
             return cell
+        }
+        func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+            let node = item as! Node
+            return node.isSpacer ? 12 : node.section == nil ? 24 : 32
         }
         func outlineView(_ outlineView: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? {
             PendingNetSidebarRow()

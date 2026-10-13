@@ -42,6 +42,7 @@ struct Fixture: View {
             }
             guard let outline = findOutline(host) else { fatalError("No native outline view") }
             let row = (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? PendingNetSidebar.Node)?.section == .management }!
+            guard (0..<outline.numberOfRows).allSatisfy({ !outline.isExpandable(outline.item(atRow: $0)!) }) else { fatalError("Statistics must be a static label") }
             let rect = outline.rect(ofRow: row)
             let point = outline.convert(NSPoint(x: outline.bounds.maxX - 12, y: rect.midY), to: nil)
             let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.01, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
