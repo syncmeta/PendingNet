@@ -30,15 +30,20 @@ public enum PendingNetClientExport {
             "listen": options.allowsLAN ? "0.0.0.0" : "127.0.0.1", "listen_port": options.port]
         if options.mode == .sysproxy { mixed["set_system_proxy"] = true }
         var inbounds: [[String: Any]] = [mixed]
-        var route: [String: Any] = ["final": final, "auto_detect_interface": true]
+        var route: [String: Any] = ["final": final, "auto_detect_interface": true, "default_domain_resolver": PendingNetDNSPolicy.bootstrapResolver]
         if options.mode == .tun {
             var tun: [String: Any] = ["type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"], "auto_route": true]
             if options.platform == .windows { tun["strict_route"] = true }
             inbounds.insert(tun, at: 0)
             route["rules"] = [["protocol": "dns", "action": "hijack-dns"]]
         }
+        var rules = route["rules"] as? [[String: Any]] ?? []
+        rules.insert(["action": "sniff"], at: 0)
+        rules.append(["action": "resolve", "server": "dns-proxy", "strategy": "prefer_ipv4"])
+        route["rules"] = rules
         let config: [String: Any] = ["log": ["level": "warn"], "inbounds": inbounds, "outbounds": outbounds,
-            "route": route, "dns": ["servers": [["type": "https", "tag": "doh", "server": "1.1.1.1", "path": "/dns-query", "tls": ["enabled": true, "server_name": "cloudflare-dns.com"], "detour": final]], "final": "doh"]]
+            "route": route, "dns": ["servers": PendingNetDNSPolicy.servers(proxy: final), "final": "dns-proxy", "strategy": "prefer_ipv4"]]
+
         return try JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys])
     }
 }

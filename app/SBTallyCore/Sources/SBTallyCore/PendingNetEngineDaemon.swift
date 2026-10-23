@@ -61,7 +61,8 @@ public enum PendingNetEngineDaemon {
         for url in [masterURL, tunURL, noTunURL] where fileManager.fileExists(atPath: url.path) {
             let existing = try Data(contentsOf: url)
             let legacy = try PendingNetRootConfig.migratingLegacyLocalDNS(in: existing)
-            let migrated = try PendingNetRootConfig.migratingSystemDNS(in: legacy)
+            let policy = try PendingNetRootConfig.migratingGeneratedDNSPolicy(in: legacy)
+            let migrated = try PendingNetRootConfig.migratingSystemDNS(in: policy)
             if migrated != existing {
                 try migrated.write(to: url, options: .atomic)
             }

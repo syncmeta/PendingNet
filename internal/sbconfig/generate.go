@@ -95,13 +95,10 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 
 	rules := []any{
 		map[string]any{"action": "sniff"},
-		// Resolve destinations to IPv4 before routing so the IPv4-only TUN
-		// handles sites with IPv6 (browsers otherwise hang on AAAA). CN names
-		// via the local resolver, everything else via the proxy resolver.
-		map[string]any{"rule_set": "geosite-cn", "action": "resolve", "server": "dns-local", "strategy": "prefer_ipv4"},
-		map[string]any{"action": "resolve", "strategy": "prefer_ipv4"},
 		map[string]any{"protocol": "dns", "action": "hijack-dns"},
 	}
+	rules = append(rules, clashResolveRules()...)
+
 	for _, ar := range opts.AppRules {
 		r := map[string]any{"process_name": []string{ar.Process}}
 		if ar.Target == "block" {
@@ -189,22 +186,14 @@ func Generate(vpsList []VPS, opts Options) ([]byte, error) {
 	clashAPI["default_mode"] = str(opts.DefaultMode, "Whitelist")
 
 	cfg := map[string]any{
-		"log": map[string]any{"level": str(opts.LogLevel, "warn")},
-		"dns": map[string]any{
-			"servers": []any{
-				map[string]any{"type": "https", "tag": "dns-proxy", "server": "1.1.1.1", "path": "/dns-query", "detour": "proxy"},
-				map[string]any{"type": "local", "tag": "dns-local"},
-			},
-			"rules":    []any{map[string]any{"rule_set": "geosite-cn", "server": "dns-local"}},
-			"final":    "dns-proxy",
-			"strategy": "prefer_ipv4",
-		},
+		"log":       map[string]any{"level": str(opts.LogLevel, "warn")},
+		"dns":       ClashDNSPolicy("proxy"),
 		"inbounds":  inbounds,
 		"outbounds": outbounds,
 		"route": map[string]any{
 			"auto_detect_interface":   true,
 			"find_process":            true,
-			"default_domain_resolver": map[string]any{"server": "dns-proxy", "strategy": "prefer_ipv4"},
+			"default_domain_resolver": map[string]any{"server": "dns-direct", "strategy": "prefer_ipv4"},
 			"final":                   "proxy",
 			"rules":                   rules,
 			"rule_set":                ruleSet,

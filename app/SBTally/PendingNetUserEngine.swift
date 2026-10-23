@@ -183,8 +183,10 @@ final class PendingNetUserEngine {
         if isRunning { return }
         if fileManager.fileExists(atPath: configURL.path) {
             let old = try Data(contentsOf: configURL)
-            let preferred = try PendingNetProtocolPreferences().applying(to: old)
+            let migrated = try PendingNetProxyOnlyConfig.migratingMissingDNS(in: old)
+            let preferred = try PendingNetProtocolPreferences().applying(to: migrated)
             if old != preferred {
+                try validate(preferred)
                 try preferred.write(to: configURL, options: .atomic)
                 try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
             }

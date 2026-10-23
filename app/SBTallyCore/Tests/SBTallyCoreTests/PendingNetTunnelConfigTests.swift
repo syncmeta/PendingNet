@@ -456,7 +456,7 @@ final class PendingNetTunnelConfigTests: XCTestCase {
         // ipv4_only 把每个域名的查询数从 A+AAAA 两条降到一条。
         XCTAssertEqual(dns["strategy"] as? String, "ipv4_only")
         XCTAssertEqual(dns["disable_cache"] as? Bool, false)
-        XCTAssertEqual(dns["independent_cache"] as? Bool, false)
+        XCTAssertEqual(dns["independent_cache"] as? Bool, true)
         XCTAssertEqual(dns["final"] as? String, "dns-proxy")
     }
 

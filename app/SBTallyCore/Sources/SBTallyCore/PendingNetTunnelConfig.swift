@@ -183,28 +183,12 @@ public enum PendingNetTunnelConfig {
 
     static func dnsSection(selectorTag: String, mode: PendingNetRouteMode) -> [String: Any] {
         var section: [String: Any] = [
-            "servers": [
-                [
-                    "type": "https",
-                    "tag": "dns-proxy",
-                    "server": proxyDNSServer,
-                    "detour": selectorTag,
-                ],
-                // 直连解析器**不写 detour**：不写就是用默认拨号器，本来就是直连。
-                // 写成 `detour: direct` 语义完全一样，但内核会拒绝启动整条隧道
-                // （"detour to an empty direct outbound makes no sense"）——我们
-                // 那个 direct 出站是不带任何选项的空壳，绕经它等于什么也没做。
-                [
-                    "type": "https",
-                    "tag": "dns-direct",
-                    "server": directDNSServer,
-                ],
-            ],
+            "servers": PendingNetDNSPolicy.servers(proxy: selectorTag),
             "final": mode == .blacklist ? "dns-direct" : "dns-proxy",
             // A+AAAA 双查会让 goroutine 数直接翻倍，实测中这是主要放大器。
             "strategy": "ipv4_only",
             "disable_cache": false,
-            "independent_cache": false,
+            "independent_cache": true,
         ]
         switch mode {
         case .global:
@@ -236,7 +220,13 @@ public enum PendingNetTunnelConfig {
         let (proxyOutbounds, protocolTags) = try runtimeServer.managedProxyOutbounds()
         let mixTag = runtimeServer.selectorTag + "-mix"
 
-        var outbounds: [[String: Any]] = proxyOutbounds
+        // A shared link can name its proxy by hostname. Resolve that hostname
+        // directly over DoH so proxy DNS never depends on its own connection.
+        var outbounds: [[String: Any]] = proxyOutbounds.map {
+            var outbound = $0
+            outbound["domain_resolver"] = PendingNetDNSPolicy.bootstrapResolver
+            return outbound
+        }
         outbounds.append(["type": "urltest", "tag": mixTag, "outbounds": protocolTags])
         outbounds.append([
             "type": "selector",

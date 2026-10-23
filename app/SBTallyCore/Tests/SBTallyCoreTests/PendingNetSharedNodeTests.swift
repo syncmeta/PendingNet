@@ -58,6 +58,20 @@ final class PendingNetSharedNodeTests: XCTestCase {
 }
 
 extension PendingNetSharedNodeTests {
+    func testRealityLinkAndPairedProfileProduceIdenticalProtocolParameters() throws {
+        let original = try PendingNetSharedNode.decode(link:
+            "vless://11111111-1111-4111-8111-111111111111@203.0.113.8:443?security=reality&type=tcp&encryption=none&sni=www.example.com&pbk=public-key&sid=01&flow=xtls-rprx-vision&fp=chrome#Test")
+        let link = try XCTUnwrap(PendingNetNodeShare.links(profile: original.profile, name: "Shared").first)
+        let imported = try PendingNetSharedNode.decode(link: link.link)
+        // Use the same prefix so node identity does not obscure wire-parameter parity.
+        XCTAssertEqual(try original.profile.singBoxProxyOutbounds(tagPrefix: "test"),
+                       try imported.profile.singBoxProxyOutbounds(tagPrefix: "test"))
+        let query = try XCTUnwrap(URLComponents(string: link.link)?.queryItems)
+        XCTAssertEqual(query.first { $0.name == "flow" }?.value, "xtls-rprx-vision")
+        XCTAssertEqual(query.first { $0.name == "fp" }?.value, "chrome")
+        XCTAssertEqual(query.first { $0.name == "type" }?.value, "tcp")
+    }
+
     func testShareRoundTripsSecretsAndIPv6() throws {
         for source in [
             "vless://uuid@[2001:db8::1]:443?security=reality&sni=example.com&pbk=key&sid=ff&flow=xtls-rprx-vision#台北",

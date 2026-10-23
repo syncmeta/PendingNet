@@ -125,6 +125,7 @@ func BuildUserProxyConfigs(xray, hysteria json.RawMessage, state State, accounts
 	if json.Unmarshal(xray, &x) != nil || json.Unmarshal(hysteria, &h) != nil {
 		return nil, nil, errors.New("invalid engine configuration")
 	}
+	migrateDefaultServerDNS(x, h)
 	clients := []any{}
 	passwords := map[string]string{}
 	for _, u := range state.Users {

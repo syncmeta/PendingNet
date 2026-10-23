@@ -44,26 +44,7 @@ public enum PendingNetRootConfig {
 
         let root: [String: Any] = [
             "log": ["level": "warn", "timestamp": true],
-            "dns": [
-                "servers": [
-                    [
-                        "type": "https",
-                        "tag": "dns-proxy",
-                        "server": "1.1.1.1",
-                        "path": "/dns-query",
-                        "detour": "proxy",
-                    ],
-                    [
-                        "type": "udp",
-                        "tag": "dns-direct",
-                        "server": "223.5.5.5",
-                        "server_port": 53,
-                    ],
-                ],
-                "rules": [["rule_set": ["geosite-cn"], "server": "dns-direct"]],
-                "final": "dns-proxy",
-                "strategy": "prefer_ipv4",
-            ],
+            "dns": PendingNetDNSPolicy.clashSection(tags: ["geosite-cn", "geosite-gfw"]),
             "inbounds": inbounds,
             "outbounds": [
                 ["type": "selector", "tag": "proxy", "outbounds": ["direct"]],
@@ -72,10 +53,7 @@ public enum PendingNetRootConfig {
             "route": [
                 "auto_detect_interface": true,
                 "find_process": true,
-                "default_domain_resolver": [
-                    "server": "dns-proxy",
-                    "strategy": "prefer_ipv4",
-                ],
+                "default_domain_resolver": PendingNetDNSPolicy.bootstrapResolver,
                 "final": "proxy",
                 "rules": routeRules,
                 "rule_set": remoteRuleSets,
@@ -97,7 +75,7 @@ public enum PendingNetRootConfig {
     /// 老安装如果只有 `master.json`，这样补齐两份变体不会丢掉它已有的 VPS、规则、
     /// 控制密钥或其它本机策略。
     public static func variant(from data: Data, enableTUN: Bool) throws -> Data {
-        let migrated = try migratingLegacyLocalDNS(in: data)
+        let migrated = try migratingGeneratedDNSPolicy(in: migratingLegacyLocalDNS(in: data))
         guard var root = try JSONSerialization.jsonObject(with: migrated) as? [String: Any],
               var inbounds = root["inbounds"] as? [[String: Any]] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
@@ -132,35 +110,66 @@ public enum PendingNetRootConfig {
         return old == new ? data : updated
     }
 
-    /// 升级旧 root 配置时，只替换 PendingNet 曾经生成的那一个裸 `dns-local`。
-    /// 它在 macOS TUN 下依赖 DHCP / 系统 resolver；系统 DNS 被 TUN 接管后可能根本
-    /// 取不到上游，国内域名便在白名单直连规则生效前卡死。改为固定 IP 的国内 UDP
-    /// 上游，既不需要先解析 DNS 服务器本身，也不会依赖系统 resolver。这里不能写
-    /// `detour: direct`：空的 direct outbound 不是有效 detour，sing-box 的 `check`
-    /// 虽会放过，但真实 `run` 会拒绝启动；省略 detour 才是默认直连拨号器。
-    ///
-    /// 只有 server 恰好仍是旧生成器的 `{type, tag}` 两个字段时才迁移；用户给
-    /// `dns-local` 加过其它设置即视为自定义，原样保留。VPS、规则集和其它策略均不动。
+    /// Recognize the old generated split policy exactly; do not replace custom
+    /// DNS rules or other route actions when upgrading existing installations.
+    public static func migratingGeneratedDNSPolicy(in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var dns = root["dns"] as? [String: Any],
+              let rules = dns["rules"] as? [[String: Any]], rules.count == 1,
+              Set(rules[0].keys) == Set(["rule_set", "server"]),
+              (rules[0]["rule_set"] as? [String] == ["geosite-cn"] || rules[0]["rule_set"] as? String == "geosite-cn"),
+              rules[0]["server"] as? String == "dns-direct",
+              var route = root["route"] as? [String: Any],
+              var routeRules = route["rules"] as? [[String: Any]],
+              let sets = route["rule_set"] as? [[String: Any]] else { return data }
+        let tags = Set(sets.compactMap { $0["tag"] as? String })
+        guard tags.contains("geosite-cn"), tags.contains("geosite-gfw") else { return data }
+        let oldDomestic: [String: Any] = ["rule_set": ["geosite-cn"], "action": "resolve", "server": "dns-direct", "strategy": "prefer_ipv4"]
+        var oldCLI = oldDomestic
+        oldCLI["rule_set"] = "geosite-cn"
+        let oldFinal: [String: Any] = ["action": "resolve", "strategy": "prefer_ipv4"]
+        guard let index = routeRules.indices.first(where: {
+            NSDictionary(dictionary: routeRules[$0]).isEqual(to: oldDomestic) || NSDictionary(dictionary: routeRules[$0]).isEqual(to: oldCLI)
+        }), index + 1 < routeRules.count,
+        NSDictionary(dictionary: routeRules[index + 1]).isEqual(to: oldFinal) else { return data }
+        routeRules.replaceSubrange(index...index + 1, with: PendingNetDNSPolicy.resolveRules(tags: tags))
+        dns["rules"] = PendingNetDNSPolicy.clashRules(tags: tags)
+        dns["independent_cache"] = true
+        route["rules"] = routeRules
+        let resolver = route["default_domain_resolver"] as? [String: Any]
+        if resolver?["server"] as? String == "dns-proxy", Set(resolver!.keys).isSubset(of: ["server", "strategy"]) {
+            route["default_domain_resolver"] = PendingNetDNSPolicy.bootstrapResolver
+        }
+        root["dns"] = dns
+        root["route"] = route
+        return try encode(root)
+    }
+
+    /// Upgrade only the exact local/UDP resolvers generated by older versions.
+    /// Custom upstreams, TLS options and routing remain owned by their editor.
     public static func migratingLegacyLocalDNS(in data: Data) throws -> Data {
         guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
         guard var dns = root["dns"] as? [String: Any],
-              var servers = dns["servers"] as? [[String: Any]],
-              let legacyIndex = servers.firstIndex(where: {
-                  $0["type"] as? String == "local"
-                      && $0["tag"] as? String == "dns-local"
-                      && Set($0.keys) == Set(["type", "tag"])
-              }) else {
-            return data
+              var servers = dns["servers"] as? [[String: Any]] else { return data }
+        var changed = false
+        for index in servers.indices {
+            let server = servers[index]
+            let oldLocal = server["type"] as? String == "local"
+                && server["tag"] as? String == "dns-local"
+                && Set(server.keys) == Set(["type", "tag"])
+            let oldUDP = server["type"] as? String == "udp"
+                && server["tag"] as? String == "dns-direct"
+                && server["server"] as? String == "223.5.5.5"
+                && server["server_port"] as? Int == 53
+                && Set(server.keys) == Set(["type", "tag", "server", "server_port"])
+            if oldLocal || oldUDP {
+                servers[index] = PendingNetDNSPolicy.directServer
+                changed = true
+            }
         }
-
-        servers[legacyIndex] = [
-            "type": "udp",
-            "tag": "dns-direct",
-            "server": "223.5.5.5",
-            "server_port": 53,
-        ]
+        guard changed else { return data }
         dns["servers"] = servers
         if var rules = dns["rules"] as? [[String: Any]] {
             for index in rules.indices where rules[index]["server"] as? String == "dns-local" {
@@ -193,14 +202,8 @@ public enum PendingNetRootConfig {
     private static let routeRules: [[String: Any]] = [
         systemDNSRule,
         ["action": "sniff"],
-        [
-            "rule_set": ["geosite-cn"],
-            "action": "resolve",
-            "server": "dns-direct",
-            "strategy": "prefer_ipv4",
-        ],
-        ["action": "resolve", "strategy": "prefer_ipv4"],
         ["protocol": "dns", "action": "hijack-dns"],
+    ] + PendingNetDNSPolicy.resolveRules(tags: ["geosite-cn", "geosite-gfw"]) + [
         ["rule_set": ["geosite-ads"], "action": "reject"],
         ["ip_is_private": true, "outbound": "direct"],
         ["clash_mode": "Global", "outbound": "proxy"],

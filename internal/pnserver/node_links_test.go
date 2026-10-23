@@ -1,10 +1,46 @@
 package pnserver
 
 import (
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestRealityLinkMatchesExportedOutbound(t *testing.T) {
+	profile := testRealityProfile()
+	links, err := BuildNodeLinks(profile, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri, err := url.Parse(links[0].URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := BuildClientConfig(profile, "windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	outbound := root["outbounds"].([]any)[0].(map[string]any)
+	tls := outbound["tls"].(map[string]any)
+	reality := tls["reality"].(map[string]any)
+	for query, expected := range map[string]any{
+		"flow": outbound["flow"], "sni": tls["server_name"],
+		"pbk": reality["public_key"], "sid": reality["short_id"],
+		"fp": tls["utls"].(map[string]any)["fingerprint"], "type": "tcp", "security": "reality",
+	} {
+		if uri.Query().Get(query) != expected {
+			t.Errorf("link differs from runtime in %s", query)
+		}
+	}
+	if uri.User.Username() != outbound["uuid"] || uri.Hostname() != outbound["server"] {
+		t.Fatal("node identity changed")
+	}
+}
 
 func TestNodeLinksKeepCredentialsEscapedAndPinned(t *testing.T) {
 	profile := NodeProfile{Protocols: []NodeProtocol{

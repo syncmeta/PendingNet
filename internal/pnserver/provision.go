@@ -90,6 +90,7 @@ func BuildProvisionArtifacts(opts ProvisionOptions, reader io.Reader, now time.T
 
 	xrayConfig, err := json.MarshalIndent(map[string]any{
 		"log": map[string]any{"loglevel": "warning"},
+		"dns": xrayDNSPolicy(),
 		"inbounds": []any{map[string]any{
 			"listen": "0.0.0.0", "port": opts.XrayPort, "protocol": "vless",
 			"settings": map[string]any{
@@ -107,7 +108,7 @@ func BuildProvisionArtifacts(opts ProvisionOptions, reader io.Reader, now time.T
 			"sniffing": map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}},
 		}},
 		"outbounds": []any{
-			map[string]any{"tag": "direct", "protocol": "freedom"},
+			map[string]any{"tag": "direct", "protocol": "freedom", "settings": map[string]any{"domainStrategy": "ForceIPv4v6"}},
 			map[string]any{"tag": "blocked", "protocol": "blackhole"},
 		},
 		"routing": map[string]any{
@@ -122,10 +123,11 @@ func BuildProvisionArtifacts(opts ProvisionOptions, reader io.Reader, now time.T
 	certPath := opts.ServicesDir + "/hysteria.crt"
 	keyPath := opts.ServicesDir + "/hysteria.key"
 	hy2Config, err := json.MarshalIndent(map[string]any{
-		"listen": ":" + strconv.Itoa(opts.Hysteria2Port),
-		"tls":    map[string]any{"cert": certPath, "key": keyPath, "sniGuard": "disable"},
-		"obfs":   map[string]any{"type": "salamander", "salamander": map[string]any{"password": obfsPassword}},
-		"auth":   map[string]any{"type": "password", "password": hy2Password},
+		"listen":   ":" + strconv.Itoa(opts.Hysteria2Port),
+		"resolver": hysteriaDNSPolicy(),
+		"tls":      map[string]any{"cert": certPath, "key": keyPath, "sniGuard": "disable"},
+		"obfs":     map[string]any{"type": "salamander", "salamander": map[string]any{"password": obfsPassword}},
+		"auth":     map[string]any{"type": "password", "password": hy2Password},
 		"masquerade": map[string]any{
 			"type": "proxy", "proxy": map[string]any{"url": "https://www.cloudflare.com/", "rewriteHost": true},
 		},

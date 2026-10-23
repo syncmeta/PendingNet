@@ -53,14 +53,7 @@ func BuildClientConfig(profile NodeProfile, platform string) ([]byte, error) {
 		// The Android graphical client uses this option to keep its outbound
 		// sockets on the underlying network, outside its own VpnService TUN.
 		config["route"] = map[string]any{"final": "proxy", "auto_detect_interface": true}
-		config["dns"] = map[string]any{
-			"servers": []any{map[string]any{
-				"type": "https", "tag": "doh", "server": "1.1.1.1",
-				"path": "/dns-query", "tls": map[string]any{"enabled": true, "server_name": "cloudflare-dns.com"},
-				"detour": "proxy",
-			}},
-			"final": "doh",
-		}
+
 	} else {
 		config["inbounds"] = []any{map[string]any{
 			"type": "mixed", "tag": "local", "listen": "127.0.0.1",
@@ -68,6 +61,22 @@ func BuildClientConfig(profile NodeProfile, platform string) ([]byte, error) {
 		}}
 		config["route"] = map[string]any{"final": "proxy"}
 	}
+	config["dns"] = map[string]any{
+		"servers": []any{map[string]any{
+			"type": "https", "tag": "doh", "server": "1.1.1.1",
+			"path": "/dns-query", "tls": map[string]any{"enabled": true, "server_name": "cloudflare-dns.com"},
+			"detour": "proxy",
+		}},
+		"final": "doh",
+	}
+	route := config["route"].(map[string]any)
+	route["default_domain_resolver"] = "doh"
+	rules := []any{map[string]any{"action": "sniff"}}
+	if platform == "android" {
+		rules = append(rules, map[string]any{"protocol": "dns", "action": "hijack-dns"})
+	}
+	route["rules"] = append(rules, map[string]any{"action": "resolve", "server": "doh", "strategy": "prefer_ipv4"})
+
 	b, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return nil, err

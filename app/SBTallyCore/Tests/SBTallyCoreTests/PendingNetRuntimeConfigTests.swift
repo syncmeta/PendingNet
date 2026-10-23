@@ -41,7 +41,7 @@ final class PendingNetRuntimeConfigTests: XCTestCase {
         XCTAssertEqual(inbound["type"] as? String, "mixed")
         XCTAssertEqual(inbound["listen"] as? String, "127.0.0.1")
         XCTAssertEqual(inbound["listen_port"] as? Int, 2080)
-        XCTAssertNil(root["dns"], "DNS policy must not come from the pairing document")
+        XCTAssertNotNil(root["dns"], "The client must supply its own encrypted DNS policy")
 
         let route = try XCTUnwrap(root["route"] as? [String: Any])
         XCTAssertEqual(route["final"] as? String, "proxy")

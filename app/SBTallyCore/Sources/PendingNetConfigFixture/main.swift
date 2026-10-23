@@ -57,6 +57,11 @@ for (name, tun) in [("root-tun.json", true), ("root-notun.json", false)] {
         .write(to: output.appendingPathComponent(name), options: .atomic)
 }
 
+let local = try PendingNetProxyOnlyConfig.make(controlSecret: "fixture", cachePath: output.appendingPathComponent("local-cache.db").path,
+    ruleSets: .init(directory: output.path, availableTags: ["geosite-cn", "geoip-cn", "geosite-gfw"]))
+try PendingNetLocalConfigComposer.merge(baseConfig: local, runtimeServer: runtime)
+    .write(to: output.appendingPathComponent("local.json"), options: .atomic)
+
 // iOS 的真实配置生成器把 TUN stack 设为 gvisor。用同一颗刚编出的 CLI 内核检查它，
 // 可以实证 `with_gvisor` 在 tag 里；root-tun 那份则覆盖 macOS 实际使用的 system stack。
 try PendingNetTunnelConfig.make(

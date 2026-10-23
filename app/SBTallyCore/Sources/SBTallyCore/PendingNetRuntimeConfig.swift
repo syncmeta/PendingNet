@@ -222,6 +222,22 @@ public enum PendingNetLocalConfigComposer {
 /// Pairing material is merged into this document later; the pairing file never
 /// supplies inbounds, routes, DNS policy, the control secret, or cache paths.
 public enum PendingNetProxyOnlyConfig {
+    /// Older port-only configurations had no DNS policy. Add the client policy
+    /// on next start without replacing a user-supplied DNS section.
+    public static func migratingMissingDNS(in data: Data) throws -> Data {
+        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["dns"] == nil, var route = root["route"] as? [String: Any],
+              var rules = route["rules"] as? [[String: Any]] else { return data }
+        let sets = route["rule_set"] as? [[String: Any]] ?? []
+        let tags = Set(sets.compactMap { $0["tag"] as? String })
+        let index = rules.first?["action"] as? String == "sniff" ? 1 : 0
+        rules.insert(contentsOf: [["protocol": "dns", "action": "hijack-dns"]] + PendingNetDNSPolicy.resolveRules(tags: tags), at: index)
+        route["rules"] = rules
+        if route["default_domain_resolver"] == nil { route["default_domain_resolver"] = PendingNetDNSPolicy.bootstrapResolver }
+        root["route"] = route
+        root["dns"] = PendingNetDNSPolicy.clashSection(tags: tags)
+        return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+    }
     /// The rule-set files 白名单/黑名单 need, keyed by the sing-box tag the route
     /// rules reference. Downloaded and cached by the client; the modes only
     /// exist in the emitted config when every file is on disk.
@@ -248,6 +264,14 @@ public enum PendingNetProxyOnlyConfig {
             self.directory = directory
             self.availableTags = availableTags.intersection(ruleSetFiles.keys)
         }
+    }
+
+    private static func policyTags(_ ruleSets: RuleSets?) -> Set<String> {
+        guard let ruleSets, !ruleSets.directory.isEmpty else { return [] }
+        return Set([PendingNetRouteMode.whitelist, .blacklist].flatMap { mode -> [String] in
+            let required = PendingNetTunnelConfig.ruleSetTags(mode: mode)
+            return Set(required).isSubset(of: ruleSets.availableTags) ? required : []
+        })
     }
 
     /// 本机入站只允许这两种监听地址：只给本机，或者给整个局域网。
@@ -281,6 +305,7 @@ public enum PendingNetProxyOnlyConfig {
                 ["type": "selector", "tag": "proxy", "outbounds": ["direct"]],
                 ["type": "direct", "tag": "direct"],
             ],
+            "dns": PendingNetDNSPolicy.clashSection(tags: policyTags(ruleSets)),
             "route": route(ruleSets: ruleSets),
             "experimental": [
                 "clash_api": [
@@ -309,6 +334,7 @@ public enum PendingNetProxyOnlyConfig {
             throw PendingNetRuntimeConfigError.invalidLocalConfiguration
         }
         root["route"] = route(ruleSets: ruleSets)
+        root["dns"] = PendingNetDNSPolicy.clashSection(tags: policyTags(ruleSets))
         return try JSONSerialization.data(
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -369,6 +395,8 @@ public enum PendingNetProxyOnlyConfig {
     private static func route(ruleSets requested: RuleSets?) -> [String: Any] {
         var rules: [[String: Any]] = [
             ["action": "sniff"],
+            ["protocol": "dns", "action": "hijack-dns"],
+        ] + PendingNetDNSPolicy.resolveRules(tags: policyTags(requested)) + [
             ["clash_mode": "Direct", "outbound": "direct"],
             ["clash_mode": "Global", "outbound": "proxy"],
         ]
@@ -411,6 +439,7 @@ public enum PendingNetProxyOnlyConfig {
         }
         var route: [String: Any] = [
             "auto_detect_interface": true,
+            "default_domain_resolver": PendingNetDNSPolicy.bootstrapResolver,
             "final": "proxy",
             "rules": rules,
         ]
