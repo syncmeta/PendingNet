@@ -4,8 +4,9 @@
 <h1 align="center">PendingNet</h1>
 
 <p align="center">
-  和 VPS 搭配使用的 Sing-box 部署方案 配套 Mac/iOS 客户端
+  Sing-box部署脚本+配套Mac/iOS客户端
 </p>
+
 
 
 <p align="center">
@@ -15,63 +16,53 @@
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20iOS%20%C2%B7%20Debian-lightgrey" />
   <img alt="Version" src="https://img.shields.io/badge/version-0.3.40-informational" />
 </p>
-苹果生态用 VPS 搭自建节点的一整套解决方案
+苹果生态用 VPS 搭自建节点的全套解决方案
 
-部署脚本 + Mac/iOS 客户端（iCloud 同步）+ 流量统计（分应用、域名统计）
+部署脚本 + Mac/iOS 客户端（iCloud 同步）+ 流量统计（分应用、域名统计）+ 节点管理
 
 <p align="center">
   <img src="docs/screenshots/macos-connect.png" width="820" alt="PendingNet macOS 连接页" />
 </p>
 
 
+
+
 协议：默认 TCP 走 Xray Reality，UDP 走 Hysteria2
 
 ## 快速开始
 
-- **macOS** ： [Releases](../../releases)。安装包已经内置从源码构建并签名的 sing-box，
-  不需要 Homebrew，也不用先运行 `deploy/install.sh`。只用「仅端口」可直接连接；
-  第一次选择 TUN / 系统代理时，按系统提示允许 PendingNet 后台项目即可。
-- **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
-- **VPS 部署**：`curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash `
+**VPS 部署脚本**（Debian / Ubuntu，支持 root 或 sudo）
 
-### 导入服务器管理权限
-
-安装脚本最后生成普通连接链接，在连接页导入。管理页需要单独的管理员链接；安装新版服务端后，在对应 VPS 上运行：
+复制整段执行：优先使用 curl，其次 wget；两者都没有时自动安装 curl 和 CA 证书。
 
 ```sh
-sudo pendingnet-server pair create --admin --ttl 10m --out /root/pendingnet-admin.txt
-sudo cat /root/pendingnet-admin.txt
+(
+  set -e
+  run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    run_root apt-get update
+    run_root apt-get install -y curl ca-certificates
+  fi
+  installer=$(mktemp)
+  trap 'rm -f "$installer"' EXIT
+  url=https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$installer"
+  else
+    wget -qO "$installer" "$url"
+  fi
+  run_root bash "$installer"
+)
 ```
 
-复制完整 `pendingnetm://` 链接到客户端「管理 → 导入管理链接」（新版仍兼容旧的管理链接）。链接十分钟有效、只能导入一次，每台管理设备单独签发；输出文件已有时不会覆盖，请改用新文件名。管理员凭据只保存在导入设备本机，不经 iCloud 同步。管理页支持用户查询、撤销、链接签发和配置导出；在线修改服务器配置尚未开放。
+- **macOS** ： [Releases](https://github.com/syncmeta/PendingNet/releases)
+- **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
 
 ### 分享与删除节点
 
 连接页的节点「详情」可复制或分享标准 VLESS Reality / Hysteria2 链接；已在本机导入同一台 VPS 管理权限时，还可签发十分钟有效、一次性的 `pendingnet://` 普通配对链接。标准链接使用现有节点密钥，配对链接为接收方建立独立用户。链接含访问凭据，请只交给可信的人。
 
 iOS 列表左滑可删除 VPS，确认后先断开当前连接，再删除同步记录和访问凭据；删除标记防止旧设备恢复节点。重新导入可恢复。删除客户端节点不会卸载 VPS，也不会撤销服务器端用户。管理页也支持删除本机管理记录和管理员凭据，iOS 左滑显示删除；连接节点继续保留。繁体中文系统现在可匹配 `zh-Hant` 界面资源。
-
-### 更新已部署的 VPS
-
-支持内核锁定更新的新版本发布后，运行：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh \
-  | sudo PENDINGNET_UPDATE_ONLY=1 bash
-```
-
-更新控制服务以及该 PendingNet 发版锁定的 Xray/Hysteria2，保留节点配置、密钥和设备凭据；内核更新会短暂重启正在运行的对应代理服务，失败会回滚。没有定时自动升级。可先用 `sudo pendingnet-server update-engines --dry-run` 查看当前已装 PendingNet 的内核目标；`--no-upgrade` 保留现有程序和内核。不要用 `--force-provision` 更新，它会重新生成密钥。
-
-### 导出 Android / Windows sing-box 配置
-
-已配置 Reality 节点的 PendingNet Server 可在 VPS 本地导出独立配置文件（需使用包含 `client export` 的新版服务端）：
-
-```sh
-sudo pendingnet-server client export --platform android --out /root/pendingnet-android.json
-sudo pendingnet-server client export --platform windows --out /root/pendingnet-windows.json
-```
-
-Android 文件供 sing-box for Android 以 VPN 模式导入，TUN 出站启用自动识别底层网络，以规避流量回到自身 VPN 的路由回环；Windows 文件使用本机系统代理。导出文件含节点凭据，权限为 `0600`，已有文件不会被覆盖；请通过可信的本地方式传给目标设备，不要贴进群聊或公开分享。生成与 `sing-box check` 不等于目标设备连通性实测。
 
 ## 仓库结构
 
