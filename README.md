@@ -31,10 +31,10 @@
 
 ## 快速开始
 
-**VPS 部署脚本**（Debian / Ubuntu，以 root 执行；缺少 curl 时自动安装）
+**VPS 部署脚本**
 
 ```sh
-(command -v curl >/dev/null || (apt-get update && apt-get install -y curl ca-certificates)) && script=$(curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh) && bash -c "$script"
+curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh | sudo bash
 ```
 
 - **macOS** ： [Releases](https://github.com/syncmeta/PendingNet/releases)
