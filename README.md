@@ -31,28 +31,10 @@
 
 ## 快速开始
 
-**VPS 部署脚本**（Debian / Ubuntu，支持 root 或 sudo）
-
-复制整段执行：优先使用 curl，其次 wget；两者都没有时自动安装 curl 和 CA 证书。
+**VPS 部署脚本**（Debian / Ubuntu，以 root 执行；缺少 curl 时自动安装）
 
 ```sh
-(
-  set -e
-  run_root() { if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
-  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
-    run_root apt-get update
-    run_root apt-get install -y curl ca-certificates
-  fi
-  installer=$(mktemp)
-  trap 'rm -f "$installer"' EXIT
-  url=https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$installer"
-  else
-    wget -qO "$installer" "$url"
-  fi
-  run_root bash "$installer"
-)
+(command -v curl >/dev/null || (apt-get update && apt-get install -y curl ca-certificates)) && script=$(curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps-install.sh) && bash -c "$script"
 ```
 
 - **macOS** ： [Releases](https://github.com/syncmeta/PendingNet/releases)
