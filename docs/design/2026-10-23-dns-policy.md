@@ -65,3 +65,10 @@ curl.exe --proxy http://127.0.0.1:PORT --noproxy never-bypass.invalid --connect-
 - [Hysteria2 HTTPS resolver](https://v2.hysteria.network/docs/advanced/Full-Server-Config/#resolver)
 - [sing-box domain_resolver](https://sing-box.sagernet.org/configuration/shared/dial/#domain_resolver)
 - [锁定 sing-box 的非终止 resolve 动作](https://github.com/SagerNet/sing-box/blob/v1.14.3/route/route.go)
+
+## 0.3.44 发布前内核兼容性
+
+2026-10-24 实测：Xray 26.10.21 接受配置，但与锁定 sing-box 1.14.3 的 Reality 握手失败。该 Xray 所用 REALITY `83f621788ca8` 要求 ClientHello 包含 X25519MLKEM768，sing-box 1.14.3 的 `common/tls/reality_client.go` 则主动移除此字段。本版因此保留 Xray 26.3.27，不将不兼容的新内核推到 VPS。
+
+- [REALITY 握手条件](https://github.com/XTLS/REALITY/blob/83f621788ca8/tls.go)
+- [sing-box 1.14.3 Reality ClientHello](https://github.com/SagerNet/sing-box/blob/v1.14.3/common/tls/reality_client.go)
