@@ -40,6 +40,19 @@ curl -fsSL https://raw.githubusercontent.com/syncmeta/PendingNet/main/deploy/vps
 - **macOS** ： [Releases](https://github.com/syncmeta/PendingNet/releases)
 - **iPhone / iPad** ： [TestFlight](https://testflight.apple.com/join/g9jrafTR)
 
+### 服务端更改端口
+
+运行 `sudo pendingnet`，选择 **15. 更改端口**，分别输入 Reality TCP 和 Hysteria2 UDP 的新端口；留空保持原值，确认后应用。端口范围为 1–65535，两个协议可以使用相同数字。操作保留现有密钥、证书和用户，检查端口占用，备份原配置，并在重启失败时尝试恢复原配置和服务。原本停止的代理服务会保持停止。
+
+也可通过命令查看或修改：
+
+```sh
+sudo pendingnet ports
+sudo pendingnet ports --reality 8443 --hysteria2 9443
+```
+
+更改前请先在 VPS 防火墙和云安全组放行对应的 TCP / UDP 端口。应用会短暂中断代理连接；客户端需刷新节点配置，使用标准链接的客户端需重新导入节点链接。此选项只更改代理端口，管理接口地址保持原值。
+
 ### 分享与删除节点
 
 连接页的节点「详情」可复制或分享标准 VLESS Reality / Hysteria2 链接；已在本机导入同一台 VPS 管理权限时，还可签发十分钟有效、一次性的 `pendingnet://` 普通配对链接。标准链接使用现有节点密钥，配对链接为接收方建立独立用户。链接含访问凭据，请只交给可信的人。

@@ -60,6 +60,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	case "sync-users":
 		return runSyncUsers(args[1:], stdout, stderr)
+	case "ports":
+		return runPorts(args[1:], stdout, stderr)
 	case "traffic":
 		return runUserTraffic(args[1:], stdout, stderr)
 	case "links":
@@ -137,7 +139,7 @@ func runVersion(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintf(stdout, "  features  %s vps-manager user-traffic\n", featurePairingLink)
+	fmt.Fprintf(stdout, "  features  %s vps-manager user-traffic change-ports\n", featurePairingLink)
 	return nil
 }
 

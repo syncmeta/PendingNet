@@ -2,8 +2,8 @@
   "schema": 1,
   "captured_at": "2026-10-23T16:50:07.526928+00:00",
   "pendingnet": {
-    "version": "0.3.44",
-    "build": "346"
+    "version": "0.3.45",
+    "build": "347"
   },
   "xray": {
     "version": "v26.3.27",

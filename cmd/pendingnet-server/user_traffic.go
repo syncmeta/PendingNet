@@ -179,17 +179,8 @@ func userProxyHooks(store *pnserver.Store) (pnserver.ManagedConfigHooks, error) 
 	if err != nil {
 		return pnserver.ManagedConfigHooks{}, err
 	}
-	listeners := map[string]map[string]string{}
-	for _, p := range profile.Protocols {
-		if p.VLESSReality != nil {
-			listeners[units[0]] = map[string]string{"tcp": fmt.Sprint(p.VLESSReality.ServerPort), "stats": "17446"}
-		}
-		if p.Hysteria2 != nil {
-			listeners[units[1]] = map[string]string{"udp": fmt.Sprint(p.Hysteria2.ServerPort), "stats": "17445"}
-		}
-	}
-	if len(listeners) != 2 {
-		return pnserver.ManagedConfigHooks{}, errors.New("both managed protocols are required")
+	if _, err := proxyListeners(profile, store.UserTrafficEnabled()); err != nil {
+		return pnserver.ManagedConfigHooks{}, err
 	}
 	return pnserver.ManagedConfigHooks{
 		Validate: func(p pnserver.ManagedConfigPaths) error {
@@ -210,13 +201,24 @@ func userProxyHooks(store *pnserver.Store) (pnserver.ManagedConfigHooks, error) 
 			return nil
 		},
 		Restart: func() error {
+			// Use a separate Store: managed config application holds its own mutex.
+			// Read after installation (or rollback) so health checks use live ports.
+			liveStore := pnserver.NewStore(store.Dir)
+			profile, err := liveStore.LoadNodeProfile()
+			if err != nil {
+				return err
+			}
+			listeners, err := proxyListeners(profile, liveStore.UserTrafficEnabled())
+			if err != nil {
+				return err
+			}
 			if len(active) == 0 {
 				if err := captureActivity(); err != nil {
 					return err
 				}
 			}
-			if store.UserTrafficEnabled() {
-				_ = collectUserTraffic(store)
+			if liveStore.UserTrafficEnabled() {
+				_ = collectUserTraffic(liveStore)
 			}
 			for _, unit := range units {
 				if active[unit] {
@@ -280,6 +282,29 @@ func userProxyHooks(store *pnserver.Store) (pnserver.ManagedConfigHooks, error) 
 			return errors.New("user proxy did not expose stable process-owned listeners")
 		},
 	}, nil
+}
+
+// Called on every restart so both new and restored ports are checked.
+func proxyListeners(profile pnserver.NodeProfile, stats bool) (map[string]map[string]string, error) {
+	listeners := map[string]map[string]string{}
+	for _, p := range profile.Protocols {
+		if p.VLESSReality != nil {
+			listeners[serviceUnits["reality"]] = map[string]string{"tcp": fmt.Sprint(p.VLESSReality.ServerPort)}
+			if stats {
+				listeners[serviceUnits["reality"]]["stats"] = "17446"
+			}
+		}
+		if p.Hysteria2 != nil {
+			listeners[serviceUnits["hysteria"]] = map[string]string{"udp": fmt.Sprint(p.Hysteria2.ServerPort)}
+			if stats {
+				listeners[serviceUnits["hysteria"]]["stats"] = "17445"
+			}
+		}
+	}
+	if len(listeners) != 2 {
+		return nil, errors.New("both managed protocols are required")
+	}
+	return listeners, nil
 }
 
 func syncUserServices(store *pnserver.Store) error {

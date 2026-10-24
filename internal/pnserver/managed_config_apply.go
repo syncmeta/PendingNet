@@ -36,6 +36,10 @@ type ManagedConfigHooks struct {
 // files are atomically replaced; the group is not crash-atomic, so the retained
 // backup is also the manual recovery source after a machine crash.
 func (s *Store) ApplyManagedConfig(servicesDir string, candidate ManagedConfig, hooks ManagedConfigHooks) error {
+	return s.applyManagedConfig(servicesDir, candidate, hooks, ValidateManagedConfigConsistency)
+}
+
+func (s *Store) applyManagedConfig(servicesDir string, candidate ManagedConfig, hooks ManagedConfigHooks, validate func(ManagedConfig, string) error) error {
 	if hooks.Validate == nil || hooks.Restart == nil {
 		return ErrManagedConfigUnavailable
 	}
@@ -54,7 +58,7 @@ func (s *Store) ApplyManagedConfig(servicesDir string, candidate ManagedConfig, 
 	if servicesDir == "" {
 		servicesDir = DefaultServicesDir
 	}
-	if err := ValidateManagedConfigConsistency(candidate, servicesDir); err != nil {
+	if err := validate(candidate, servicesDir); err != nil {
 		return fmt.Errorf("%w: %v", ErrManagedConfigInvalid, err)
 	}
 	stage, err := os.MkdirTemp(s.Dir, ".managed-stage-")

@@ -30,6 +30,8 @@ const managerHelp = `PendingNet VPS 管理
   logs [--component control|reality|hysteria]
                            查看最近 80 条日志
   update                   更新控制服务及发版锁定内核，保留配置和凭据
+  ports [--reality 端口] [--hysteria2 端口]
+                           查看或更改代理端口，保留密钥与用户
   traffic                  查看每个用户的累计上传和下载字节
   version                  查看 PendingNet 版本
   engine-lock              查看该版本锁定的上游内核
@@ -317,7 +319,7 @@ func runMenu(input io.Reader, stdout, stderr io.Writer, stateDir string) error {
 		return strings.TrimSpace(scanner.Text()), true
 	}
 	for {
-		fmt.Fprintln(stdout, "\nPendingNet VPS 管理\n1. 查看状态\n2. 生成节点、连接和管理链接\n3. 生成连接配对链接\n4. 生成管理链接\n5. 查看用户\n6. 撤销用户\n7. 查看日志\n8. 重启服务\n9. 停止服务\n10. 启动服务\n11. 更新 PendingNet 和内核\n12. 查看版本与内核目标\n13. 用户改名\n14. 查看用户流量\n0. 退出")
+		fmt.Fprintln(stdout, "\nPendingNet VPS 管理\n1. 查看状态\n2. 生成节点、连接和管理链接\n3. 生成连接配对链接\n4. 生成管理链接\n5. 查看用户\n6. 撤销用户\n7. 查看日志\n8. 重启服务\n9. 停止服务\n10. 启动服务\n11. 更新 PendingNet 和内核\n12. 查看版本与内核目标\n13. 用户改名\n14. 查看用户流量\n15. 更改端口\n0. 退出")
 		choice, ok := read("选择：")
 		if !ok {
 			return scanner.Err()
@@ -358,6 +360,8 @@ func runMenu(input io.Reader, stdout, stderr io.Writer, stateDir string) error {
 				continue
 			}
 			err = runUsers([]string{"revoke", id, "--state-dir", stateDir}, stdout, stderr)
+		case "15":
+			err = runPortsMenu(read, stdout, stderr, stateDir)
 		case "14":
 			err = runUserTraffic([]string{"--state-dir", stateDir}, stdout, stderr)
 		case "13":
