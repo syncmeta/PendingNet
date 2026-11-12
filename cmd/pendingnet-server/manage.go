@@ -19,9 +19,11 @@ import (
 const managerHelp = `PendingNet VPS 管理
 用法: sudo pendingnet [命令]
   （不带参数）             打开管理菜单
-  links [--kind all|node|pair|manage] [--ttl 10m]
+  links --user <用户 ID> [--kind all|node|pair|manage] [--ttl 10m]
                            生成标准节点、连接配对或管理链接
   users list               查看配对用户及设备
+  users add --name <名字> [--admin]
+                           明确创建连接用户或管理用户
   users rename <用户 ID> --name <名字>
                            修改用户显示名称
   users revoke <用户 ID>   撤销用户的控制权限和未使用配对链接
@@ -44,7 +46,7 @@ func runLinks(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	dir := fs.String("state-dir", defaultStateDir, "private server state directory")
 	kind := fs.String("kind", "all", "all, node, pair, or manage")
-	userID := fs.String("user", "", "existing user ID for standard node links")
+	userID := fs.String("user", "", "required owner user ID for all links")
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-time link lifetime (max 24h)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -71,44 +73,35 @@ func runLinks(args []string, stdout, stderr io.Writer) error {
 var syncUserServicesForCLI = syncUserServices
 
 func runUserLinks(store *pnserver.Store, state pnserver.State, kind, userID string, ttl time.Duration, stdout io.Writer) error {
+	var selected *pnserver.User
+	for i := range state.Users {
+		if state.Users[i].ID == userID && state.Users[i].RevokedAt == nil {
+			selected = &state.Users[i]
+			break
+		}
+	}
+	if selected == nil {
+		return errors.New("请先选择用户：links --user <用户 ID>；新建用户请使用 users add --name <名称>")
+	}
+	if (kind == "manage" && selected.Role != "admin") || (kind == "pair" && selected.Role == "admin") {
+		return errors.New("所选用户角色与链接类型不一致")
+	}
 	files := []pairing.File{}
-	for _, role := range []string{"pair", "manage"} {
-		if kind != "all" && kind != role {
-			continue
+	if kind != "node" {
+		role := ""
+		if selected.Role == "admin" {
+			role = "admin"
 		}
-		var file pairing.File
-		var err error
-		if role == "manage" {
-			file, err = store.CreateAdminPairing(ttl)
-		} else {
-			file, err = store.CreatePairing(ttl)
-		}
+		file, err := store.IssueUserPairing(userID, role, ttl)
 		if err != nil {
 			return err
 		}
 		files = append(files, file)
-		if role == "pair" {
-			userID, err = store.PairingUserID(file.Enrollment.Token)
-			if err != nil {
-				return err
-			}
-		}
 	}
 	if err := syncUserServicesForCLI(store); err != nil {
 		return err
 	}
 	if kind == "all" || kind == "node" {
-		if userID == "" {
-			for _, u := range state.Users {
-				if u.Role != "admin" && u.RevokedAt == nil {
-					userID = u.ID
-					break
-				}
-			}
-		}
-		if userID == "" {
-			return errors.New("no connection user; generate a pairing link first")
-		}
 		profile, err := store.UserNodeProfile(userID)
 		if err != nil {
 			return err
@@ -138,7 +131,7 @@ func runUserLinks(store *pnserver.Store, state pnserver.State, kind, userID stri
 
 func runUsers(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pendingnet users list|revoke <user ID> [--state-dir path]")
+		return errors.New("usage: pendingnet users list|add --name <name>|rename|revoke <user ID>")
 	}
 	command := args[0]
 	args = args[1:]
@@ -149,13 +142,14 @@ func runUsers(args []string, stdout, stderr io.Writer) error {
 		}
 		id = args[0]
 		args = args[1:]
-	} else if command != "list" {
-		return errors.New("users supports list, rename, or revoke")
+	} else if command != "list" && command != "add" {
+		return errors.New("users supports list, add, rename, or revoke")
 	}
 	fs := flag.NewFlagSet("users "+command, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dir := fs.String("state-dir", defaultStateDir, "private server state directory")
-	name := fs.String("name", "", "user display name for rename")
+	name := fs.String("name", "", "user display name")
+	admin := fs.Bool("admin", false, "create an administrator user")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -163,6 +157,18 @@ func runUsers(args []string, stdout, stderr io.Writer) error {
 		return errors.New("unexpected users arguments")
 	}
 	store := pnserver.NewStore(*dir)
+	if command == "add" {
+		role := ""
+		if *admin {
+			role = "admin"
+		}
+		u, err := store.CreateUser(*name, role)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(stdout, u.ID)
+		return nil
+	}
 	if command == "rename" {
 		if err := store.RenameUser(id, *name); err != nil {
 			return err
@@ -319,7 +325,7 @@ func runMenu(input io.Reader, stdout, stderr io.Writer, stateDir string) error {
 		return strings.TrimSpace(scanner.Text()), true
 	}
 	for {
-		fmt.Fprintln(stdout, "\nPendingNet VPS 管理\n1. 查看状态\n2. 生成节点、连接和管理链接\n3. 生成连接配对链接\n4. 生成管理链接\n5. 查看用户\n6. 撤销用户\n7. 查看日志\n8. 重启服务\n9. 停止服务\n10. 启动服务\n11. 更新 PendingNet 和内核\n12. 查看版本与内核目标\n13. 用户改名\n14. 查看用户流量\n15. 更改端口\n0. 退出")
+		fmt.Fprintln(stdout, "\nPendingNet VPS 管理\n1. 查看状态\n2. 生成节点和配对链接\n3. 生成连接配对链接\n4. 生成管理链接\n5. 查看用户\n6. 撤销用户\n7. 查看日志\n8. 重启服务\n9. 停止服务\n10. 启动服务\n11. 更新 PendingNet 和内核\n12. 查看版本与内核目标\n13. 用户改名\n14. 查看用户流量\n15. 更改端口\n0. 退出")
 		choice, ok := read("选择：")
 		if !ok {
 			return scanner.Err()
@@ -341,7 +347,11 @@ func runMenu(input io.Reader, stdout, stderr io.Writer, stateDir string) error {
 			if choice == "4" {
 				kind = "manage"
 			}
-			err = runLinks([]string{"--state-dir", stateDir, "--kind", kind}, stdout, stderr)
+			var id string
+			id, err = selectLinkUser(read, stdout, stateDir, kind == "manage")
+			if err == nil && id != "" {
+				err = runLinks([]string{"--state-dir", stateDir, "--kind", kind, "--user", id}, stdout, stderr)
+			}
 		case "5":
 			err = runUsers([]string{"list", "--state-dir", stateDir}, stdout, stderr)
 		case "6":
@@ -423,4 +433,44 @@ func runInstallCommand(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintln(stdout, *path)
 	return nil
+}
+
+func selectLinkUser(read func(string) (string, bool), out io.Writer, dir string, admin bool) (string, error) {
+	store := pnserver.NewStore(dir)
+	state, err := store.Load()
+	if err != nil {
+		return "", err
+	}
+	users := []pnserver.User{}
+	fmt.Fprintln(out, "先选择链接归属用户：")
+	for _, u := range state.Users {
+		if u.RevokedAt != nil || (u.Role == "admin") != admin {
+			continue
+		}
+		users = append(users, u)
+		fmt.Fprintf(out, "%d. %s (%s)\n", len(users), u.Name, u.ID)
+	}
+	fmt.Fprintln(out, "n. 新建用户；留空取消")
+	choice, ok := read("用户：")
+	if !ok || choice == "" {
+		return "", nil
+	}
+	if choice == "n" {
+		name, ok := read("新用户名称：")
+		if !ok || name == "" {
+			return "", nil
+		}
+		role := ""
+		if admin {
+			role = "admin"
+		}
+		u, err := store.CreateUser(name, role)
+		return u.ID, err
+	}
+	for i, u := range users {
+		if choice == fmt.Sprint(i+1) || choice == u.ID {
+			return u.ID, nil
+		}
+	}
+	return "", errors.New("请选择有效用户")
 }

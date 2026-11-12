@@ -147,9 +147,17 @@ public struct PendingNetAdminAPIClient: Sendable {
         guard data.isEmpty else { throw PendingNetAdminAPIError.invalidResponse }
     }
 
-    public func issuePairing(role: PendingNetAdminPairingRole, ttlSeconds: Int) async throws -> PendingNetIssuedPairing {
-        guard (1...86400).contains(ttlSeconds) else { throw PendingNetAdminAPIError.invalidResponse }
-        let body = try JSONSerialization.data(withJSONObject: ["role": role.rawValue, "ttl_seconds": ttlSeconds])
+    public func createUser(name: String, role: PendingNetAdminPairingRole) async throws -> String {
+        let body = try JSONSerialization.data(withJSONObject: ["name": name, "role": role.rawValue])
+        let data = try await request(path: "/v1/admin/users", method: "POST", body: body, expectedStatus: 201)
+        guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = value["id"] as? String, !id.isEmpty else { throw PendingNetAdminAPIError.invalidResponse }
+        return id
+    }
+
+    public func issuePairing(role: PendingNetAdminPairingRole, ttlSeconds: Int, userID: String) async throws -> PendingNetIssuedPairing {
+        guard !userID.isEmpty, (1...86400).contains(ttlSeconds) else { throw PendingNetAdminAPIError.invalidResponse }
+        let body = try JSONSerialization.data(withJSONObject: ["role": role.rawValue, "ttl_seconds": ttlSeconds, "user_id": userID])
         let data = try await request(path: "/v1/admin/pairings", method: "POST", body: body, expectedStatus: 201)
         guard data.count <= 1 << 20,
               let response = try? JSONDecoder().decode(IssuedPairingResponse.self, from: data),

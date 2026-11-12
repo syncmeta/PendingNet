@@ -89,10 +89,12 @@ mkdir -p "$release_dir"
 cd "$snap/src/app"
 xcodegen generate
 xcodebuild -project "$app_name.xcodeproj" -scheme "$app_name" -configuration Release \
-  -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO \
+  -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO ENABLE_DEBUG_DYLIB=NO \
   ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
 
 /usr/bin/ditto "$derived/Build/Products/Release/$app_name.app" "$app"
+test ! -f "$app/Contents/MacOS/$app_name.debug.dylib" \
+  || { echo "Release 包包含 Debug dylib，拒绝发布" >&2; exit 2; }
 
 # “主程序是 universal”不等于“这个 App 支持 Intel”。helper、统计器、sing-box，
 # 以及 Sparkle 内嵌的可执行件有任意一个缺 x86_64，都会在安装后某一步才炸。

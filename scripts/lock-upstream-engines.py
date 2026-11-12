@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Release preparation only: freeze upstream stable releases before committing."""
+import argparse
 import datetime
 import json
 import pathlib
@@ -14,12 +15,21 @@ def github(path):
 
 
 def main():
-    lock = {'schema': 1, 'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--reuse-pinned', action='store_true', help='keep previously captured engine pins; only update PendingNet version/build')
+    args = parser.parse_args()
+    path = ROOT / 'internal/pnserver/upstream-lock.json'
+    lock = json.loads(path.read_text()) if args.reuse_pinned else {'schema': 1, 'captured_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     project = (ROOT / 'app/project.yml').read_text()
     lock['pendingnet'] = {
         'version': re.findall(r'^\s*MARKETING_VERSION:\s*"?([^"\s]+)', project, re.M)[0],
         'build': re.findall(r'^\s*CURRENT_PROJECT_VERSION:\s*"?([^"\s]+)', project, re.M)[0],
     }
+    if args.reuse_pinned:
+        path.write_text(json.dumps(lock, indent=2) + '\n')
+        subprocess.run(['python3', str(ROOT / 'scripts/check-upstream-lock.py')], check=True)
+        print('Preserved previously captured engine pins; updated product release identity')
+        return
     for name, repo, assets in (
         ('xray', 'XTLS/Xray-core', {'amd64': 'Xray-linux-64.zip', 'arm64': 'Xray-linux-arm64-v8a.zip'}),
         ('hysteria2', 'apernet/hysteria', {'amd64': 'hysteria-linux-amd64', 'arm64': 'hysteria-linux-arm64'}),

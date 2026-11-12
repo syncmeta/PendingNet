@@ -223,6 +223,9 @@ func TestOnlyAdminCanIssueExplicitlyScopedPairingLinks(t *testing.T) {
 		t.Fatalf("ordinary client issued admin link: %d", got.Code)
 	}
 	before, _ := store.Load()
+	if got := issue(admin.Token, `{"role":"client","ttl_seconds":600}`); got.Code != http.StatusBadRequest {
+		t.Fatal("missing user silently created a pairing")
+	}
 	if got := issue(admin.Token, `{"ttl_seconds":600}`); got.Code != http.StatusBadRequest {
 		t.Fatalf("implicit role accepted: %d", got.Code)
 	}
@@ -233,8 +236,14 @@ func TestOnlyAdminCanIssueExplicitlyScopedPairingLinks(t *testing.T) {
 	if len(afterInvalid.Pairings) != len(before.Pairings) {
 		t.Fatal("invalid request created a pairing")
 	}
+	clientOwner, _ := store.PairingUserID(regularLink.Enrollment.Token)
+	adminOwner, _ := store.PairingUserID(adminLink.Enrollment.Token)
 	for _, role := range []string{"client", "admin"} {
-		rec := issue(admin.Token, `{"role":"`+role+`","ttl_seconds":600}`)
+		owner := clientOwner
+		if role == "admin" {
+			owner = adminOwner
+		}
+		rec := issue(admin.Token, `{"role":"`+role+`","ttl_seconds":600,"user_id":"`+owner+`"}`)
 		if rec.Code != http.StatusCreated || rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("issue %s: %d", role, rec.Code)
 		}

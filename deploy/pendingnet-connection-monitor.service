@@ -1,0 +1,21 @@
+[Unit]
+Description=Private Xray source traffic and TLS handshake monitor
+After=network.target pendingnet-xray.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/pendingnet-connection-monitor run
+Restart=on-failure
+RestartSec=5
+User=root
+UMask=0077
+StateDirectory=pendingnet-connections
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+MemoryMax=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target

@@ -139,7 +139,7 @@ func runVersion(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 	}
-	fmt.Fprintf(stdout, "  features  %s vps-manager user-traffic change-ports\n", featurePairingLink)
+	fmt.Fprintf(stdout, "  features  %s vps-manager user-traffic change-ports user-link-owner\n", featurePairingLink)
 	return nil
 }
 
@@ -522,6 +522,7 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	ttl := fs.Duration("ttl", 10*time.Minute, "one-time pairing file lifetime (max 24h)")
 	out := fs.String("out", "", "write the pairing credential to this path (default stdout)")
 	format := fs.String("format", "link", "pairing credential format: link (pendingnet:// URL) or json (*.pdn document)")
+	userID := fs.String("user", "", "required owner user ID")
 	admin := fs.Bool("admin", false, "issue a management credential (requires --out)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -542,11 +543,14 @@ func runPairCreate(args []string, stdout, stderr io.Writer) error {
 	store := pnserver.NewStore(*stateDir)
 	var pairFile pairing.File
 	var err error
-	if *admin {
-		pairFile, err = store.CreateAdminPairing(*ttl)
-	} else {
-		pairFile, err = store.CreatePairing(*ttl)
+	if *userID == "" {
+		return errors.New("--user is required; create a user with users add first")
 	}
+	role := ""
+	if *admin {
+		role = "admin"
+	}
+	pairFile, err = store.IssueUserPairing(*userID, role, *ttl)
 	if err != nil {
 		return err
 	}

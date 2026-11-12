@@ -17,7 +17,7 @@ macOS 版的日常更新走的是自建的 Sparkle appcast（见 [macos-updates.
 
 ## 产物从哪来
 
-每次发版先更新 `app/project.yml` 的版本/build，再运行 `python3 scripts/lock-upstream-engines.py`，将 `internal/pnserver/upstream-lock.json` 与该次版本一起提交。这个步骤只在发布准备时查询上游稳定 Release；普通构建和 VPS 更新不查询上游 latest。新版本/build 与清单不一致时，三个发布构建脚本都会拒绝继续。
+每次发版先更新 `app/project.yml` 的版本/build，再运行 `python3 scripts/lock-upstream-engines.py`，将 `internal/pnserver/upstream-lock.json` 与该次版本一起提交。这个步骤只在发布准备时查询上游稳定 Release；普通构建和 VPS 更新不查询上游 latest。若本次只修改产品功能或打包，并明确沿用已验证内核，可运行 `python3 scripts/lock-upstream-engines.py --reuse-pinned`，只更新产品版本/build，保留原内核版本、校验和及原始捕获时间。新版本/build 与清单不一致时，三个发布构建脚本都会拒绝继续。
 
 清单锁定 Xray/Hysteria2 的 amd64、arm64 下载地址和 SHA-256，以及客户端 sing-box 的版本与完整源码提交。macOS 从该提交构建；iOS 先运行 `scripts/build-libbox-xcframework.sh`，记录库的源码身份和文件指纹，TestFlight 构建会拒绝复用旧库或改动后的库。上游内核改变后，必须通过配置兼容检查、iOS 编译和相应客户端测试才可发布；生成清单不代表内核已通过兼容验证。
 

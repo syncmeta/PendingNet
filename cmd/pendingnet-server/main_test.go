@@ -67,10 +67,14 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 		t.Fatalf("unexpected init output: %s", out.String())
 	}
 
+	owner, err := pnserver.NewStore(dir).CreateUser("测试用户", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// 不带 --format 就是链接：默认那条路要有测试盯着，改默认值不该是静悄悄的。
 	out.Reset()
 	if err := run([]string{
-		"pair", "create", "--state-dir", dir, "--ttl", "5m",
+		"pair", "create", "--state-dir", dir, "--user", owner.ID, "--ttl", "5m",
 	}, &out, &errOut); err != nil {
 		t.Fatalf("pair create: %v (%s)", err, errOut.String())
 	}
@@ -82,7 +86,7 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 	pairPath := filepath.Join(dir, "exports", "vps-test.pdn")
 	out.Reset()
 	if err := run([]string{
-		"pair", "create", "--state-dir", dir, "--ttl", "5m", "--format", "json", "--out", pairPath,
+		"pair", "create", "--state-dir", dir, "--user", owner.ID, "--ttl", "5m", "--format", "json", "--out", pairPath,
 	}, &out, &errOut); err != nil {
 		t.Fatalf("pair create: %v (%s)", err, errOut.String())
 	}
@@ -105,7 +109,7 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 	linkPath := filepath.Join(dir, "exports", "vps-test.txt")
 	out.Reset()
 	if err := run([]string{
-		"pair", "create", "--state-dir", dir, "--ttl", "5m", "--out", linkPath,
+		"pair", "create", "--state-dir", dir, "--user", owner.ID, "--ttl", "5m", "--out", linkPath,
 	}, &out, &errOut); err != nil {
 		t.Fatalf("pair create: %v (%s)", err, errOut.String())
 	}
@@ -119,7 +123,7 @@ func TestInitPairAndStatusCommands(t *testing.T) {
 
 	out.Reset()
 	if err := run([]string{
-		"pair", "create", "--state-dir", dir, "--format", "qr",
+		"pair", "create", "--state-dir", dir, "--user", owner.ID, "--format", "qr",
 	}, &out, &errOut); err == nil {
 		t.Fatal("expected an unknown --format to be rejected")
 	}
@@ -148,8 +152,12 @@ func TestAdminPairingRequiresPrivateOutputFile(t *testing.T) {
 	if out.Len() != 0 {
 		t.Fatal("admin credential leaked on rejected command")
 	}
+	owner, err := pnserver.NewStore(dir).CreateUser("管理员", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "admin-link.txt")
-	if err := run([]string{"pair", "create", "--state-dir", dir, "--admin", "--out", path}, &out, &errOut); err != nil {
+	if err := run([]string{"pair", "create", "--state-dir", dir, "--admin", "--out", path, "--user", owner.ID}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)

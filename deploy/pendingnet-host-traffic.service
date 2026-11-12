@@ -1,0 +1,14 @@
+[Unit]
+Description=Persist PendingNet host service and interface traffic counters
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pendingnet-host-traffic sample
+User=root
+UMask=0077
+StateDirectory=pendingnet-host-traffic
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict

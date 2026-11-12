@@ -26,10 +26,14 @@ func TestLinksAndUsersCommands(t *testing.T) {
 	}
 	before, _ := os.ReadFile(filepath.Join(dir, "node.json"))
 	var out, errs bytes.Buffer
-	if err := run([]string{"links", "--state-dir", dir}, &out, &errs); err != nil {
+	owner, err := store.CreateUser("用户", "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"vless://", "pendingnet://", "pendingnetm://"} {
+	if err := run([]string{"links", "--state-dir", dir, "--user", owner.ID}, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"vless://", "pendingnet://"} {
 		if !strings.Contains(out.String(), s) {
 			t.Fatal("missing " + s)
 		}
@@ -39,8 +43,8 @@ func TestLinksAndUsersCommands(t *testing.T) {
 		t.Fatal("rotated node")
 	}
 	state, _ := store.Load()
-	if len(state.Pairings) != 2 {
-		t.Fatal("must issue one client and one admin grant")
+	if len(state.Pairings) != 1 || len(state.Users) != 1 || state.Pairings[0].UserID != owner.ID {
+		t.Fatal("must reuse the explicitly selected owner")
 	}
 	for _, line := range strings.Split(out.String(), "\n") {
 		if strings.HasPrefix(line, "pendingnetm://") {
@@ -87,5 +91,41 @@ func TestMenuCanExitAndGenerateLinksWithProvidedInput(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "PendingNet") {
 		t.Fatal("no menu")
+	}
+}
+
+func TestMenuSelectsSameOwnerForRepeatedPairing(t *testing.T) {
+	oldSync := syncUserServicesForCLI
+	syncUserServicesForCLI = func(s *pnserver.Store) error { _, err := s.EnsureUserProxyAccounts(); return err }
+	defer func() { syncUserServicesForCLI = oldSync }()
+	dir := t.TempDir()
+	s := pnserver.NewStore(dir)
+	if _, err := s.Initialize("VPS", "https://203.0.113.1:7443"); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.CreateUser("选择的用户", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	if err := runMenu(strings.NewReader("3\n1\n3\n1\n0\n"), &out, &errs, dir); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := s.Load()
+	if len(state.Users) != 1 || len(state.Pairings) != 2 {
+		t.Fatalf("unexpected owners/grants: %d/%d (%s)", len(state.Users), len(state.Pairings), errs.String())
+	}
+	for _, p := range state.Pairings {
+		if p.UserID != u.ID {
+			t.Fatal("menu did not use selected owner")
+		}
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err := runLinks([]string{"--kind", "pair", "--state-dir", dir}, &out, &errs); err == nil {
+		t.Fatal("missing owner accepted")
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "state.json"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("missing owner mutated state")
 	}
 }

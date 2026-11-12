@@ -35,6 +35,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/status", a.status)
 	mux.HandleFunc("GET /v1/node", a.node)
 	mux.HandleFunc("GET /v1/admin/users", a.adminUsers)
+	mux.HandleFunc("POST /v1/admin/users", a.adminCreateUser)
 	mux.HandleFunc("GET /v1/admin/users/{id}/node", a.adminUserNode)
 	mux.HandleFunc("POST /v1/admin/users/{id}/revoke", a.adminRevokeUser)
 	mux.HandleFunc("POST /v1/admin/users/{id}/rename", a.adminRenameUser)
@@ -257,6 +258,7 @@ func (a *API) adminCreatePairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
+		UserID     string `json:"user_id"`
 		Role       string `json:"role"`
 		TTLSeconds int    `json:"ttl_seconds"`
 	}
@@ -271,7 +273,7 @@ func (a *API) adminCreatePairing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "trailing pairing request data")
 		return
 	}
-	if (input.Role != "client" && input.Role != "admin") || input.TTLSeconds < 1 || input.TTLSeconds > 86400 {
+	if input.UserID == "" || (input.Role != "client" && input.Role != "admin") || input.TTLSeconds < 1 || input.TTLSeconds > 86400 {
 		writeError(w, http.StatusBadRequest, "invalid_request", "role and 1-86400 ttl_seconds are required")
 		return
 	}
@@ -279,11 +281,15 @@ func (a *API) adminCreatePairing(w http.ResponseWriter, r *http.Request) {
 	var file pairing.File
 	var err error
 	if input.Role == "admin" {
-		file, err = a.Store.CreateAdminPairing(ttl)
+		file, err = a.Store.IssueUserPairing(input.UserID, "admin", ttl)
 	} else {
-		file, err = a.Store.CreatePairing(ttl)
+		file, err = a.Store.IssueUserPairing(input.UserID, "", ttl)
 	}
 	if err != nil {
+		if errors.Is(err, ErrUserNotFound) || errors.Is(err, ErrUnauthorized) {
+			writeError(w, 400, "invalid_user", "select an active user with the matching role")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "server_state", "cannot issue pairing")
 		return
 	}
@@ -296,6 +302,33 @@ func (a *API) adminCreatePairing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"link": link, "expires_at": file.Enrollment.ExpiresAt})
+}
+
+func (a *API) adminCreateUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if !a.authorizedAdmin(w, r) {
+		return
+	}
+	var input struct {
+		Name string `json:"name"`
+		Role string `json:"role"`
+	}
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	d.DisallowUnknownFields()
+	if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF || (input.Role != "client" && input.Role != "admin") {
+		writeError(w, 400, "invalid_request", "name and role required")
+		return
+	}
+	role := ""
+	if input.Role == "admin" {
+		role = "admin"
+	}
+	u, err := a.Store.CreateUser(input.Name, role)
+	if err != nil {
+		writeError(w, 400, "invalid_user", "cannot create user")
+		return
+	}
+	writeJSON(w, 201, map[string]any{"id": u.ID})
 }
 
 func (a *API) adminClientConfig(w http.ResponseWriter, r *http.Request) {

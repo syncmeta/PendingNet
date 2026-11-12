@@ -14,7 +14,7 @@
   <img alt="Go" src="https://img.shields.io/badge/lang-Go%201.26-00ADD8?logo=go&logoColor=white" />
   <img alt="Swift" src="https://img.shields.io/badge/lang-Swift%206-F05138?logo=swift&logoColor=white" />
   <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%20%C2%B7%20iOS%20%C2%B7%20Debian-lightgrey" />
-  <img alt="Version" src="https://img.shields.io/badge/version-0.3.40-informational" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.3.46-informational" />
 </p>
 苹果生态用 VPS 搭自建节点的全套解决方案
 
@@ -87,3 +87,9 @@ Swift 6 / SwiftUI · NetworkExtension · sing-box libbox · XcodeGen · Sparkle 
 [MIT](LICENSE)
 
 第三方运行时 / 库：sing-box · Xray-core · Hysteria2 · Sparkle 2 · `modernc.org/sqlite` 等，各遵其原协议。
+
+### 链接归属（0.3.46 起）
+
+签发前必须选择归属用户。应用管理页和 VPS `sudo pendingnet` 菜单均可选择已有用户，或明确新建用户。重复签发 PendingNet 配对链接会复用所选用户，设备继承同一归属；VLESS 使用该用户的独立凭据并计入其流量。
+
+非交互式命令先用 `pendingnet users list` 或 `pendingnet users add --name <名称>` 获取用户 ID，再使用 `pendingnet links --user <用户ID> --kind pair` 或 `--kind node`。管理员需显式创建 `users add --name <名称> --admin`，再使用 `--kind manage --user <管理员ID>`。缺少用户、用户已撤销或角色不符时拒绝签发。旧客户端需要升级后才能通过管理页签发链接；已有节点和配对设备继续有效。

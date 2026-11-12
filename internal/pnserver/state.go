@@ -201,7 +201,41 @@ func (s *Store) CreateAdminPairing(ttl time.Duration) (pairing.File, error) {
 	return s.createPairing(ttl, "admin")
 }
 
-func (s *Store) createPairing(ttl time.Duration, role string) (pairing.File, error) {
+// IssueUserPairing reuses an explicitly selected owner. It never creates a
+// user or promotes an ordinary user to administrator.
+func (s *Store) IssueUserPairing(userID, role string, ttl time.Duration) (pairing.File, error) {
+	if userID == "" || (role != "" && role != "admin") {
+		return pairing.File{}, ErrUserNotFound
+	}
+	return s.createPairing(ttl, role, userID)
+}
+
+func (s *Store) CreateUser(name, role string) (User, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || len([]rune(name)) > 128 || strings.IndexFunc(name, unicode.IsControl) >= 0 || (role != "" && role != "admin") {
+		return User{}, errors.New("valid user name and role required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := lockStateFile(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return User{}, err
+	}
+	defer unlock()
+	state, err := s.loadState()
+	if err != nil {
+		return User{}, err
+	}
+	user, err := s.newUser(s.now(), role)
+	if err != nil {
+		return User{}, err
+	}
+	user.Name = name
+	state.Users = append(state.Users, user)
+	return user, s.writeState(state)
+}
+
+func (s *Store) createPairing(ttl time.Duration, role string, owner ...string) (pairing.File, error) {
 	if ttl <= 0 || ttl > 24*time.Hour {
 		return pairing.File{}, errors.New("pairing ttl must be greater than zero and at most 24h")
 	}
@@ -226,15 +260,27 @@ func (s *Store) createPairing(ttl time.Duration, role string) (pairing.File, err
 	if err != nil {
 		return pairing.File{}, err
 	}
-	user, err := s.newUser(now, role)
-	if err != nil {
-		return pairing.File{}, err
+	var user User
+	if len(owner) > 0 {
+		i := indexUser(state.Users, owner[0])
+		if i < 0 || state.Users[i].RevokedAt != nil {
+			return pairing.File{}, ErrUserNotFound
+		}
+		user = state.Users[i]
+		if (user.Role == "admin") != (role == "admin") {
+			return pairing.File{}, ErrUnauthorized
+		}
+	} else {
+		user, err = s.newUser(now, role)
+		if err != nil {
+			return pairing.File{}, err
+		}
+		state.Users = append(state.Users, user)
 	}
 	expires := now.Add(ttl)
 	state.Pairings = append(state.Pairings, PairingGrant{
 		ID: grantID, UserID: user.ID, Role: role, TokenSHA256: hashToken(token), CreatedAt: now, ExpiresAt: expires,
 	})
-	state.Users = append(state.Users, user)
 	if err := s.writeState(state); err != nil {
 		return pairing.File{}, err
 	}

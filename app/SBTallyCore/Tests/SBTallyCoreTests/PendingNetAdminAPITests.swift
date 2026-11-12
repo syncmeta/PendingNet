@@ -3,6 +3,23 @@ import XCTest
 @testable import SBTallyCore
 
 final class PendingNetAdminAPITests: XCTestCase {
+    func testExplicitUserCreationDoesNotIssueLink() async throws {
+        let backend = FakeKeychain()
+        let admin = PendingNetAdminCredentialStore.makeCore(backend: backend)
+        try admin.save(accessToken: "admin-secret", serverID: "pns_admin_test")
+        AdminAPIURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/v1/admin/users")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let payload = try JSONSerialization.jsonObject(with: adminRequestBody(request)) as? [String: Any]
+            XCTAssertEqual(payload?["name"] as? String, "Family")
+            XCTAssertEqual(payload?["role"] as? String, "client")
+            return (HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!, Data("{\"id\":\"usr_family\"}".utf8))
+        }
+        let client = PendingNetAdminAPIClient(server: server(), credentialStore: admin, session: session())
+        let id = try await client.createUser(name: "Family", role: .client)
+        XCTAssertEqual(id, "usr_family")
+    }
+
     private func server() -> PendingNetManagedServer {
         PendingNetManagedServer(
             serverID: "pns_admin_test", name: "Test Server",
@@ -140,11 +157,12 @@ final class PendingNetAdminAPITests: XCTestCase {
             let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             XCTAssertEqual(payload["role"] as? String, "admin")
             XCTAssertEqual(payload["ttl_seconds"] as? Int, 600)
+            XCTAssertEqual(payload["user_id"] as? String, "usr_selected")
             let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!
             return (response, try JSONSerialization.data(withJSONObject: ["link": link, "expires_at": "2099-01-01T00:00:00Z"]))
         }
         let client = PendingNetAdminAPIClient(server: server(), credentialStore: admin, session: session())
-        let issued = try await client.issuePairing(role: .admin, ttlSeconds: 600)
+        let issued = try await client.issuePairing(role: .admin, ttlSeconds: 600, userID: "usr_selected")
         XCTAssertEqual(issued.link, link)
 
         AdminAPIURLProtocol.handler = { request in
@@ -155,7 +173,7 @@ final class PendingNetAdminAPITests: XCTestCase {
             return (response, try JSONSerialization.data(withJSONObject: ["link": link, "expires_at": "2099-01-01T00:00:00Z"]))
         }
         do {
-            _ = try await client.issuePairing(role: .client, ttlSeconds: 600)
+            _ = try await client.issuePairing(role: .client, ttlSeconds: 600, userID: "usr_selected")
             XCTFail("expected role mismatch")
         } catch let error as PendingNetAdminAPIError {
             XCTAssertEqual(error, .invalidResponse)

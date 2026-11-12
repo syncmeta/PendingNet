@@ -302,3 +302,19 @@
 "导出" = "Export";
 
 "当前管理用户" = "Current management user";
+
+"链接归属用户" = "Link owner";
+
+"请选择用户" = "Select a user";
+
+"新用户名称" = "New user name";
+
+"管理员" = "Administrator";
+
+"新建用户" = "Create user";
+
+"生成 VLESS 链接" = "Generate VLESS link";
+
+"VLESS 用户链接" = "VLESS user link";
+
+"请先选择匹配角色的有效用户" = "Select an active user with the matching role first";

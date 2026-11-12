@@ -78,6 +78,11 @@ if test "$identity" = "-"; then
     --identifier com.pendingname.pendingnet.singbox \
     --requirements '=designated => identifier "com.pendingname.pendingnet.singbox"' \
     "$engine"
+  # Xcode Debug builds load the application code from a sibling .debug.dylib.
+  # Sign every embedded application dylib before sealing the outer bundle.
+  find "$app/Contents/MacOS" -type f -name '*.dylib' -print | while IFS= read -r library; do
+    /usr/bin/codesign --force --sign - "$library"
+  done
   /usr/bin/codesign --force --sign - \
     --identifier com.pendingname.pendingnet \
     --requirements '=designated => identifier "com.pendingname.pendingnet"' \
@@ -105,6 +110,9 @@ else
     --identifier com.pendingname.pendingnet.sbtally "$tally"
   /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
     --identifier com.pendingname.pendingnet.singbox "$engine"
+  find "$app/Contents/MacOS" -type f -name '*.dylib' -print | while IFS= read -r library; do
+    /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp "$library"
+  done
   if test -n "$profile"; then
     prepare_entitlements
     /usr/bin/codesign --force --sign "$identity" --options runtime --timestamp \
@@ -120,3 +128,13 @@ else
   fi
 fi
 /usr/bin/codesign --verify --deep --strict "$app"
+# Bundle verification alone does not enforce dyld's library-validation team
+# requirement. Reject the mismatch that would otherwise crash at launch.
+app_team=$(/usr/bin/codesign -dv --verbose=2 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+find "$app/Contents/MacOS" -type f -name '*.dylib' -print | while IFS= read -r library; do
+  library_team=$(/usr/bin/codesign -dv --verbose=2 "$library" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+  if test "$app_team" != "$library_team"; then
+    echo "embedded dylib signing team differs from application: $library" >&2
+    exit 2
+  fi
+done

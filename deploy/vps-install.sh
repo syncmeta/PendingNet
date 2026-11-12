@@ -134,8 +134,8 @@ usage() {
 配对链接的规矩:
   · 默认 10m 过期（--pair-ttl 可改，最长 24h）、只能用一次、一台设备一份。
   · 它跟密码等价——谁拿到谁就能连上这台 VPS，别往公开地方贴。
-  · 再要一条连接链接: sudo pendingnet links --kind pair
-  · 再要一条管理链接: sudo pendingnet links --kind manage
+  · 再要一条连接链接: sudo pendingnet links --kind pair --user <用户ID>
+  · 再要一条管理链接: sudo pendingnet links --kind manage --user <管理用户ID>
   · VPS 日常管理: sudo pendingnet
 
 要放行的入口（脚本一个字都不改防火墙，云厂商的安全组也得自己开）:
@@ -688,6 +688,10 @@ install_manager_command() {
 print_deployment_links() {
     local features
     features="$("$INSTALLED_BIN" version 2>/dev/null </dev/null || true)"
+    if [[ "$features" == *user-link-owner* ]]; then
+        printf '签发链接前需先选择归属用户：请运行 sudo pendingnet，选择链接类型，再选择或新建用户。\n'
+        return 0
+    fi
     if [[ "$features" == *vps-manager* ]]; then
         # Explicitly requested secrets go to the terminal, never the installer log.
         "$INSTALLED_BIN" links --ttl "$PAIR_TTL" </dev/null

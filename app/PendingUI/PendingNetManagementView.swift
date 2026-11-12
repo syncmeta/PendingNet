@@ -42,6 +42,7 @@ final class PendingNetManagementController: ObservableObject {
     @Published private(set) var users: [PendingNetAdminUser] = []
     @Published private(set) var configRevision: String?
     @Published private(set) var issuedLink: String?
+    @Published var selectedUserID: String?
     @Published var selectedServerID: String?
     @Published var errorMessage: String?
     @Published var message: String?
@@ -115,6 +116,7 @@ final class PendingNetManagementController: ObservableObject {
             let fetchedUsers = try await client.users()
             guard refreshGeneration == generation, selectedServerID == server.serverID else { return }
             users = fetchedUsers
+            if !users.contains(where: { $0.id == selectedUserID && $0.revokedAt == nil }) { selectedUserID = nil }
             // The three documents may contain proxy secrets. Only the opaque
             // revision is retained for display; the snapshot is discarded.
             let revision = try await client.config().revision
@@ -133,11 +135,15 @@ final class PendingNetManagementController: ObservableObject {
         guard selectedServerID != id else { return }
         clearTransientLink()
         selectedServerID = id
+        selectedUserID = nil
     }
+
+    func discardIssuedLink() { issuedLink = nil; message = nil }
 
     func clearTransientLink() {
         refreshGeneration += 1
         issuedLink = nil
+        selectedUserID = nil
         users = []
         configRevision = nil
         errorMessage = nil
@@ -145,7 +151,13 @@ final class PendingNetManagementController: ObservableObject {
         working = false
     }
 
-    func issuePairing(role: PendingNetAdminPairingRole) async {
+    func issuePairing(role: PendingNetAdminPairingRole, userID: String? = nil) async {
+        guard let owner = userID ?? selectedUserID,
+              let user = users.first(where: { $0.id == owner && $0.revokedAt == nil }),
+              (user.role == "admin") == (role == .admin) else {
+            errorMessage = String(localized: "请先选择匹配角色的有效用户")
+            return
+        }
         guard !working, let server = servers.first(where: { $0.serverID == selectedServerID }) else { return }
         let generation = refreshGeneration
         working = true
@@ -155,8 +167,9 @@ final class PendingNetManagementController: ObservableObject {
         defer { if refreshGeneration == generation { working = false } }
         do {
             let issued = try await PendingNetAdminAPIClient(server: server)
-                .issuePairing(role: role, ttlSeconds: 600)
+                .issuePairing(role: role, ttlSeconds: 600, userID: owner)
             guard refreshGeneration == generation, selectedServerID == server.serverID else { return }
+            guard selectedUserID == owner else { return }
             issuedLink = issued.link
             message = String(localized: "链接已签发，请及时复制；离开此页后不会保存")
         } catch {
@@ -164,6 +177,35 @@ final class PendingNetManagementController: ObservableObject {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+
+    func createUser(name: String, admin: Bool) async {
+        guard !working, let server = servers.first(where: { $0.serverID == selectedServerID }) else { return }
+        let generation = refreshGeneration
+        working = true; issuedLink = nil; errorMessage = nil
+        defer { if refreshGeneration == generation { working = false } }
+        do {
+            let client = PendingNetAdminAPIClient(server: server)
+            let id = try await client.createUser(name: name, role: admin ? .admin : .client)
+            let latest = try await client.users()
+            guard refreshGeneration == generation, selectedServerID == server.serverID else { return }
+            users = latest; selectedUserID = id
+        } catch { if refreshGeneration == generation { errorMessage = error.localizedDescription } }
+    }
+
+    func issueVLESS() async {
+        guard !working, let owner = selectedUserID,
+              users.contains(where: { $0.id == owner && $0.revokedAt == nil }),
+              let server = servers.first(where: { $0.serverID == selectedServerID }) else { return }
+        let generation = refreshGeneration
+        working = true; issuedLink = nil; errorMessage = nil
+        defer { if refreshGeneration == generation { working = false } }
+        do {
+            let profile = try await PendingNetAdminAPIClient(server: server).nodeProfile(userID: owner)
+            let links = try PendingNetNodeShare.links(profile: profile, name: server.name)
+            guard refreshGeneration == generation, selectedServerID == server.serverID, selectedUserID == owner else { return }
+            issuedLink = links.first(where: { $0.link.hasPrefix("vless://") })?.link
+        } catch { if refreshGeneration == generation { errorMessage = error.localizedDescription } }
     }
 
     func revokeUser(id: String) async {
@@ -241,6 +283,9 @@ struct PendingNetManagementView: View {
     @State private var showingImport = false
     @State private var revokeUserID: String?
     @State private var revokeServerID: String?
+    @State private var newUserName = ""
+    @State private var newUserAdmin = false
+    @State private var adminIssueUserID: String?
     @State private var confirmAdminIssue = false
     @State private var adminIssueServerID: String?
     @State private var exportDocument: PendingNetClientConfigDocument?
@@ -267,23 +312,38 @@ struct PendingNetManagementView: View {
                 if !controller.servers.isEmpty {
                     managedServers
 
+                    Picker("链接归属用户", selection: $controller.selectedUserID) {
+                        Text("请选择用户").tag(String?.none)
+                        ForEach(controller.users.filter { $0.revokedAt == nil }) { user in
+                            Text(user.name + (user.role == "admin" ? " · " + String(localized: "管理员") : "") + " · " + user.id).tag(Optional(user.id))
+                        }
+                    }.disabled(controller.working)
                     HStack {
+                        TextField("新用户名称", text: $newUserName)
+                        Toggle("管理员", isOn: $newUserAdmin)
+                        Button("新建用户") {
+                            Task { await controller.createUser(name: newUserName, admin: newUserAdmin) }
+                        }.disabled(controller.working || newUserName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    HStack {
+                        Button("生成 VLESS 链接") { Task { await controller.issueVLESS() } }
                         Button("签发普通链接") {
                             Task { await controller.issuePairing(role: .client) }
-                        }
+                        }.disabled(controller.users.first(where: { $0.id == controller.selectedUserID })?.role == "admin")
                         Button("签发管理链接") {
+                            adminIssueUserID = controller.selectedUserID
                             adminIssueServerID = controller.selectedServerID
                             confirmAdminIssue = true
-                        }
+                        }.disabled(controller.users.first(where: { $0.id == controller.selectedUserID })?.role != "admin")
                     }
-                    .disabled(controller.working)
+                    .disabled(controller.working || controller.selectedUserID == nil)
 
                     Button("导出 sing-box 配置文件") {
                         exportServer = controller.servers.first { $0.serverID == controller.selectedServerID }
                     }.disabled(controller.working)
 
                     if let issued = controller.issuedLink {
-                        Text("一次性链接（十分钟内有效，仅在此页临时显示）")
+                        Text(issued.hasPrefix("vless://") ? LocalizedStringKey("VLESS 用户链接") : LocalizedStringKey("一次性链接（十分钟内有效，仅在此页临时显示）"))
                             .font(.caption)
                         Text(issued)
                             .font(.caption.monospaced())
@@ -396,6 +456,7 @@ struct PendingNetManagementView: View {
             confirmAdminIssue = false
             adminIssueServerID = nil
         }
+        .onChange(of: controller.selectedUserID) { _, _ in controller.discardIssuedLink() }
         .onChange(of: linkInbox.pendingLink) { _, _ in acceptOpenedLink() }
         .alert("撤销此用户？", isPresented: Binding(
             get: { revokeUserID != nil },
@@ -428,7 +489,7 @@ struct PendingNetManagementView: View {
                 if let serverID = adminIssueServerID, controller.selectedServerID == serverID {
                     Task {
                         guard controller.selectedServerID == serverID else { return }
-                        await controller.issuePairing(role: .admin)
+                        await controller.issuePairing(role: .admin, userID: adminIssueUserID)
                     }
                 }
                 adminIssueServerID = nil
